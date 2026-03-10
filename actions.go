@@ -64,7 +64,7 @@ func executeActionCmd(action string, vm VM, ctx contextItem) tea.Cmd {
 		}
 
 		output, err := cmd.CombinedOutput()
-		
+
 		if action == "Describe" {
 			return describeCompleteMsg{output: string(output), err: err}
 		}

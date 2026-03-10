@@ -65,5 +65,5 @@ Wire up the Action Dropdown to perform actual operations on the VMs.
   - [x] Add a manual "Refresh" shortcut (e.g., `r`).
 - [x] **Global Search / Filtering**
   - [x] Allow users to press `/` to search across all VMs in all contexts.
-- [ ] **Custom Keybindings**
-  - [ ] Read a `~/.cloudmanager.yml` file to allow users to override default keybindings.
+- [x] **Custom Keybindings**
+  - [x] Read a `~/.cloudmanager.json` (or yaml) file to allow users to override default keybindings, caching ttl, and themes via Viper.

@@ -105,13 +105,13 @@ func buildContextTree(contexts []contextItem) []*treeNode {
 		if ctx.provider == "GCP" || ctx.provider == "Azure" {
 			leafLabel = "All Resources"
 		}
-		
+
 		rNode := &treeNode{
-			id:       regionID,
-			label:    leafLabel,
-			level:    2,
-			isLeaf:   true,
-			context:  ctx,
+			id:      regionID,
+			label:   leafLabel,
+			level:   2,
+			isLeaf:  true,
+			context: ctx,
 		}
 		aNode.children = append(aNode.children, rNode)
 	}

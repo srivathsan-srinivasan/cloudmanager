@@ -26,11 +26,11 @@ type VM struct {
 type awsDescribeInstancesOutput struct {
 	Reservations []struct {
 		Instances []struct {
-			InstanceId       string `json:"InstanceId"`
-			InstanceType     string `json:"InstanceType"`
-			VpcId            string `json:"VpcId"`
-			SubnetId         string `json:"SubnetId"`
-			State            struct {
+			InstanceId   string `json:"InstanceId"`
+			InstanceType string `json:"InstanceType"`
+			VpcId        string `json:"VpcId"`
+			SubnetId     string `json:"SubnetId"`
+			State        struct {
 				Name string `json:"Name"`
 			} `json:"State"`
 			PrivateIpAddress string `json:"PrivateIpAddress"`
@@ -67,7 +67,7 @@ func fetchAWSVMs(profile, region string) ([]VM, error) {
 				labelPairs = append(labelPairs, fmt.Sprintf("%s=%s", tag.Key, tag.Value))
 			}
 			labelsStr := strings.Join(labelPairs, ", ")
-			
+
 			privIP := inst.PrivateIpAddress
 			if privIP == "" {
 				privIP = "-"
@@ -136,7 +136,7 @@ func fetchGCPVMs(project string) ([]VM, error) {
 	for _, inst := range data {
 		machineParts := strings.Split(inst.MachineType, "/")
 		mType := machineParts[len(machineParts)-1]
-		
+
 		zoneParts := strings.Split(inst.Zone, "/")
 		zone := zoneParts[len(zoneParts)-1]
 
