@@ -20,7 +20,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), CloudManage
 Ensure you have [Go](https://golang.org/doc/install) (1.20+) installed.
 
 ```bash
-git clone https://github.com/yourusername/cloudmanager.git
+git clone https://github.com/srivathsan-srinivasan/cloudmanager.git
 cd cloudmanager
 go build -o cloudmanager
 sudo mv cloudmanager /usr/local/bin/
