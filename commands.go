@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -87,17 +88,8 @@ func fetchVMsCmd(ctx contextItem, force bool) tea.Cmd {
 			}
 		}
 
-		var rows []VM
-		var err error
-
-		switch ctx.provider {
-		case "AWS":
-			rows, err = fetchAWSVMs(ctx.accountName, ctx.region)
-		case "GCP":
-			rows, err = fetchGCPVMs(ctx.accountID)
-		case "Azure":
-			rows, err = fetchAzureVMs(ctx.accountID)
-		}
+		provider := GetProvider()
+		rows, err := provider.FetchVMs(context.Background(), ctx)
 
 		if err != nil {
 			return vmFetchMsg{vms: nil, err: err}
@@ -111,7 +103,6 @@ func fetchVMsCmd(ctx contextItem, force bool) tea.Cmd {
 		return vmFetchMsg{vms: rows, err: nil}
 	}
 }
-
 func executeCommandMock(action string, instanceID string) tea.Cmd {
 	return func() tea.Msg {
 		time.Sleep(1 * time.Second) // simulate API call

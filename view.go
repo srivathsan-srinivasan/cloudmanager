@@ -120,6 +120,23 @@ func (m model) View() string {
 			overlay,
 			lipgloss.WithWhitespaceChars(" "),
 		)
+	} else if m.activePane == paneConfirm {
+		confirmMsg := fmt.Sprintf("Are you sure you want to %s instance %s?", m.pendingAction.title, m.pendingVM.Name)
+		confirmStyle := overlayStyle.Copy().BorderForeground(alert).Padding(1, 2).Width(50)
+		confirmView := lipgloss.JoinVertical(lipgloss.Center,
+			lipgloss.NewStyle().Foreground(alert).Bold(true).Render("⚠️  CONFIRM ACTION"),
+			"\n",
+			lipgloss.NewStyle().Align(lipgloss.Center).Render(confirmMsg),
+			"\n",
+			lipgloss.NewStyle().Foreground(subtle).Render("Enter: Confirm \u2022 Esc: Cancel"),
+		)
+		overlay := confirmStyle.Render(confirmView)
+		mainContentView = lipgloss.Place(
+			vStyle.GetWidth(), vStyle.GetHeight(),
+			lipgloss.Center, lipgloss.Center,
+			overlay,
+			lipgloss.WithWhitespaceChars(" "),
+		)
 	}
 
 	mainView := vStyle.Render(mainContentView)

@@ -1,0 +1,49 @@
+name: Release CloudManager
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on version tags (e.g., v0.1.0)
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Build Binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          ext=""
+          if [ "${{ matrix.goos }}" == "windows" ]; then
+            ext=".exe"
+          fi
+          output_name="cloudmanager-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
+          go build -trimpath -ldflags="-s -w" -o "${output_name}" .
+          echo "OUTPUT_NAME=${output_name}" >> $GITHUB_ENV
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ env.OUTPUT_NAME }}
+          generate_release_notes: true

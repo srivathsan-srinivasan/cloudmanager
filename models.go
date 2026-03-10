@@ -22,6 +22,7 @@ const (
 	paneDescribe
 	paneSortConfig
 	paneSplash
+	paneConfirm
 )
 
 // Data Models
@@ -110,6 +111,9 @@ type model struct {
 	tableCols   []table.Column
 	isSearching bool
 	cfg         AppConfig
+
+	pendingAction actionItem
+	pendingVM     VM
 }
 
 // Msgs for asynchronous operations

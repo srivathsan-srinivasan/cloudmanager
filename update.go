@@ -225,11 +225,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statusMsg = fmt.Sprintf("Sorted by %s (%s)", m.sortColumn, dir)
 				}
 			} else if m.activePane == paneActions {
-				// Execute Action
+				// Execute Action or Ask for Confirmation
 				cursor := m.vms.Cursor()
 				if cursor >= 0 && cursor < len(m.vmData) {
 					vm := m.vmData[cursor]
 					action := m.actions.SelectedItem().(actionItem)
+
+					if action.title == "Terminate" || action.title == "Delete" {
+						m.pendingAction = action
+						m.pendingVM = vm
+						m.activePane = paneConfirm
+						return m, nil
+					}
 
 					if action.title == "SSH" {
 						cmd := createSSHCmd(vm, m.activeCtx)
@@ -248,6 +255,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						cmds = append(cmds, executeActionCmd(action.title, vm, m.activeCtx))
 					}
 				}
+			} else if m.activePane == paneConfirm {
+				m.activePane = paneVMs
+				m.statusMsg = fmt.Sprintf("Executing %s on %s...", m.pendingAction.title, m.pendingVM.Name)
+				return m, executeActionCmd(m.pendingAction.title, m.pendingVM, m.activeCtx)
 			}
 		}
 
@@ -306,6 +317,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = fmt.Sprintf("Error: %v", msg.err)
 		} else {
 			m.statusMsg = msg.output
+			// Auto-refresh the list
+			m.loading = true
+			return m, fetchVMsCmd(m.activeCtx, true)
 		}
 
 	case describeCompleteMsg:

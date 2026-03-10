@@ -15,6 +15,7 @@ type ThemeConfig struct {
 }
 
 type AppConfig struct {
+	Backend       string            `mapstructure:"backend" json:"backend"`
 	GCPConfigured bool              `mapstructure:"gcp_configured" json:"gcp_configured"`
 	GCPProjects   []string          `mapstructure:"gcp_projects" json:"gcp_projects"`
 	VMColumns     []string          `mapstructure:"vm_columns" json:"vm_columns"`
@@ -37,6 +38,7 @@ func loadAppConfig() AppConfig {
 	viper.SetConfigType("json")
 
 	// Set Defaults
+	viper.SetDefault("backend", "cli")
 	viper.SetDefault("gcp_configured", false)
 	viper.SetDefault("gcp_projects", []string{})
 	viper.SetDefault("vm_columns", defaultVMColumns)
@@ -68,6 +70,7 @@ func loadAppConfig() AppConfig {
 }
 
 func saveAppConfig(cfg AppConfig) error {
+	viper.Set("backend", cfg.Backend)
 	viper.Set("gcp_configured", cfg.GCPConfigured)
 	viper.Set("gcp_projects", cfg.GCPProjects)
 	viper.Set("vm_columns", cfg.VMColumns)
