@@ -8,12 +8,12 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), CloudManage
 
 ## ✨ Features
 
-- **Multi-Cloud Dashboard:** View all your VMs across AWS (EC2), Google Cloud (Compute Engine), and Azure (Virtual Machines) in a single unified interface.
-- **Lightning Fast:** Powered by Go and Bubble Tea. Local caching keeps navigation snappy.
-- **Direct SSH Access:** Drop directly into an interactive SSH session with your instances using native tools (SSM Session Manager, IAP, Azure Bastion).
-- **Vim-like Keybindings:** Easily navigate your infrastructure entirely via keyboard.
-- **Highly Configurable:** Customize columns, sort fields, color themes, and keybindings via a central configuration file (`~/.cloudmanager.json`).
-- **Safety First:** Actions like "Terminate" require explicit confirmation (coming soon!).
+- **Multi-Cloud Dashboard:** View all your VMs, Disks, Snapshots, and Networks across AWS, Google Cloud, and Azure.
+- **FinOps Intelligence:** Get actionable AI-powered cost and architecture recommendations via Gemini 1.5 Flash.
+- **Live Metrics:** Real-time CPU and memory utilization indicators (🟢🟡🔴) integrated into your resource tables.
+- **Cost Transparency:** Track monthly spending and cost trends for individual instances and entire accounts.
+- **Direct SSH Access:** Drop directly into an interactive SSH session with your instances using native tools.
+- **Lightning Fast:** Powered by Go and Bubble Tea with smart async enrichment and caching.
 
 ## 🚀 Installation
 
@@ -41,16 +41,17 @@ cloudmanager
 ```
 
 ### Default Keybindings
+- `1` - `6`: Switch between resource views (VMs, Disks, Snapshots, Firewalls, Clusters, Networks)
 - `↑` / `↓` / `k` / `j`: Navigate lists
 - `Enter`: Select an item or execute an action
-- `Tab`: Switch focus between Sidebar (Contexts) and Main View (VMs)
+- `Tab`: Switch focus between Sidebar (Contexts) and Main View
 - `b`: Toggle Sidebar visibility
-- `c`: Configure GCP Projects
-- `C`: Configure visible VM Table columns
+- `C`: Configure visible table columns
 - `S`: Select a column to sort by
-- `/`: Search/filter the current VM list
-- `r`: Force refresh the VM list (bypasses cache)
+- `/`: Search/filter the current list
+- `r`: Force refresh the current view
 - `Esc` / `q`: Go back or quit the application
+
 
 ## 🛠️ Configuration
 Upon first run, a default configuration file will be created at `~/.cloudmanager.json`. 
@@ -78,13 +79,20 @@ Upon first run, a default configuration file will be created at `~/.cloudmanager
 ## 🗺️ Roadmap
 See [tasks.md](tasks.md) for our detailed development roadmap. 
 
-Currently, we are focusing on **Phase 1: Cloud Context Parsers** (dynamically parsing local `~/.aws/config`, `~/.config/gcloud`, etc., rather than relying on mock configuration).
+Currently, we are focusing on unifying cloud context parsers and expanding our Bubble Tea implementation.
 
-## 🤝 Contributing
+**🚀 Upcoming Feature: K9s Integration**
+We are working on direct integration to **jump directly into [K9s](https://github.com/derailed/k9s) from the existing terminal!** This means you can seamlessly bridge VM management and Kubernetes cluster management without context switching.
+
+## 🤝 Contributing & Feature Requests
 Contributions, issues, and feature requests are welcome!
-Feel free to check [issues page](https://github.com/yourusername/cloudmanager/issues).
 
-Please review the [Contributing Guide](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+**We want to hear from you!** What feature would make your life significantly easier? What tool or workflow are you missing? 
+Drop your ideas to help shape the future of CloudManager. If something would help you immensely, please request it!
+
+👉 **[Request a Feature or Open an Issue](https://github.com/srivathsan-srinivasan/cloudmanager/issues)**
+
+Please review the [Contributing Guide](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before submitting PRs.
 
 ## 📝 License
 This project is [MIT](LICENSE) licensed.

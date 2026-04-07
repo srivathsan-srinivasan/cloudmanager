@@ -1,53 +1,128 @@
-# CloudManager TUI - Development Roadmap
+# CloudManager TUI — Development Roadmap (Refined)
 
-This document outlines the strategic roadmap for CloudManager, evolving it from a multi-cloud VM dashboard to a high-performance, intelligent FinOps terminal environment.
+> **Total: ~49 tasks** (down from 93). Organized into 6 sprints with clear parallelism.
+>
+> | File | Scope | Tasks |
+> |------|-------|-------|
+> | [`tasks-vm.md`](./tasks-vm.md) | Architecture fix, Disks, Snapshots, Tab Bar, VM Detail | ARCH-1,2 + VM-1 → VM-13 |
+> | [`tasks-monitoring.md`](./tasks-monitoring.md) | CloudWatch, Cloud Monitoring, Azure Monitor, Gemini bridge | MON-1 → MON-10 |
+> | [`tasks-billing.md`](./tasks-billing.md) | Cost APIs, Recommendations, Gemini V2 | BILL-1 → BILL-10 |
+> | [`tasks-firewalls.md`](./tasks-firewalls.md) | Security Groups, NSGs, Rules, Audit | FW-1 → FW-8 |
+> | [`tasks-network.md`](./tasks-network.md) | VPCs, Subnets, Cross-navigation | NET-1 → NET-6 |
 
-## Phase 1: Context & Configuration Discovery (Completed)
-- [x] AWS Configuration Parser (`~/.aws/config`, `~/.aws/credentials`).
-- [x] GCP Configuration Parser (`~/.config/gcloud/configurations/`).
-- [x] Azure Configuration Parser (Azure CLI config).
-- [x] Concurrent initialization and graceful fallback.
+---
 
-## Phase 2: Read-Only Integration & Hybrid Architecture (Completed)
-- [x] Implemented CLI-wrapper backend for AWS, GCP, Azure via `os/exec`.
-- [x] Implemented asynchronous loading, error handling, and TUI spinners.
-- [x] Introduced the `Provider` interface (`provider.go`) to decouple UI from backend logic.
-- [x] Built the `--configure` TUI to toggle between `cli` and `sdk` backends dynamically.
+## Architecture Principles (Refined)
 
-## Phase 3: Action Execution & Interactive Sessions (Completed)
-- [x] Implemented Start/Stop/Restart/Terminate mapping for CLI backends.
-- [x] TUI Confirmation dialogs for destructive actions.
-- [x] Interactive SSH Integration (AWS SSM, GCP IAP, Azure standard SSH) via `tea.ExecProcess`.
+1. **Small interfaces with type assertions** — not one God interface
+2. **SDK-only for new resources** — CLI maintained only for existing VM operations
+3. **Async enrichment** — metrics and cost never block the initial table render
+4. **FinOps is the differentiator** — not resource browsing
 
-## Phase 4: Native Go SDK Implementation (In Progress / Next)
-*The transition to Native SDKs for the "sdk" backend to provide order-of-magnitude performance improvements and static typing safety.*
-- [ ] **AWS SDK v2 Integration**
-  - [ ] Implement `FetchVMs` using `github.com/aws/aws-sdk-go-v2/service/ec2`.
-  - [ ] Implement `ExecuteAction` using native SDK calls.
-  - [ ] Handle AWS SSO credential resolution explicitly if needed.
-- [ ] **GCP SDK Integration**
-  - [ ] Implement `FetchVMs` using `google.golang.org/api/compute/v1`.
-  - [ ] Implement `ExecuteAction` using native SDK calls.
-- [ ] **Azure SDK Integration**
-  - [ ] Implement `FetchVMs` using `github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute`.
-  - [ ] Use `azidentity.NewAzureCLICredential()` for seamless auth handoff.
+---
 
-## Phase 5: Intelligent FinOps & Gemini Integration
-*Elevating the tool from purely operational to strategic cost management.*
-- [ ] **Cost Data Fetching**
-  - [ ] Integrate with AWS Cost Explorer, GCP Billing API, and Azure Cost Management to fetch real-time and estimated monthly costs for selected VMs or overall projects.
-  - [ ] Add a new `Cost` column to the `vmTable`.
-- [ ] **Cloud Provider Recommender APIs**
-  - [ ] Pull data from AWS Compute Optimizer (e.g., "Overprovisioned: downsize to t3.micro").
-  - [ ] Pull data from GCP Recommender (e.g., "Idle VM: terminate").
-- [ ] **Gemini "FinOps Mode"**
-  - [ ] Create a new UI Pane or Mode (`Alt+F` to toggle FinOps Mode).
-  - [ ] Integrate the official Gemini Go SDK.
-  - [ ] **Prompt Engineering:** Pass the currently selected VM's metadata (CPU, RAM, tags, uptime, provider recommendations, and cost) to Gemini to generate actionable, human-readable insights.
-  - [ ] *Example output in TUI:* "This GCP e2-standard-4 has been running for 30 days but GCP Recommender suggests it's idle. You are spending $98/mo. I recommend stopping it immediately or creating an automated schedule."
+## Sprint Plan
 
-## Phase 6: Polish & Advanced Features
-- [ ] **Bulk Actions:** Multi-select VMs (using `Space`) to start/stop an entire environment simultaneously.
-- [ ] **Advanced Querying:** Replace simple fuzzy search with a query language (e.g., `status:running provider:aws env:prod`).
-- [ ] **Background Sync:** Implement a background ticker to periodically fetch state updates without blocking the UI.
-- [ ] **In-App Logs:** Action to stream CloudWatch/Serial Console logs directly into a Bubble Tea viewport.
+### Sprint 1: Architecture Fix (1-2 days) — BLOCKING
+| Task | Description |
+|------|-------------|
+| ARCH-1 | Refactor Provider into composable interfaces (`DiskProvider`, `FirewallProvider`, `MetricsProvider`, `BillingProvider`) |
+| ARCH-2 | Test infrastructure: MockProvider, model unit tests |
+
+### Sprint 2: VM Resources (1 week)
+| Task | Description |
+|------|-------------|
+| VM-1,2 | Disk + Snapshot models |
+| VM-3,4,5 | Disk SDK fetch (AWS, GCP, Azure) |
+| VM-6,7,8 | Snapshot SDK fetch |
+| VM-9 | Disk actions |
+| VM-10,11 | Disks + Snapshots TUI views |
+| VM-12 | VM Detail drill-down |
+| VM-13 | Tab bar in App |
+
+### Sprint 3: Metrics Pipeline (1 week) — **PARALLEL WITH SPRINT 2**
+| Task | Description |
+|------|-------------|
+| MON-1 | Metrics data model |
+| MON-2,3,4 | CloudWatch + Cloud Monitoring + Azure Monitor SDK fetch |
+| MON-5 | VM struct metrics fields |
+| MON-6 | Async enrichment pipeline |
+| MON-7 | Metrics caching |
+| MON-8 | VM table metrics columns |
+| MON-9 | **Gemini bridge — pass real metrics to prompt** |
+| MON-10 | Alerting indicators |
+
+### Sprint 4: Billing + Gemini V2 (1 week) — **THE DIFFERENTIATOR**
+| Task | Description |
+|------|-------------|
+| BILL-1,2 | Cost + Recommendation models |
+| BILL-3,4,5 | Cost SDK fetch (AWS CE, GCP BigQuery, Azure Cost Mgmt) |
+| BILL-6,7 | Recommendation APIs (Compute Optimizer, Recommender, Advisor) |
+| BILL-8 | **GEMINI V2 PROMPT — metadata + metrics + cost + recommendations** |
+| BILL-9 | Cost enrichment pipeline |
+| BILL-10 | Billing configuration |
+
+### Sprint 5: Security (3-4 days) — **PARALLEL WITH SPRINT 4**
+| Task | Description |
+|------|-------------|
+| FW-1,2 | SecurityGroup + FirewallRule models |
+| FW-3,4,5 | SDK fetch (AWS SGs, GCP rules, Azure NSGs) |
+| FW-6 | Firewalls TUI view with audit highlighting |
+| FW-7 | Rules drill-down view |
+| FW-8 | VM → SG cross-navigation |
+
+### Sprint 6: Networking (3-4 days)
+| Task | Description |
+|------|-------------|
+| NET-1,2 | Network + Subnet models |
+| NET-3,4,5 | SDK fetch |
+| NET-6 | Networks TUI + Subnet drill-down + cross-nav |
+
+---
+
+## What's Cut From V1
+- ❌ Images/AMIs, Load Balancers, Route Tables, Static IPs
+- ❌ CLI backend for new resources
+- ❌ Sparklines, FinOps dashboard, cost anomaly detection
+- ❌ Bulk actions, background sync
+- ❌ Disk/Network metrics (VM-level only)
+
+These become v2 items after the core FinOps pipeline ships.
+
+---
+
+## The Full FinOps Pipeline
+
+```
+┌─────────────┐   ┌─────────────┐   ┌──────────────┐   ┌───────────────┐
+│ VM Metadata  │   │  Metrics    │   │  Cost Data   │   │ Provider Recs │
+│ (exists)     │   │ (Sprint 3)  │   │ (Sprint 4)   │   │ (Sprint 4)    │
+└──────┬───────┘   └──────┬──────┘   └──────┬───────┘   └───────┬───────┘
+       │                  │                  │                   │
+       └──────────────────┴──────────────────┴───────────────────┘
+                                    │
+                          ┌─────────▼─────────┐
+                          │  GEMINI V2 PROMPT  │
+                          │  (BILL-8)          │
+                          └─────────┬──────────┘
+                                    │
+                          ┌─────────▼──────────┐
+                          │  "This t3.large     │
+                          │  averages 8% CPU.   │
+                          │  Downsize to t3.small│
+                          │  and save $60/mo."  │
+                          └────────────────────┘
+```
+
+---
+
+## Agent Assignment
+
+| Agent | Files | Start | Blocked By |
+|-------|-------|-------|------------|
+| **Agent Arch** | `tasks-vm.md` ARCH-1,2 | Immediately | Nothing — do first |
+| **Agent VM** | `tasks-vm.md` VM-1→13 | After ARCH-1 | ARCH-1 |
+| **Agent Metrics** | `tasks-monitoring.md` | After ARCH-1 | ARCH-1, can parallel with VM |
+| **Agent Billing** | `tasks-billing.md` | After MON-9 for BILL-8 | MON-9 for Gemini V2 |
+| **Agent Firewall** | `tasks-firewalls.md` | After ARCH-1 | ARCH-1, can parallel with Billing |
+| **Agent Network** | `tasks-network.md` | After ARCH-1 | ARCH-1 |

@@ -14,9 +14,30 @@ To balance ease of onboarding with ultimate performance, CloudManager implements
 
 ```go
 type Provider interface {
-	FetchVMs(ctx context.Context, item contextItem) ([]VM, error)
-	ExecuteAction(ctx context.Context, action string, vm VM, item contextItem) (string, error)
-	GetSSHCmd(ctx context.Context, vm VM, item contextItem) (*exec.Cmd, error)
+	FetchVMs(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error)
+	ExecuteAction(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error)
+	GetSSHCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error)
+}
+```
+
+#### Composable Interfaces Pattern
+As the application expands to manage more resources (Disks, Snapshots, Firewalls, etc.), the `Provider` interface has been refactored to use Go's type assertion pattern instead of a monolithic God-interface. 
+
+New, domain-specific interfaces are defined alongside `Provider`:
+- `DiskProvider`
+- `SnapshotProvider`
+- `FirewallProvider`
+- `NetworkProvider`
+- `MetricsProvider`
+- `BillingProvider`
+
+Views interact with these capabilities by checking if the current provider implements the necessary interface:
+```go
+provider := providers.GetProvider(cfg)
+if dp, ok := provider.(providers.DiskProvider); ok {
+    disks, err := dp.FetchDisks(ctx, cloudCtx)
+} else {
+    // Show "Switch to SDK backend for disk management"
 }
 ```
 
@@ -24,11 +45,13 @@ type Provider interface {
 - Relies on `os/exec` to wrap `aws`, `gcloud`, and `az` commands.
 - **Pros:** Zero authentication code required. Inherits all complex SSO, MFA, and profile configurations the user already has set up in their terminal.
 - **Cons:** Slower. Requires spawning heavy external OS processes. Prone to parsing breakage if the upstream CLI JSON output changes.
+- **Scope:** Implements ONLY the base `Provider` interface (VM operations). Maintained for legacy compatibility.
 
 **Backend 2: The Native SDK Provider (`sdk`)**
 - Uses official Go SDKs (`aws-sdk-go-v2`, etc.).
 - **Pros:** Blazing fast. Communicates directly via gRPC/HTTP. Provides compile-time safety and granular error handling. Allows for easy contextual cancellation (e.g., stopping a request when the user hits `Esc`).
 - **Cons:** Requires more development effort to map all API interactions perfectly.
+- **Scope:** Implements ALL interfaces (`DiskProvider`, `SnapshotProvider`, etc.). This is the primary backend for all new features.
 
 Users can toggle between these backends dynamically using the `--configure` TUI or the `--backend` flag.
 

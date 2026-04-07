@@ -1,0 +1,25 @@
+name: CodeRabbit PR Reviewer
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CodeRabbit Review
+        uses: coderabbitai/ai-pr-reviewer@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }} # Uncomment if using OpenAI directly
+        with:
+          debug: false
+          review_simple_changes: false
+          review_comment_lgtm: false
