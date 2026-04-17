@@ -152,6 +152,7 @@ func New(cfg *config.AppConfig) *DisksView {
 	colList := list.New(colItems, list.NewDefaultDelegate(), 0, 0)
 	colList.Title = "Configure Disk Columns (Space to toggle, Enter to save, Esc to cancel)"
 	colList.SetShowStatusBar(false)
+	colList.SetFilteringEnabled(false)
 
 	// Sort config
 	var sItems []list.Item
@@ -161,6 +162,7 @@ func New(cfg *config.AppConfig) *DisksView {
 	sortList := list.New(sItems, list.NewDefaultDelegate(), 0, 0)
 	sortList.Title = "Sort Disks by (Enter to select, Esc to cancel)"
 	sortList.SetShowStatusBar(false)
+	sortList.SetFilteringEnabled(false)
 
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).
@@ -241,6 +243,7 @@ func (v *DisksView) Resize(width, height int, showSidebar bool) {
 	v.descView.Height = height - 4
 	v.columnConfigList.SetSize(width-4, height-4)
 	v.sortList.SetSize(width-4, height-4)
+	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
 }
 
 func (v *DisksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
@@ -382,8 +385,8 @@ func (v *DisksView) Render() string {
 		return ui.ClampToWindow(v.descView.View(), v.width, v.height)
 	case paneActions:
 		overlay := ui.OverlayStyle.Render(v.actions.View())
-		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
-			lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
+		bodyWithOverlay := lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", bodyWithOverlay), v.width, v.height)
 	case paneConfirm:
 		confirmMsg := fmt.Sprintf("Are you sure you want to %s disk %s?", v.pendingAction.title, v.pendingDisk.Name)
 		confirmStyle := ui.OverlayStyle.Copy().BorderForeground(ui.Alert).Padding(1, 2).Width(50)
@@ -393,8 +396,8 @@ func (v *DisksView) Render() string {
 			"\n", lipgloss.NewStyle().Foreground(ui.Subtle).Render("Enter: Confirm \u2022 Esc: Cancel"),
 		)
 		overlay := confirmStyle.Render(confirmView)
-		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
-			lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
+		bodyWithOverlay := lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", bodyWithOverlay), v.width, v.height)
 	case paneResize:
 		resizeMsg := fmt.Sprintf("Current size is %d GB. Enter new size for %s:", v.pendingDisk.SizeGB, v.pendingDisk.Name)
 		resizeStyle := ui.OverlayStyle.Copy().Padding(1, 2).Width(50)
@@ -405,8 +408,8 @@ func (v *DisksView) Render() string {
 			"\n", lipgloss.NewStyle().Foreground(ui.Subtle).Render("Enter: Submit \u2022 Esc: Cancel"),
 		)
 		overlay := resizeStyle.Render(resizeView)
-		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
-			lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
+		bodyWithOverlay := lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", bodyWithOverlay), v.width, v.height)
 	}
 
 	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", tableContent), v.width, v.height)
@@ -415,11 +418,15 @@ func (v *DisksView) Render() string {
 // --- Key handlers ---
 
 func (v *DisksView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	disk, ok := v.selectedDisk()
+
 	switch msg.String() {
 	case "enter":
-		if v.disks.SelectedRow() != nil {
-			v.activePane = paneActions
+		if !ok {
+			return v, nil
 		}
+		v.actions.Title = fmt.Sprintf("Actions: %s", disk.Name)
+		v.activePane = paneActions
 	case "/":
 		v.isSearching = true
 		v.searchInput.Focus()

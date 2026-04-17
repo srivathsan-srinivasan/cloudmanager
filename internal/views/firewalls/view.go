@@ -25,6 +25,8 @@ const (
 	paneDescribe
 	paneColumnConfig
 	paneSortConfig
+	paneConfirm
+	paneEditRule
 )
 
 type securityGroupFetchMsg struct {
@@ -130,6 +132,7 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 	columnConfigList := list.New(columnItems, list.NewDefaultDelegate(), 0, 0)
 	columnConfigList.Title = "Configure Firewall Columns (Space to toggle, Enter to save, Esc to cancel)"
 	columnConfigList.SetShowStatusBar(false)
+	columnConfigList.SetFilteringEnabled(false)
 
 	var sortItems []list.Item
 	for _, column := range core.DefaultSecurityGroupColumns {
@@ -138,6 +141,7 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 	sortList := list.New(sortItems, list.NewDefaultDelegate(), 0, 0)
 	sortList.Title = "Sort Firewalls by (Enter to select, Esc to cancel)"
 	sortList.SetShowStatusBar(false)
+	sortList.SetFilteringEnabled(false)
 
 	descView := viewport.New(80, 20)
 	descView.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).
@@ -218,6 +222,7 @@ func (v *FirewallsView) Resize(width, height int, showSidebar bool) {
 	v.descView.Height = height - 4
 	v.columnConfigList.SetSize(width-4, height-4)
 	v.sortList.SetSize(width-4, height-4)
+	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
 }
 
 func (v *FirewallsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
@@ -318,7 +323,8 @@ func (v *FirewallsView) Render() string {
 	switch v.activePane {
 	case paneActions:
 		overlay := ui.OverlayStyle.Render(v.actions.View())
-		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
+		bodyWithOverlay := lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", bodyWithOverlay), v.width, v.height)
 	case paneDescribe:
 		return ui.ClampToWindow(v.descView.View(), v.width, v.height)
 	case paneColumnConfig:
@@ -331,13 +337,16 @@ func (v *FirewallsView) Render() string {
 }
 
 func (v *FirewallsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	sg, ok := v.selectedGroup()
+
 	switch msg.String() {
 	case "enter":
-		if v.groups.SelectedRow() != nil {
-			v.activePane = paneActions
+		if !ok {
+			return v, nil
 		}
-	case "/":
-		v.isSearching = true
+		v.actions.Title = fmt.Sprintf("Actions: %s", sg.Name)
+		v.activePane = paneActions
+	case "/":		v.isSearching = true
 		v.searchInput.Focus()
 	case "left", "h":
 		if v.columnOffset > 0 {

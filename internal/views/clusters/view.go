@@ -86,6 +86,7 @@ func (v *ClustersView) Resize(width, height int, showSidebar bool) {
 	v.width = width
 	v.height = height
 	v.refreshTable()
+	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
 }
 
 func (v *ClustersView) Update(msg tea.Msg) (ui.View, tea.Cmd) {

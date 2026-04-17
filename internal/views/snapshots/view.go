@@ -149,6 +149,7 @@ func New(cfg *config.AppConfig) *SnapshotsView {
 	colList := list.New(colItems, list.NewDefaultDelegate(), 0, 0)
 	colList.Title = "Configure Snapshot Columns (Space to toggle, Enter to save, Esc to cancel)"
 	colList.SetShowStatusBar(false)
+	colList.SetFilteringEnabled(false)
 
 	// Sort config
 	var sItems []list.Item
@@ -158,6 +159,7 @@ func New(cfg *config.AppConfig) *SnapshotsView {
 	sortList := list.New(sItems, list.NewDefaultDelegate(), 0, 0)
 	sortList.Title = "Sort Snapshots by (Enter to select, Esc to cancel)"
 	sortList.SetShowStatusBar(false)
+	sortList.SetFilteringEnabled(false)
 
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).
@@ -238,6 +240,7 @@ func (v *SnapshotsView) Resize(width, height int, showSidebar bool) {
 	v.descView.Height = height - 4
 	v.columnConfigList.SetSize(width-4, height-4)
 	v.sortList.SetSize(width-4, height-4)
+	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
 }
 
 func (v *SnapshotsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {

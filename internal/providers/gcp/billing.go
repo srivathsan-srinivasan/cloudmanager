@@ -101,16 +101,81 @@ func FetchAccountCostSDK(ctx context.Context, projectID string, dataset, table s
 }
 
 // FetchVMCostSDK fetches the specific VM cost.
-func FetchVMCostSDK(ctx context.Context, projectID, instanceID string) (*core.ResourceCost, error) {
-	// Fallback implementation using estimated pricing as requested.
-	// In a real scenario, this would call cloudbilling.googleapis.com to get the actual
-	// sku prices for the specific machine type and multiply by hours running.
-	// We'll return a placeholder zero-cost representing the estimation logic.
+func FetchVMCostSDK(ctx context.Context, projectID, instanceID, dataset, table string) (*core.ResourceCost, error) {
+	if dataset == "" || table == "" {
+		return &core.ResourceCost{
+			ResourceID:       instanceID,
+			Provider:         "GCP",
+			CurrentMonthCost: 0.0,
+			Currency:         "USD",
+			LastUpdated:      time.Now(),
+		}, nil
+	}
+
+	client, err := bigquery.NewClient(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create BigQuery client: %w", err)
+	}
+	defer client.Close()
+
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	startOfPrevMonth := startOfMonth.AddDate(0, -1, 0)
+	
+	// Try to match on resource name or ID. We use name since ID might not always be in billing perfectly.
+	qStr := fmt.Sprintf(`
+		SELECT SUM(cost) as total_cost
+		FROM `+"`%s.%s.%s`"+`
+		WHERE usage_start_time >= TIMESTAMP(@start_time)
+		AND (resource.name = @instance_id OR resource.global_name LIKE CONCAT('%%', @instance_id))
+	`, projectID, dataset, table)
+
+	q := client.Query(qStr)
+	q.Parameters = []bigquery.QueryParameter{
+		{Name: "start_time", Value: startOfMonth},
+		{Name: "instance_id", Value: instanceID},
+	}
+
+	it, err := q.Read(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("BigQuery query failed: %w", err)
+	}
+
+	var currentCost float64
+	var row struct {
+		TotalCost float64 `bigquery:"total_cost"`
+	}
+	if err := it.Next(&row); err == nil {
+		currentCost = row.TotalCost
+	}
+
+	// Prev month
+	qPrevStr := fmt.Sprintf(`
+		SELECT SUM(cost) as total_cost
+		FROM `+"`%s.%s.%s`"+`
+		WHERE usage_start_time >= TIMESTAMP(@start_prev) AND usage_start_time < TIMESTAMP(@start_time)
+		AND (resource.name = @instance_id OR resource.global_name LIKE CONCAT('%%', @instance_id))
+	`, projectID, dataset, table)
+	qPrev := client.Query(qPrevStr)
+	qPrev.Parameters = []bigquery.QueryParameter{
+		{Name: "start_prev", Value: startOfPrevMonth},
+		{Name: "start_time", Value: startOfMonth},
+		{Name: "instance_id", Value: instanceID},
+	}
+	itPrev, err := qPrev.Read(ctx)
+	var prevCost float64
+	if err == nil {
+		if err := itPrev.Next(&row); err == nil {
+			prevCost = row.TotalCost
+		}
+	}
+
 	return &core.ResourceCost{
-		ResourceID:       instanceID,
-		Provider:         "GCP",
-		CurrentMonthCost: 0.0, // Replace with actual estimation logic
-		Currency:         "USD",
-		LastUpdated:      time.Now(),
+		ResourceID:        instanceID,
+		Provider:          "GCP",
+		CurrentMonthCost:  currentCost,
+		PreviousMonthCost: prevCost,
+		Currency:          "USD",
+		LastUpdated:       time.Now(),
 	}, nil
 }

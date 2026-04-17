@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -190,6 +191,7 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 	colList := list.New(colItems, list.NewDefaultDelegate(), 0, 0)
 	colList.Title = "Configure VM Columns (Space to toggle, Enter to save, Esc to cancel)"
 	colList.SetShowStatusBar(false)
+	colList.SetFilteringEnabled(false)
 
 	// Sort config
 	var sItems []list.Item
@@ -199,6 +201,7 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 	sortList := list.New(sItems, list.NewDefaultDelegate(), 0, 0)
 	sortList.Title = "Sort VMs by (Enter to select, Esc to cancel)"
 	sortList.SetShowStatusBar(false)
+	sortList.SetFilteringEnabled(false)
 
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).
@@ -231,7 +234,7 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 func (v *VMsView) Title() string { return "VMs" }
 
 func (v *VMsView) ShortHelp() string {
-	return "\u2191\u2193: Navigate \u2022 \u2190\u2192: Pan \u2022 Enter: Actions \u2022 /: Search \u2022 S: Sort \u2022 C: Columns \u2022 r: Refresh"
+	return "\u2191\u2193: Nav \u2022 \u2190\u2192: Pan \u2022 c: Cost \u2022 s: SSH \u2022 d: Describe \u2022 ctrl+d: Terminate \u2022 Enter: Menu \u2022 /: Search"
 }
 
 func (v *VMsView) IsInputActive() bool {
@@ -271,6 +274,7 @@ func (v *VMsView) Resize(width, height int, showSidebar bool) {
 	v.descView.Height = height - 4
 	v.columnConfigList.SetSize(width-4, height-4)
 	v.sortList.SetSize(width-4, height-4)
+	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
 }
 
 func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
@@ -287,6 +291,9 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			switch v.activePane {
 			case paneActions, paneDescribe, paneColumnConfig, paneSortConfig:
 				v.activePane = paneTable
+				if msg.String() == "esc" {
+					v.refreshTable()
+				}
 				return v, nil
 			case paneConfirm:
 				v.activePane = paneActions
@@ -442,8 +449,8 @@ func (v *VMsView) Render() string {
 		return ui.ClampToWindow(v.descView.View(), v.width, v.height)
 	case paneActions:
 		overlay := ui.OverlayStyle.Render(v.actions.View())
-		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
-			lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
+		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 	case paneConfirm:
 		confirmMsg := fmt.Sprintf("Are you sure you want to %s instance %s?", v.pendingAction.title, v.pendingVM.Name)
 		confirmStyle := ui.OverlayStyle.Copy().BorderForeground(ui.Alert).Padding(1, 2).Width(50)
@@ -453,8 +460,8 @@ func (v *VMsView) Render() string {
 			"\n", lipgloss.NewStyle().Foreground(ui.Subtle).Render("Enter: Confirm \u2022 Esc: Cancel"),
 		)
 		overlay := confirmStyle.Render(confirmView)
-		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
-			lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
+		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 	}
 
 	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", tableContent), v.width, v.height)
@@ -463,11 +470,44 @@ func (v *VMsView) Render() string {
 // --- Key handlers ---
 
 func (v *VMsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	vm, ok := v.selectedVM()
+
 	switch msg.String() {
 	case "enter":
-		if v.vms.SelectedRow() != nil {
-			v.activePane = paneActions
+		if !ok { return v, nil }
+		v.actions.Title = fmt.Sprintf("Actions: %s", vm.Name)
+		v.activePane = paneActions
+		v.refreshTable()
+	case "d":
+		if !ok { return v, nil }
+		v.descView.SetContent(core.DescribeVM(vm))
+		v.activePane = paneDescribe
+	case "c":
+		if !ok { return v, nil }
+		v.activePane = paneTable
+		v.statusMsg = fmt.Sprintf("Fetching cost report for %s...", vm.Name)
+		v.loading = true
+		return v, executeCostCommandCmd(vm, v.activeCtx, *v.cfg)
+	case "s":
+		if !ok { return v, nil }
+		provider := getProvider(*v.cfg)
+		sshCmd, err := provider.GetSSHCmd(context.Background(), vm, v.activeCtx)
+		if err != nil || sshCmd == nil {
+			v.statusMsg = fmt.Sprintf("SSH not supported for %s", v.activeCtx.Provider)
+			v.activePane = paneTable
+			return v, nil
 		}
+		v.activePane = paneTable
+		v.statusMsg = fmt.Sprintf("Starting SSH session with %s...", vm.Name)
+		return v, tea.ExecProcess(sshCmd, func(err error) tea.Msg {
+			return sshCompleteMsg{err: err}
+		})
+	case "ctrl+d":
+		if !ok { return v, nil }
+		v.pendingAction = actionItem{title: "Terminate", desc: "Permanently delete the virtual machine"}
+		v.pendingVM = vm
+		v.activePane = paneConfirm
+		v.refreshTable()
 	case "/":
 		v.isSearching = true
 		v.searchInput.Focus()
@@ -548,10 +588,10 @@ func (v *VMsView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 				}
 			}
 			if action.title == "Cost" {
-				v.descView.SetContent(costGuide(vm, v.activeCtx, *v.cfg))
-				v.activePane = paneDescribe
-				v.statusMsg = "Viewing cost lookup guide."
-				return v, nil
+				v.activePane = paneTable
+				v.statusMsg = fmt.Sprintf("Fetching cost report for %s...", vm.Name)
+				v.loading = true
+				return v, executeCostCommandCmd(vm, v.activeCtx, *v.cfg)
 			}
 			if action.title == "SSH" {
 				provider := getProvider(*v.cfg)
@@ -669,14 +709,23 @@ func (v *VMsView) refreshTable() {
 	if v.width == 0 {
 		return
 	}
+
+	availWidth := v.width
+	if v.activePane == paneActions || v.activePane == paneConfirm {
+		availWidth = v.width - 55
+		if availWidth < 40 {
+			availWidth = 40
+		}
+	}
+
 	cursor := v.vms.Cursor()
 	focused := v.vms.Focused()
-	newVMs, newCols, nextOffset, canScrollLeft, canScrollRight := createVMTable(*v.cfg, v.width, v.columnOffset)
+	newVMs, newCols, nextOffset, canScrollLeft, canScrollRight := createVMTable(*v.cfg, availWidth, v.columnOffset)
 	v.columnOffset = nextOffset
 	v.canScrollLeft = canScrollLeft
 	v.canScrollRight = canScrollRight
 	newVMs.SetHeight(ui.TableHeight(v.height))
-	newVMs.SetWidth(ui.TableViewportWidth(v.width))
+	newVMs.SetWidth(ui.TableViewportWidth(availWidth))
 	rows := mapVMsToRows(v.visibleRowsSource(), newCols)
 	newVMs.SetRows(rows)
 	if cursor >= 0 && cursor < len(rows) {
@@ -766,6 +815,7 @@ func buildVMColumns(cfg config.AppConfig) []table.Column {
 		"Name": 22, "Instance ID": 18, "Type": 12, "State": 10,
 		"Private IP": 15, "Public IP": 15, "Zone": 14,
 		"Resource Group": 18, "Network": 14, "Subnet": 14, "Labels": 24,
+		"Security Groups": 20,
 		"CPU %": 8, "Memory %": 10, "Disk Read": 12, "Disk Write": 12, "Net In": 12, "Net Out": 12,
 		"Cost": 10, "Cost Trend": 10, "Recommendation": 25, "Est. Savings": 12,
 	}
@@ -1119,76 +1169,36 @@ func vmCostCacheKey(cloudCtx core.CloudContext, resourceID string) string {
 	return fmt.Sprintf("%s|%s", cloudCtx.CacheKey(), resourceID)
 }
 
-func costGuide(vm core.VM, cloudCtx core.CloudContext, cfg config.AppConfig) string {
+func buildCostCommand(vm core.VM, cloudCtx core.CloudContext, cfg config.AppConfig) string {
 	now := time.Now()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	end := start.AddDate(0, 1, 0)
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "COST CLI\n\n")
-	fmt.Fprintf(&b, "Provider: %s\n", cloudCtx.Provider)
-	fmt.Fprintf(&b, "VM: %s\n", vm.Name)
-	fmt.Fprintf(&b, "Resource ID: %s\n\n", vm.ID)
-
 	switch cloudCtx.Provider {
 	case "AWS":
-		fmt.Fprintf(&b, "Run one of these commands:\n\n")
-		fmt.Fprintf(&b, "aws ce get-cost-and-usage \\\n")
-		fmt.Fprintf(&b, "  --time-period Start=%s,End=%s \\\n", start.Format("2006-01-02"), end.Format("2006-01-02"))
-		fmt.Fprintf(&b, "  --granularity MONTHLY \\\n")
-		fmt.Fprintf(&b, "  --metrics UnblendedCost \\\n")
-		fmt.Fprintf(&b, "  --filter '{\"Dimensions\":{\"Key\":\"RESOURCE_ID\",\"Values\":[\"%s\"]}}' \\\n", vm.ID)
-		fmt.Fprintf(&b, "  --profile %s \\\n", cloudCtx.AuthRef())
-		fmt.Fprintf(&b, "  --region us-east-1 \\\n")
-		fmt.Fprintf(&b, "  --output json\n\n")
-		fmt.Fprintf(&b, "aws ce get-cost-and-usage \\\n")
-		fmt.Fprintf(&b, "  --time-period Start=%s,End=%s \\\n", start.Format("2006-01-02"), end.Format("2006-01-02"))
-		fmt.Fprintf(&b, "  --granularity MONTHLY \\\n")
-		fmt.Fprintf(&b, "  --metrics UnblendedCost \\\n")
-		fmt.Fprintf(&b, "  --filter '{\"Dimensions\":{\"Key\":\"RESOURCE_ID\",\"Values\":[\"%s\"]}}' \\\n", vm.ID)
-		fmt.Fprintf(&b, "  --profile %s \\\n", cloudCtx.AuthRef())
-		fmt.Fprintf(&b, "  --region us-east-1 \\\n")
-		fmt.Fprintf(&b, "  --output table\n")
+		return fmt.Sprintf("aws --no-cli-pager ce get-cost-and-usage --time-period Start=%s,End=%s --granularity MONTHLY --metrics UnblendedCost --filter '{\"Dimensions\":{\"Key\":\"RESOURCE_ID\",\"Values\":[\"%s\"]}}' --profile %s --region us-east-1 --output table", start.Format("2006-01-02"), end.Format("2006-01-02"), vm.ID, cloudCtx.AuthRef())
 	case "GCP":
 		billingTable := gcpBillingTablePath(cloudCtx, cfg)
 		globalName := gcpVMGlobalName(vm, cloudCtx)
-		fmt.Fprintf(&b, "Run one of these commands:\n\n")
-		fmt.Fprintf(&b, "bq query --use_legacy_sql=false --format=prettyjson '\n")
-		fmt.Fprintf(&b, "SELECT service.description AS service, sku.description AS sku, SUM(cost) AS cost\n")
-		fmt.Fprintf(&b, "FROM `%s`\n", billingTable)
-		fmt.Fprintf(&b, "WHERE usage_start_time >= TIMESTAMP(\"%s\")\n", start.Format("2006-01-02"))
-		fmt.Fprintf(&b, "  AND usage_start_time < TIMESTAMP(\"%s\")\n", end.Format("2006-01-02"))
-		fmt.Fprintf(&b, "  AND (resource.name = \"%s\" OR resource.global_name = \"%s\")\n", vm.Name, globalName)
-		fmt.Fprintf(&b, "GROUP BY service, sku\n")
-		fmt.Fprintf(&b, "ORDER BY cost DESC\n'\n\n")
-		fmt.Fprintf(&b, "bq query --use_legacy_sql=false --format=csv '\n")
-		fmt.Fprintf(&b, "SELECT service.description AS service, sku.description AS sku, SUM(cost) AS cost\n")
-		fmt.Fprintf(&b, "FROM `%s`\n", billingTable)
-		fmt.Fprintf(&b, "WHERE usage_start_time >= TIMESTAMP(\"%s\")\n", start.Format("2006-01-02"))
-		fmt.Fprintf(&b, "  AND usage_start_time < TIMESTAMP(\"%s\")\n", end.Format("2006-01-02"))
-		fmt.Fprintf(&b, "  AND (resource.name = \"%s\" OR resource.global_name = \"%s\")\n", vm.Name, globalName)
-		fmt.Fprintf(&b, "GROUP BY service, sku\n")
-		fmt.Fprintf(&b, "ORDER BY cost DESC\n'\n")
+		return fmt.Sprintf("bq query --use_legacy_sql=false --format=prettyjson 'SELECT service.description AS service, sku.description AS sku, SUM(cost) AS cost FROM `%s` WHERE usage_start_time >= TIMESTAMP(\"%s\") AND usage_start_time < TIMESTAMP(\"%s\") AND (resource.name = \"%s\" OR resource.global_name = \"%s\") GROUP BY service, sku ORDER BY cost DESC'", billingTable, start.Format("2006-01-02"), end.Format("2006-01-02"), vm.Name, globalName)
 	case "Azure":
 		scope := fmt.Sprintf("/subscriptions/%s", cloudCtx.AccountID)
-		fmt.Fprintf(&b, "Run one of these commands:\n\n")
-		fmt.Fprintf(&b, "az rest --method post \\\n")
-		fmt.Fprintf(&b, "  --url \"https://management.azure.com%s/providers/Microsoft.CostManagement/query?api-version=2025-03-01\" \\\n", scope)
-		fmt.Fprintf(&b, "  --body '{\"type\":\"ActualCost\",\"timeframe\":\"MonthToDate\",\"dataset\":{\"granularity\":\"None\",\"filter\":{\"dimensions\":{\"name\":\"ResourceId\",\"operator\":\"In\",\"values\":[\"%s\"]}},\"aggregation\":{\"totalCost\":{\"name\":\"PreTaxCost\",\"function\":\"Sum\"}},\"grouping\":[{\"type\":\"Dimension\",\"name\":\"ServiceName\"}]}}' \\\n", vm.ID)
-		fmt.Fprintf(&b, "  --output json\n\n")
-		fmt.Fprintf(&b, "az rest --method post \\\n")
-		fmt.Fprintf(&b, "  --url \"https://management.azure.com%s/providers/Microsoft.CostManagement/query?api-version=2025-03-01\" \\\n", scope)
-		fmt.Fprintf(&b, "  --body '{\"type\":\"ActualCost\",\"timeframe\":\"MonthToDate\",\"dataset\":{\"granularity\":\"None\",\"filter\":{\"dimensions\":{\"name\":\"ResourceId\",\"operator\":\"In\",\"values\":[\"%s\"]}},\"aggregation\":{\"totalCost\":{\"name\":\"PreTaxCost\",\"function\":\"Sum\"}},\"grouping\":[{\"type\":\"Dimension\",\"name\":\"ServiceName\"}]}}' \\\n", vm.ID)
-		fmt.Fprintf(&b, "  --output table\n")
-	case "DigitalOcean":
-		fmt.Fprintf(&b, "CLI cost lookup is not wired for DigitalOcean yet.\n")
-		fmt.Fprintf(&b, "Use the Droplet ID below with your own billing/reporting flow.\n\n")
-		fmt.Fprintf(&b, "Droplet ID: %s\n", vm.ID)
+		return fmt.Sprintf("az rest --method post --url \"https://management.azure.com%s/providers/Microsoft.CostManagement/query?api-version=2025-03-01\" --body '{\"type\":\"ActualCost\",\"timeframe\":\"MonthToDate\",\"dataset\":{\"granularity\":\"None\",\"filter\":{\"dimensions\":{\"name\":\"ResourceId\",\"operator\":\"In\",\"values\":[\"%s\"]}},\"aggregation\":{\"totalCost\":{\"name\":\"PreTaxCost\",\"function\":\"Sum\"}},\"grouping\":[{\"type\":\"Dimension\",\"name\":\"ServiceName\"}]}}' --output table", scope, vm.ID)
 	default:
-		fmt.Fprintf(&b, "No provider-specific cost command is available.\n")
+		return "echo 'Cost lookup not supported for this provider.'"
 	}
+}
 
-	return b.String()
+func executeCostCommandCmd(vm core.VM, cloudCtx core.CloudContext, cfg config.AppConfig) tea.Cmd {
+	return func() tea.Msg {
+		cmdStr := buildCostCommand(vm, cloudCtx, cfg)
+		cmd := exec.Command("bash", "-c", cmdStr)
+		output, err := cmd.CombinedOutput()
+		
+		formattedOutput := fmt.Sprintf("COST REPORT FOR %s (%s)\n\n$ %s\n\n%s", vm.Name, cloudCtx.Provider, cmdStr, string(output))
+		
+		return describeCompleteMsg{output: formattedOutput, err: err}
+	}
 }
 
 func sshRemediationGuide(vm core.VM, cloudCtx core.CloudContext) string {
@@ -1338,7 +1348,7 @@ Cost Trend:          %s`, vm.MonthlyCost, vm.CostTrend)
 Finding:           %s
 Estimated Savings: %s`, vm.Recommendation, vm.EstSavings)
 
-		prompt := fmt.Sprintf(`You are an expert Cloud FinOps Architect.
+		prompt := fmt.Sprintf(`You are an expert Cloud FinOps Architect advising a DevOps Engineer using a CLI tool.
 
 === VM METADATA ===
 Provider: %s | Name: %s | ID: %s
@@ -1352,13 +1362,14 @@ Network: %s / Subnet: %s | Labels: %s
 %s
 
 === YOUR TASK ===
-1. Rightsizing Verdict: Is this VM over/under-provisioned? Cite CPU/memory averages.
-2. Specific Action: Recommend a concrete instance type with expected savings.
-3. Scheduling: Could this VM be stopped off-hours?
-4. Purchase: Should this be Reserved/Committed Use/Savings Plan?
-5. Risk: Any risks to the recommendation (e.g., occasional CPU spikes)?
+Based on the metrics, cost, and provider recommendations above, provide a comprehensive FinOps analysis.
 
-Be concise (5-8 sentences). Use specific numbers. No markdown.`,
+1. **Rightsizing Verdict:** Is this VM over-provisioned, under-provisioned, or optimized? Cite the specific CPU/Memory averages and Maximums.
+2. **Specific Action & Savings:** Recommend a concrete new instance type/size if applicable, or state if it should be terminated/stopped. Estimate the savings.
+3. **Commitment Strategy:** Should this workload be covered by a Reserved Instance, Savings Plan, or Committed Use Discount based on its uptime?
+4. **Execution Plan (CLI):** Provide the exact CLI command (e.g., 'aws ec2 modify-instance-attribute', 'gcloud compute instances set-machine-type', 'az vm resize') the user should run to apply your primary recommendation.
+
+Be concise but highly technical. Use markdown formatting (bolding, lists, code blocks for CLI commands).`,
 			activeCtx.Provider, vm.Name, vm.ID, vm.Type, vm.State, vm.Zone,
 			vm.Network, vm.Subnet, vm.Labels,
 			metricsSection, costSection, recSection)

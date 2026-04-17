@@ -377,3 +377,178 @@ This file is the running handoff for recent CloudManager work so future runs can
 4. GCP’s firewall model remains network-grouped rather than SG-like, so drill-down is useful but still reflects GCP networking semantics rather than per-VM security-group semantics.
 5. Firewall mutations are intentionally not implemented yet. The current slice is read-only: list, inspect, and drill into rules.
 6. The repository is still in a large uncommitted refactor state, so future cleanup should be branch-aware and avoid assuming untracked paths are disposable.
+
+## 2026-04-14
+
+### Purpose
+Completed the SDK backend implementations for Clusters and Databases across AWS, GCP, and Azure to remove remaining stubs and advance the roadmap. The Monitoring/Metrics and Billing/FinOps modules were verified to be already fully implemented in the SDK layer.
+
+### What Was Done
+1. Implemented `FetchClustersSDK` for AWS (EKS), GCP (GKE), and Azure (AKS).
+2. Implemented `FetchDatabasesSDK` for AWS (RDS), GCP (Cloud SQL), and Azure (PostgreSQL Flexible Servers).
+3. Added the necessary cloud provider SDK dependencies to `go.mod` (`eks`, `rds`, `container/v1`, `sqladmin/v1beta4`, `armcontainerservice`, `armpostgresqlflexibleservers`).
+4. Fixed deprecated client initializations for older Azure SDK packages (`NewManagedClustersClient` and `NewServersClient` vs factory).
+5. Cleaned up unused imports in the AWS implementations.
+6. Verified that metrics and billing data models and SDK fetchers were completely implemented and not just stubs.
+
+### Key Files Touched
+- `go.mod`, `go.sum`
+- `internal/providers/aws/clusters.go`
+- `internal/providers/aws/databases.go`
+- `internal/providers/gcp/clusters.go`
+- `internal/providers/gcp/databases.go`
+- `internal/providers/azure/clusters.go`
+- `internal/providers/azure/databases.go`
+
+### Validation Performed
+- `go mod tidy` executed.
+- `go build ./...` passes successfully.
+- `go test ./...` passes successfully. Checked `err.log` and `err_run.log`, both were clear.
+
+### Remaining Risks Or Follow-Up
+- The Clusters and Databases TUI views (`internal/views/clusters`, `internal/views/databases`) still need tests.
+- Azure currently only fetches PostgreSQL Flexible Servers; additional DB engines might be needed based on user demand.
+
+## 2026-04-14 (Update)
+
+### What Was Done
+- Discovered that while `Databases` fetchers were implemented for all providers, they were accidentally omitted from the `backendBindings` in `internal/providers/registry.go`. 
+- Added the `Databases: databaseFuncs{...}` block to the CLI and SDK bindings for AWS, GCP, and Azure in the registry.
+- This fixes the issue where the Databases tab would show up as empty/unsupported despite the API fetchers being fully written.
+
+## 2026-04-14 (Update 2)
+
+### What Was Done
+- Discovered that when using the CLI backend for AWS (`aws`), commands like `eks list-clusters` and `rds describe-db-instances` would hang because the AWS CLI defaults to using a paginator (`less`) for output, requiring the user to press `q` to exit.
+- Added `--no-cli-pager` globally to all `aws` CLI command executions (VMs, Clusters, Databases, SSH/SSM) in `internal/providers/aws/client.go` and `internal/providers/aws/clusters.go` to ensure silent, non-interactive JSON parsing doesn't hang.
+- Updated AWS client tests to expect the new `--no-cli-pager` flag.
+
+## 2026-04-14 (Update 3)
+
+### What Was Done
+- Added an in-app global hotkey (`B`) to allow operators to instantly toggle between `CLI` and `SDK` backends.
+- Pressing `B` saves the new backend preference to config, logs the change, updates the Mode badge in the footer, and automatically dispatches a refresh command (`r`) to the currently active view so data is immediately re-fetched via the new backend.
+- Updated the main footer to advertise the new `B:Mode` hotkey alongside the logs hotkey.
+
+## 2026-04-14 (Update 4)
+
+### What Was Done
+- Discovered the `Networks` tab was empty because `FetchNetworks` and `FetchSubnets` were returning `not implemented` stubs in both the `SDKProvider` and `CLIProvider` adapters in `internal/providers/sdk.go` and `internal/providers/cli.go`.
+- Fixed the interface adapters so they properly delegate requests to the registered backend bindings. Networks and Subnets now successfully render in the TUI across AWS, GCP, and Azure.
+
+## 2026-04-14 (Update 5)
+
+### What Was Done
+- Fixed a UX "infinite loop" bug in the `Networks` tab where users trying to select `View VMs` for a subnet were trapped in a navigation loop.
+- The root cause was that `paneSubnetActions` was missing from the keyboard event routing switch in `internal/views/networks/view.go`, causing "Enter" keystrokes to fall through to `handleTableKeys`. This incorrectly switched the active pane back to the parent `paneActions` instead of executing the subnet action, forcing the user into a cycle of sub-menus without ever launching the `VMsView`.
+
+## 2026-04-14 (Update 6)
+
+### What Was Done
+- Discovered that while backend implementations existed for firewall rule modifications (`ExecuteFirewallActionSDK`), the TUI's `RulesView` was completely read-only and skipped the actions list.
+- Implemented the `Action` menu pattern for firewall rules, similar to the VMs and Networks tabs.
+- Pressing `Enter` on a firewall rule now opens a menu with: `Describe`, `Enable` (GCP), `Disable` (GCP), and `Delete` (Destructive).
+- Actions are fully wired to the backend execution layer. Confirmed modifications trigger a background CLI/SDK execution and a subsequent table refresh upon success or gracefully show an error notification in the UI if unsupported by the specific cloud provider.
+
+## 2026-04-16
+
+### Purpose
+Completed a request to completely rewrite `ExecuteFirewallActionSDK` to use native Go SDKs instead of shelling out to `os/exec` for AWS, GCP, and Azure. 
+
+### What Was Done
+1. **AWS**: Updated `internal/providers/aws/firewalls_edit.go` to use `ec2.Client`. Implemented `Delete` and `Edit` actions. Added a "Revoke then Authorize" logic specifically for AWS to handle "Edit" correctly. Wrote `toAWSPermission` mapping helper to convert the normalized `core.FirewallRule` into `ec2types.IpPermission`.
+2. **GCP**: Renamed `firewalls_k9s.go` to `internal/providers/gcp/firewalls_edit.go` and rewrote it using `compute.NewService(ctx)`. Implemented `Delete`, `Enable`, `Disable` (using Patch API on the `Disabled` boolean) and `Edit` (using Patch API mapping normalized properties like `SourceRanges`, `Allowed` and `Denied` slices back to a GCP `compute.Firewall` object). Stripped `-allow-`/`-deny-` index suffixes when modifying rules since GCP rules bundle multiple definitions into one API object.
+3. **Azure**: Rewrote `internal/providers/azure/firewalls_edit.go` to use `armnetwork.NewSecurityRulesClient`. Implemented `Delete` (`BeginDelete`) and `Edit` (`BeginCreateOrUpdate`). Mapped all `core.FirewallRule` fields to the `armnetwork.SecurityRule` properties format.
+4. Added `applog.Infof("AUDIT: user modified firewall rule: ...")` tracking to all destructive and edit operations across the three providers.
+5. Successfully compiled with `go build ./...`
+
+### Key Files Touched
+- `internal/providers/aws/firewalls_edit.go`
+- `internal/providers/gcp/firewalls_k9s.go` (Deleted)
+- `internal/providers/gcp/firewalls_edit.go` (Added)
+- `internal/providers/azure/firewalls_edit.go`
+- `LOG.md`
+
+## 2026-04-14 (Update 7)
+
+### What Was Done
+- Completely refactored `ExecuteFirewallActionSDK` across AWS, GCP, and Azure to utilize pure Go SDKs instead of relying on `os/exec` wrappers (`az`, `aws`, `gcloud`).
+- **AWS:** Implemented deletions and edits using `ec2.Client` (`RevokeSecurityGroupIngress`/`Egress` and `AuthorizeSecurityGroupIngress`/`Egress`).
+- **GCP:** Implemented deletions, enable/disable toggles, and property updates using `compute.Service` (`Firewalls.Delete` and `Firewalls.Patch`).
+- **Azure:** Implemented deletions and property updates using `armnetwork.SecurityRulesClient` (`BeginDelete` and `BeginCreateOrUpdate`).
+- **TUI Update:** Added a new `paneEditRule` UI form within the Firewalls module. Users can now select "Edit" to open an interactive form to modify Protocol, Port Range, and IP/CIDR block allocations directly in the application.
+- Added comprehensive audit logs (`applog.Infof("AUDIT: ...")`) tracking any destructive or state-modifying actions applied to security groups across all cloud providers.
+
+## 2026-04-14 (Update 8)
+
+### What Was Done
+- **UX Request:** Addressed the UX question regarding a Steampipe dashboard / K9s-style hotkey interface vs. the current full-screen Action menu.
+- Added `Security Groups` as a default column in the `VMs` selection view.
+- Introduced `K9s`-style table hotkeys as a new UX paradigm to bypass full-screen Action menus, significantly speeding up workflows.
+- Implemented `e` (Edit), `d` (Describe), `ctrl+d` (Delete), and `x` (Toggle Enable/Disable) natively on the `Firewall Rules` table rows, removing the need to press `Enter` to find these actions. Updated the `ShortHelp` text to advertise these new hotkeys directly to the operator.
+
+## 2026-04-14 (Update 9)
+
+### What Was Done
+- UX update: Mapped standard K9s-style hotkeys (`d`, `ctrl+d`, `s`) directly to the VM table rows to bypass the full-screen Action menu for common operations.
+- Appended `Security Groups` to the list of `DefaultVMColumns` per user request, and mapped it to the `preferredWidths` logic so that security groups render optimally on the VM tables.
+
+## 2026-04-14 (Update 10)
+
+### What Was Done
+- UX update: Addressed the issue where full-screen `Action` menus (opened via `Enter`) would unnecessarily paginate after 4 items despite having plenty of available screen height.
+- Implemented `ui.ActionListHeight()`, an intelligent helper that dynamically computes the exact minimum height required for a `bubbles/list` instance based on the total number of items, descriptions, and overhead padding, while restricting it to the maximum available terminal height.
+- Hooked this dynamic sizing function into the `Resize` loops of all modules that utilize action menus (`VMs`, `Firewalls`, `Firewall Rules`, `Disks`, `Snapshots`, `Networks`, and `Clusters`), completely eliminating unnecessary pagination and utilizing the available terminal area effectively.
+
+## 2026-04-14 (Update 11)
+
+### What Was Done
+- UX update: Column configuration menus were intercepting keys but failing to dispatch them down to the underlying `bubbles/list` model if filtering was enabled. Appended `SetFilteringEnabled(false)` to all `columnConfigList` and `sortList` instantiations globally so spacebar toggling and up/down navigation work as expected.
+- UX update: Added context to the Actions menu so that users explicitly see what resource they are affecting. `list.Title` is now dynamically set to `Actions: <Resource Name>` upon pressing `Enter`. 
+- Modified the Overlay rendering pipeline in `VMs`, `Firewalls`, and `Disks` tabs. Previously, opening the actions menu or a confirmation dialog replaced the entire screen background. They now use `lipgloss.Place` correctly to ensure the application's breadcrumb header and the table itself remain visible behind the overlay, maintaining deep UX context.
+
+## 2026-04-14 (Update 12)
+
+### What Was Done
+- **UX Fix:** Addressed a critical table wrapping bug in the `bubbles/table` integration. When configuring multiple columns (e.g., adding `Security Groups` and `Cost Trend`), the table would wrap vertically instead of enforcing horizontal pagination.
+- **Root Cause:** The `VisibleColumnsForWidth` function calculating how many columns to fit in the terminal viewport was missing the `overhead` cost of the table styling. `bubbles/table` explicitly adds `Padding(0, 1)` to all default cells, meaning every rendered column consumes an extra 2 characters. The UI was over-allocating width, causing `lipgloss` to soft-wrap the header rows to the next line.
+- **Fix:** Updated the layout math in `internal/ui/table_helpers.go` to deduct `overheadPerCol = 2` during width assignment and expansion. Tables now rigidly respect the maximum terminal width and enforce proper horizontal scrolling via the `h` / `l` keys.
+- **Test:** Rewrote table bounds assertions in `table_helpers_test.go` to factor in padding overheads natively.
+
+## 2026-04-14 (Update 13)
+
+### What Was Done
+- **UX Redesign:** Completely overhauled how the Action Menu and Confirmation overlays are rendered in the VMs tab. Previously, pressing `Enter` to open an action menu would completely replace the main table rendering with a blank background and a floating list, losing all context of what row was selected.
+- Implemented a "Responsive Sidebar Split" UX. When `Enter` (Menu) or `ctrl+d` (Terminate) is pressed, the application dynamically triggers a table resize event (`v.refreshTable()`). It forces the `bubbles/table` model to rigidly shrink horizontally (down to 40 columns min) and cleanly truncates columns using horizontal pagination logic.
+- Using `lipgloss.JoinHorizontal`, the `v.actions` or `confirmView` is immediately drawn inline to the right of the shrunken table. The selected row remains highlighted, giving perfect visual context to what instance the operator is interacting with.
+
+## 2026-04-14 (Update 14)
+
+### What Was Done
+- **UX Innovation:** Steampipe was evaluated and discarded due to its massive architectural burden (PostgreSQL requirement), but the core UX value of its keyboard-driven workflow was adopted. 
+- Implemented a native `K9s`-style global Command Bar in the TUI to dramatically increase power-user navigation speed.
+- Users can now press `:` at any point in the application to drop a text input bar from the top of the terminal screen.
+- Supported syntax allows for instant module switching (`:vms`, `:disks`, `:fw`, `:clusters`, `:dbs`, `:nets`) without needing to remember numerical tab bindings.
+- Supported syntax allows for instant cross-cloud context jumping via `:ctx <query>`, where users can type fragments of their account ID, profile name, or region to instantly teleport their active session (e.g. `:ctx prod`, `:ctx us-east-1`).
+
+## 2026-04-14 (Update 15)
+
+### What Was Done
+- **UX Request:** The `Cost` action for VMs previously just dumped a block of CLI commands (e.g., `aws ce get-cost-and-usage ...`) into a read-only view, forcing the user to copy-paste it into their own terminal.
+- Replaced the `costGuide` static rendering logic with `executeCostCommandCmd`, which initiates a background subprocess to directly execute the cloud provider's native billing CLI commands against the selected instance.
+- The `c` hotkey and the `Cost` action menu item now automatically fetch the cost report and render the STDOUT response dynamically inside the application's Describe pane.
+
+## 2026-04-14 (Update 16)
+
+### What Was Done
+- **UX Audit:** Audited the remaining codebase for static "guide" or copy/paste instructions. 
+- Found that the `s` (SSH) hotkey added in a previous commit was mistakenly wired to run `SSH` as a background `ExecuteActionCmd` instead of utilizing `tea.ExecProcess`, which would have prevented the terminal handoff required for an interactive SSH session. Re-wired the `s` hotkey so it successfully yields the terminal TTY to the SSH client.
+- Found the static `sshRemediationGuide`, which instructs the user to run CLI commands to create a firewall rule if an SSH connection fails (e.g., due to missing IAP rules on GCP). Left this intentionally as a static guide, as dynamically executing security group / IAM creation in the background after a failure is an unsafe anti-pattern.
+
+## 2026-04-14 (Update 17)
+
+### What Was Done
+- **Sprint 4 (FinOps Intelligence):** Enhanced the `Gemini FinOps` analysis engine integration in `internal/views/vms/view.go`. 
+- Updated the AI prompt to actively instruct Gemini to act as a DevOps architect issuing CLI commands. The prompt now requires Gemini to provide explicit, copy-pasteable CLI execution strategies (e.g., `aws ec2 modify-instance-attribute`, `gcloud compute instances set-machine-type`) to apply its rightsizing recommendations.
+- Updated the AI prompt to support Markdown, enabling bolding, headers, and code blocks for clearer readability within the UI's `Describe` pane.
+- Upgraded the underlying `FetchVMCostSDK` for GCP (`internal/providers/gcp/billing.go`) to attempt a targeted BigQuery cost query for the specific compute instance instead of returning a hardcoded zero.

@@ -40,7 +40,7 @@ type awsDescribeInstancesOutput struct {
 }
 
 func FetchVMsCLI(profile, region string) ([]core.VM, error) {
-	args := []string{"ec2", "describe-instances", "--region", region, "--output", "json"}
+	args := []string{"--no-cli-pager", "ec2", "describe-instances", "--region", region, "--output", "json"}
 	if profile != "" {
 		args = append(args, "--profile", profile)
 	}
@@ -233,7 +233,7 @@ func GetSSHCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (
 }
 
 func awsCLICommand(ctx context.Context, cloudCtx core.CloudContext, args ...string) *exec.Cmd {
-	fullArgs := args
+	fullArgs := append([]string{"--no-cli-pager"}, args...)
 	if cloudCtx.CredentialProfile != "" {
 		fullArgs = append(fullArgs, "--profile", cloudCtx.CredentialProfile)
 	}

@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -77,6 +78,8 @@ type App struct {
 	showConfig     bool
 	showLogs       bool
 	showSplash     bool
+	showCmdBar     bool
+	cmdBar         textinput.Model
 	width, height  int
 	Version        string
 	BuildTime      string
@@ -107,6 +110,10 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 	logView := viewport.New(0, 0)
 	logView.Style = lipgloss.NewStyle().Padding(0, 1)
 
+	cmdInput := textinput.New()
+	cmdInput.Prompt = ":"
+	cmdInput.Placeholder = "command (e.g., vms, disks, ctx dev)"
+
 	return App{
 		contexts:      ctxList,
 		configList:    configList,
@@ -119,6 +126,8 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 		statusMsg:     "Ready.",
 		showSidebar:   true,
 		showSplash:    true,
+		showCmdBar:    false,
+		cmdBar:        cmdInput,
 		logView:       logView,
 		logPath:       logging.Path(),
 	}
@@ -196,6 +205,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.handleLogKeys(msg)
 		}
 
+		if a.showCmdBar {
+			switch msg.String() {
+			case "esc":
+				a.showCmdBar = false
+				a.cmdBar.Blur()
+				return a, nil
+			case "enter":
+				a.showCmdBar = false
+				a.cmdBar.Blur()
+				return a.handleCommand(a.cmdBar.Value())
+			}
+			var cmd tea.Cmd
+			a.cmdBar, cmd = a.cmdBar.Update(msg)
+			return a, cmd
+		}
+
 		isInputActive := false
 		if a.focus == focusMain && len(a.viewStack) > 0 {
 			isInputActive = a.viewStack[len(a.viewStack)-1].IsInputActive()
@@ -204,6 +229,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
+		case ":":
+			if !isInputActive {
+				a.showCmdBar = true
+				a.cmdBar.SetValue("")
+				a.cmdBar.Focus()
+				return a, textinput.Blink
+			}
 		case "1", "2", "3", "4", "5", "6", "7":
 			if !isInputActive {
 				if view, ok := a.resourceViews[msg.String()]; ok {
@@ -231,6 +263,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if a.focus == focusSidebar || (a.focus == focusMain && len(a.viewStack) <= 1) {
 					return a, tea.Quit
 				}
+			}
+		case "B":
+			if !isInputActive {
+				if strings.ToLower(a.cfg.Backend) == "sdk" {
+					a.cfg.Backend = "cli"
+				} else {
+					a.cfg.Backend = "sdk"
+				}
+				config.Save(a.cfg)
+				a.statusMsg = fmt.Sprintf("Switched backend to %s", strings.ToUpper(a.cfg.Backend))
+				logging.Infof("component=ui event=backend_toggle new_backend=%s", a.cfg.Backend)
+
+				// Automatically refresh the active view with the new backend
+				if len(a.viewStack) > 0 {
+					var cmd tea.Cmd
+					a.viewStack[len(a.viewStack)-1], cmd = a.viewStack[len(a.viewStack)-1].Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+					return a, cmd
+				}
+				return a, nil
 			}
 		case "b":
 			if !isInputActive {
@@ -407,6 +458,11 @@ func (a App) View() string {
 
 	if len(a.viewStack) > 0 {
 		mainContent = a.viewStack[len(a.viewStack)-1].Render()
+		if a.showCmdBar {
+			cmdStyle := lipgloss.NewStyle().Width(mainWidth).Padding(0, 1).Background(lipgloss.Color("57")).Foreground(lipgloss.Color("229"))
+			cmdBarView := cmdStyle.Render(a.cmdBar.View())
+			mainContent = lipgloss.JoinVertical(lipgloss.Left, cmdBarView, mainContent)
+		}
 	} else {
 		mainContent = lipgloss.NewStyle().Padding(2).Foreground(Subtle).Render("Select a context to view resources")
 	}
@@ -427,7 +483,7 @@ func (a App) View() string {
 
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, sidebarView, mainView)
 	mainShell := a.renderShellPane(panes, a.focus == focusMain)
-	footerText := fmt.Sprintf("\u2191\u2193 \u2022 Enter \u2022 Tab \u2022 Esc \u2022 L:Logs | Mode:%s | %s | v%s", a.backendMode(), a.statusMsg, a.Version)
+	footerText := fmt.Sprintf("\u2191\u2193 \u2022 Enter \u2022 Tab \u2022 Esc \u2022 L:Logs \u2022 B:Mode | Mode:%s | %s | v%s", a.backendMode(), a.statusMsg, a.Version)
 	footer := renderFooter(a.width, footerText)
 	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainShell, footer), a.width, a.height)
 }
@@ -709,6 +765,96 @@ func fitToWindow(content string, width, height int) string {
 		Render(content)
 }
 
+func (a App) handleCommand(query string) (App, tea.Cmd) {
+	query = strings.TrimSpace(strings.ToLower(query))
+	if query == "" {
+		return a, nil
+	}
+
+	logging.Infof("component=ui event=execute_command query=%s", query)
+
+	// Command syntax parsing
+	parts := strings.Fields(query)
+	cmd := parts[0]
+
+	switch cmd {
+	case "vms", "ec2", "instances":
+		return a.switchTabByCapability(providers.CapabilityVMs)
+	case "disks", "volumes", "ebs":
+		return a.switchTabByCapability(providers.CapabilityDisks)
+	case "snaps", "snapshots":
+		return a.switchTabByCapability(providers.CapabilitySnapshots)
+	case "fw", "firewalls", "sg":
+		return a.switchTabByCapability(providers.CapabilityFirewalls)
+	case "nets", "networks", "vpc":
+		return a.switchTabByCapability(providers.CapabilityNetworks)
+	case "clusters", "eks", "gke", "aks":
+		return a.switchTabByCapability(providers.CapabilityClusters)
+	case "db", "dbs", "databases", "rds", "sql":
+		return a.switchTabByCapability(providers.CapabilityDatabases)
+	case "ctx", "context", "project", "account":
+		if len(parts) > 1 {
+			target := strings.Join(parts[1:], " ")
+			return a.switchContext(target)
+		}
+		a.statusMsg = "Usage: :ctx <name or id>"
+		return a, nil
+	case "q", "quit", "exit":
+		return a, tea.Quit
+	default:
+		a.statusMsg = fmt.Sprintf("Unknown command: %s", cmd)
+		return a, nil
+	}
+}
+
+func (a App) switchTabByCapability(cap providers.Capability) (App, tea.Cmd) {
+	for tabIndex, view := range a.resourceViews {
+		if view.Capability == cap {
+			if a.activeCtx.Provider != "" && !providers.Supports(a.activeCtx.Provider, view.Capability) {
+				a.statusMsg = fmt.Sprintf("%s not supported for %s.", view.View.Title(), a.activeCtx.Provider)
+				return a, nil
+			}
+			a.activeTab = tabIndex
+			a.viewStack = []View{view.View}
+			a.focus = focusMain
+			if a.activeCtx.AccountID != "" || a.activeCtx.AccountName != "" {
+				initCmd := view.View.Init(a.activeCtx, a.mainContentWidth(), a.mainContentHeight(), a.showSidebar)
+				a.statusMsg = fmt.Sprintf("Switched to %s.", view.View.Title())
+				return a, initCmd
+			}
+			a.statusMsg = fmt.Sprintf("Switched to %s. Select a context.", view.View.Title())
+			return a, nil
+		}
+	}
+	return a, nil
+}
+
+func (a App) switchContext(query string) (App, tea.Cmd) {
+	for i, item := range a.contexts.Items() {
+		node, ok := item.(*TreeNode)
+		if !ok || !node.IsLeaf {
+			continue
+		}
+		if strings.Contains(strings.ToLower(node.Context.DisplayName()), query) ||
+			strings.Contains(strings.ToLower(node.Context.AccountID), query) ||
+			strings.Contains(strings.ToLower(node.Context.Region), query) {
+			a.contexts.Select(i)
+			a.activeCtx = node.Context
+			a.ensureActiveTab()
+			a.focus = focusMain
+			logging.Infof("component=ui event=context_select provider=%s account=%s region=%s", a.activeCtx.Provider, a.activeCtx.AccountID, a.activeCtx.Region)
+			if len(a.viewStack) > 0 {
+				topView := a.viewStack[len(a.viewStack)-1]
+				initCmd := topView.Init(a.activeCtx, a.mainContentWidth(), a.mainContentHeight(), a.showSidebar)
+				a.statusMsg = fmt.Sprintf("Fetching resources for %s...", a.activeCtx.DisplayName())
+				return a, initCmd
+			}
+			return a, nil
+		}
+	}
+	a.statusMsg = fmt.Sprintf("Context not found: %s", query)
+	return a, nil
+}
 func (a App) renderLogsView() string {
 	title := TitleStyle.Render("Application Logs")
 	meta := StatusLineStyle.Render(truncateText(fmt.Sprintf("Path: %s", a.logPath), a.fullScreenContentWidth()-2))

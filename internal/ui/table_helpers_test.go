@@ -19,8 +19,9 @@ func TestVisibleColumnsForWidthExpandsToFillViewport(t *testing.T) {
 	}
 
 	total := 0
+	overhead := 2
 	for _, col := range visible {
-		total += col.Width
+		total += col.Width + overhead
 	}
 	if total != 40 {
 		t.Fatalf("expected expanded columns to fill viewport width 40, got %d", total)
@@ -48,8 +49,8 @@ func TestVisibleColumnsForWidthKeepsSingleColumnClamped(t *testing.T) {
 	if len(visible) != 1 {
 		t.Fatalf("expected one visible column in narrow viewport, got %d", len(visible))
 	}
-	if visible[0].Width != 12 {
-		t.Fatalf("expected single visible column to clamp to viewport width 12, got %d", visible[0].Width)
+	if visible[0].Width != 10 { // 12 - 2 overhead
+		t.Fatalf("expected single visible column to clamp to viewport width 10, got %d", visible[0].Width)
 	}
 }
 

@@ -3,20 +3,21 @@ package azure
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v6"
+
 	"cloudmanager/internal/core"
+	applog "cloudmanager/internal/logging"
 )
 
 func ExecuteFirewallActionSDK(ctx context.Context, action string, rule core.FirewallRule, cloudCtx core.CloudContext) (string, error) {
-	if action != "Delete" {
-		return "", fmt.Errorf("action %s not supported for Azure Firewalls via CloudManager SDK", action)
-	}
-
 	ruleName := rule.Name
 	if ruleName == "" || ruleName == "-" {
-		ruleName = rule.ID
+		// ID might be the full resource ID, but rule name might be the last segment
+		parts := strings.Split(rule.ID, "/")
+		ruleName = parts[len(parts)-1]
 	}
 	
 	sgID := rule.ResourceID
@@ -40,11 +41,92 @@ func ExecuteFirewallActionSDK(ctx context.Context, action string, rule core.Fire
 		return "", fmt.Errorf("could not extract RG or NSG name from %s", sgID)
 	}
 
-	cmd := exec.CommandContext(ctx, "az", "network", "nsg", "rule", "delete", "--resource-group", rg, "--nsg-name", nsgName, "--name", ruleName, "--subscription", cloudCtx.AccountID)
-	output, err := cmd.CombinedOutput()
+	client, err := getSecurityRulesClient(cloudCtx.AccountID)
 	if err != nil {
-		return "", fmt.Errorf("failed to delete Azure firewall rule %s: %w\n%s", ruleName, err, string(output))
+		return "", fmt.Errorf("failed to create azure security rules client: %w", err)
 	}
 
-	return fmt.Sprintf("Successfully deleted rule %s\n%s", ruleName, string(output)), nil
+	switch action {
+	case "Delete":
+		poller, err := client.BeginDelete(ctx, rg, nsgName, ruleName, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to delete Azure firewall rule %s: %w", ruleName, err)
+		}
+		_, err = poller.PollUntilDone(ctx, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed waiting for delete of Azure firewall rule %s: %w", ruleName, err)
+		}
+		applog.Infof("AUDIT: user modified firewall rule: deleted rule %s in NSG %s (RG: %s)", ruleName, nsgName, rg)
+		return fmt.Sprintf("Successfully deleted rule %s", ruleName), nil
+
+	case "Edit":
+		// Fetch existing rule
+		resp, err := client.Get(ctx, rg, nsgName, ruleName, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to get azure security rule %s: %w", ruleName, err)
+		}
+
+		ruleObj := resp.SecurityRule
+		if ruleObj.Properties == nil {
+			ruleObj.Properties = &armnetwork.SecurityRulePropertiesFormat{}
+		}
+
+		// Update properties
+		if rule.Direction == "Inbound" {
+			ruleObj.Properties.Direction = to.Ptr(armnetwork.SecurityRuleDirectionInbound)
+		} else if rule.Direction == "Outbound" {
+			ruleObj.Properties.Direction = to.Ptr(armnetwork.SecurityRuleDirectionOutbound)
+		}
+
+		proto := strings.ToLower(rule.Protocol)
+		if proto == "tcp" {
+			ruleObj.Properties.Protocol = to.Ptr(armnetwork.SecurityRuleProtocolTCP)
+		} else if proto == "udp" {
+			ruleObj.Properties.Protocol = to.Ptr(armnetwork.SecurityRuleProtocolUDP)
+		} else if proto == "icmp" {
+			ruleObj.Properties.Protocol = to.Ptr(armnetwork.SecurityRuleProtocolIcmp)
+		} else {
+			ruleObj.Properties.Protocol = to.Ptr(armnetwork.SecurityRuleProtocolAsterisk)
+		}
+
+		if rule.Action == "Allow" {
+			ruleObj.Properties.Access = to.Ptr(armnetwork.SecurityRuleAccessAllow)
+		} else if rule.Action == "Deny" {
+			ruleObj.Properties.Access = to.Ptr(armnetwork.SecurityRuleAccessDeny)
+		}
+
+		if rule.Source != "" && rule.Source != "-" {
+			ruleObj.Properties.SourceAddressPrefix = to.Ptr(rule.Source)
+		}
+		if rule.Destination != "" && rule.Destination != "-" {
+			ruleObj.Properties.DestinationAddressPrefix = to.Ptr(rule.Destination)
+		}
+		if rule.PortRange != "" && rule.PortRange != "-" {
+			if strings.EqualFold(rule.PortRange, "all") {
+				ruleObj.Properties.DestinationPortRange = to.Ptr("*")
+			} else {
+				ruleObj.Properties.DestinationPortRange = to.Ptr(rule.PortRange)
+			}
+		}
+		if rule.Priority > 0 {
+			ruleObj.Properties.Priority = to.Ptr(int32(rule.Priority))
+		}
+		if rule.Description != "" && rule.Description != "-" {
+			ruleObj.Properties.Description = to.Ptr(rule.Description)
+		}
+
+		poller, err := client.BeginCreateOrUpdate(ctx, rg, nsgName, ruleName, ruleObj, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to update Azure firewall rule %s: %w", ruleName, err)
+		}
+		_, err = poller.PollUntilDone(ctx, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed waiting for update of Azure firewall rule %s: %w", ruleName, err)
+		}
+		applog.Infof("AUDIT: user modified firewall rule: edited rule %s in NSG %s (RG: %s)", ruleName, nsgName, rg)
+		return fmt.Sprintf("Successfully updated rule %s", ruleName), nil
+
+	default:
+		return "", fmt.Errorf("action %s not supported for Azure Firewalls via CloudManager SDK", action)
+	}
 }

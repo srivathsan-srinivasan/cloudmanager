@@ -38,6 +38,81 @@ type gcpSnapshotCLI struct {
 	Labels            map[string]string `json:"labels"`
 }
 
+type gcpClusterCLI struct {
+	Name                 string            `json:"name"`
+	Location             string            `json:"location"`
+	Status               string            `json:"status"`
+	CurrentMasterVersion string            `json:"currentMasterVersion"`
+	CurrentNodeCount     int               `json:"currentNodeCount"`
+	SelfLink             string            `json:"selfLink"`
+	ResourceLabels       map[string]string `json:"resourceLabels"`
+}
+
+type gcpDatabaseSettingsCLI struct {
+	Tier       string            `json:"tier"`
+	UserLabels map[string]string `json:"userLabels"`
+}
+
+type gcpDatabaseCLI struct {
+	Name            string                 `json:"name"`
+	State           string                 `json:"state"`
+	DatabaseVersion string                 `json:"databaseVersion"`
+	Region          string                 `json:"region"`
+	SelfLink        string                 `json:"selfLink"`
+	Settings        gcpDatabaseSettingsCLI `json:"settings"`
+}
+
+func FetchClustersCLI(project string) ([]core.Cluster, error) {
+	output, err := runGCloudJSON("container", "clusters", "list", "--project", project)
+	if err != nil {
+		return nil, err
+	}
+	var data []gcpClusterCLI
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse gcp clusters: %w", err)
+	}
+
+	clusters := make([]core.Cluster, 0, len(data))
+	for _, c := range data {
+		clusters = append(clusters, core.Cluster{
+			ID:        c.SelfLink,
+			Name:      c.Name,
+			Location:  c.Location,
+			Status:    c.Status,
+			Version:   c.CurrentMasterVersion,
+			NodeCount: fmt.Sprintf("%d", c.CurrentNodeCount),
+			Labels:    joinLabelMap(c.ResourceLabels),
+		})
+	}
+	return clusters, nil
+}
+
+func FetchDatabasesCLI(project string) ([]core.Database, error) {
+	output, err := runGCloudJSON("sql", "instances", "list", "--project", project)
+	if err != nil {
+		return nil, err
+	}
+	var data []gcpDatabaseCLI
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse gcp databases: %w", err)
+	}
+
+	databases := make([]core.Database, 0, len(data))
+	for _, db := range data {
+		databases = append(databases, core.Database{
+			ID:      db.SelfLink,
+			Name:    db.Name,
+			Engine:  db.DatabaseVersion,
+			Version: db.DatabaseVersion,
+			Status:  db.State,
+			Region:  db.Region,
+			Size:    db.Settings.Tier,
+			Labels:  joinLabelMap(db.Settings.UserLabels),
+		})
+	}
+	return databases, nil
+}
+
 func FetchDisksCLI(project string) ([]core.Disk, error) {
 	output, err := runGCloudJSON("compute", "disks", "list", "--project", project)
 	if err != nil {

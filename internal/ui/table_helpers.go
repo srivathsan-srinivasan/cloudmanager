@@ -40,6 +40,22 @@ func TableHeight(totalHeight int) int {
 	return height
 }
 
+func ActionListHeight(numItems, maxAvailableHeight int) int {
+	// A list item with a description is typically 2 lines, plus 1 line spacing = 3 lines per item.
+	// The list itself has a header (2 lines) and footer (2 lines) = 4 lines overhead.
+	idealHeight := (numItems * 3) + 6
+	
+	maxAllowed := maxAvailableHeight - 10
+	if maxAllowed < 10 {
+		maxAllowed = 10
+	}
+	
+	if idealHeight > maxAllowed {
+		return maxAllowed
+	}
+	return idealHeight
+}
+
 func VisibleColumnsForWidth(columns []table.Column, width, offset int) ([]table.Column, int, bool, bool) {
 	if len(columns) == 0 {
 		return nil, 0, false, false
@@ -53,29 +69,34 @@ func VisibleColumnsForWidth(columns []table.Column, width, offset int) ([]table.
 
 	var visible []table.Column
 	used := 0
+	overheadPerCol := 2 // bubbles/table default left and right padding overhead
+
 	for i := offset; i < len(columns); i++ {
 		col := columns[i]
-		if used+col.Width > width {
+		if used+col.Width+overheadPerCol > width {
 			if len(visible) == 0 {
-				col.Width = width
+				col.Width = width - overheadPerCol
+				if col.Width < 5 {
+					col.Width = 5 // Safe minimum
+				}
 				visible = append(visible, col)
 			}
 			break
 		}
 		visible = append(visible, col)
-		used += col.Width
+		used += col.Width + overheadPerCol
 	}
 
 	canScrollLeft := offset > 0
 	canScrollRight := offset+len(visible) < len(columns)
-	return expandColumnsToWidth(visible, width), offset, canScrollLeft, canScrollRight
+	return expandColumnsToWidth(visible, width, overheadPerCol), offset, canScrollLeft, canScrollRight
 }
 
 func NewResourceTable(columns []table.Column, availableWidth, offset int, fallbackTitle string) (table.Model, []table.Column, int, bool, bool) {
 	width := TableViewportWidth(availableWidth)
 	visibleColumns, nextOffset, canScrollLeft, canScrollRight := VisibleColumnsForWidth(columns, width, offset)
 	if len(visibleColumns) == 0 {
-		visibleColumns = []table.Column{{Title: fallbackTitle, Width: width}}
+		visibleColumns = []table.Column{{Title: fallbackTitle, Width: width - 2}}
 	}
 
 	tbl := table.New(
@@ -137,13 +158,13 @@ func ClampToWindow(content string, width, height int) string {
 		Render(content)
 }
 
-func expandColumnsToWidth(columns []table.Column, width int) []table.Column {
+func expandColumnsToWidth(columns []table.Column, width, overheadPerCol int) []table.Column {
 	if len(columns) == 0 || width <= 0 {
 		return columns
 	}
 	used := 0
 	for _, col := range columns {
-		used += col.Width
+		used += col.Width + overheadPerCol
 	}
 	extra := width - used
 	if extra <= 0 {

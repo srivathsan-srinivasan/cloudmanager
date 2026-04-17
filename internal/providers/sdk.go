@@ -85,11 +85,19 @@ func (p *SDKProvider) FetchFirewallRules(ctx context.Context, groupID string, cl
 }
 
 func (p *SDKProvider) FetchNetworks(ctx context.Context, cloudCtx core.CloudContext) ([]core.Network, error) {
-	return nil, fmt.Errorf("not implemented")
+	bindings, ok := bindingsFor(cloudCtx.Provider, "sdk")
+	if !ok || bindings.Networks == nil {
+		return nil, fmt.Errorf("SDK backend not implemented for networks on %s", cloudCtx.Provider)
+	}
+	return bindings.Networks.FetchNetworks(ctx, cloudCtx)
 }
 
 func (p *SDKProvider) FetchSubnets(ctx context.Context, cloudCtx core.CloudContext) ([]core.Subnet, error) {
-	return nil, fmt.Errorf("not implemented")
+	bindings, ok := bindingsFor(cloudCtx.Provider, "sdk")
+	if !ok || bindings.Networks == nil {
+		return nil, fmt.Errorf("SDK backend not implemented for subnets on %s", cloudCtx.Provider)
+	}
+	return bindings.Networks.FetchSubnets(ctx, cloudCtx)
 }
 
 func (p *SDKProvider) FetchVMMetrics(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error) {

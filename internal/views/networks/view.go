@@ -182,8 +182,8 @@ func (v *NetworksView) Resize(width, height int, showSidebar bool) {
 	v.networks.SetHeight(ui.TableHeight(height))
 	v.subnets.SetWidth(ui.TableViewportWidth(width))
 	v.subnets.SetHeight(ui.TableHeight(height))
-	v.actions.SetSize(30, 10)
-	v.subnetActions.SetSize(30, 10)
+	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
+	v.subnetActions.SetSize(50, ui.ActionListHeight(len(v.subnetActions.Items()), height))
 	v.descView.Width = width - 4
 	v.descView.Height = height - 4
 }
@@ -214,7 +214,7 @@ func (v *NetworksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		}
 
 		switch v.activePane {
-		case paneActions:
+		case paneActions, paneSubnetActions:
 			_, cmd = v.handleActionKeys(msg)
 		case paneSubnets:
 			_, cmd = v.handleSubnetTableKeys(msg)

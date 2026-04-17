@@ -27,6 +27,8 @@ type FirewallRule struct {
 	ResourceName string
 	NetworkID    string
 	Provider     string
+
+	OriginalRule *FirewallRule
 }
 
 var DefaultFirewallRuleColumns = []string{
@@ -66,6 +68,10 @@ func (r FirewallRule) GetField(col string) string {
 func FirewallRuleActions() []Action {
 	return []Action{
 		{"Describe", "Show full rule details", false},
+		{"Edit", "Edit this firewall rule", false},
+		{"Enable", "Enable the firewall rule (GCP only)", false},
+		{"Disable", "Disable the firewall rule (GCP only)", false},
+		{"Delete", "Delete this firewall rule (Destructive)", true},
 	}
 }
 

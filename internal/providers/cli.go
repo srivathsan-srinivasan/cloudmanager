@@ -142,3 +142,19 @@ func (p *CLIProvider) ExecuteFirewallAction(ctx context.Context, action string, 
 	}
 	return bindings.Firewalls.ExecuteFirewallAction(ctx, action, rule, cloudCtx)
 }
+
+func (p *CLIProvider) FetchNetworks(ctx context.Context, cloudCtx core.CloudContext) ([]core.Network, error) {
+	bindings, ok := bindingsFor(cloudCtx.Provider, "cli")
+	if !ok || bindings.Networks == nil {
+		return nil, fmt.Errorf("networks not supported for %s", cloudCtx.Provider)
+	}
+	return bindings.Networks.FetchNetworks(ctx, cloudCtx)
+}
+
+func (p *CLIProvider) FetchSubnets(ctx context.Context, cloudCtx core.CloudContext) ([]core.Subnet, error) {
+	bindings, ok := bindingsFor(cloudCtx.Provider, "cli")
+	if !ok || bindings.Networks == nil {
+		return nil, fmt.Errorf("subnets not supported for %s", cloudCtx.Provider)
+	}
+	return bindings.Networks.FetchSubnets(ctx, cloudCtx)
+}

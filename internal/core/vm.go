@@ -35,7 +35,7 @@ type VM struct {
 // DefaultVMColumns is the canonical list of all possible columns for VMs.
 var DefaultVMColumns = []string{
 	"Name", "Instance ID", "Type", "State", "Private IP", "Public IP",
-	"Network", "Subnet", "Zone", "Resource Group", "Labels",
+	"Network", "Subnet", "Security Groups", "Zone", "Resource Group", "Labels",
 	"CPU %", "Memory %", "Disk Read", "Disk Write", "Net In", "Net Out",
 	"Cost", "Cost Trend", "Recommendation", "Est. Savings",
 }
@@ -106,7 +106,7 @@ func VMActions() []Action {
 		{"Terminate", "Permanently delete the virtual machine", true},
 		{"View Firewalls", "Open related firewalls or security groups for this VM", false},
 		{"Describe", "Show full resource details", false},
-		{"Cost", "Show on-demand cost CLI commands for this VM", false},
+		{"Cost", "Fetch on-demand cost report for this VM", false},
 		{"FinOps", "Get Gemini AI cost & architecture recommendations", false},
 		{"SSH", "Connect to the instance via SSH", false},
 	}

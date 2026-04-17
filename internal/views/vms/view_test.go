@@ -300,7 +300,7 @@ func TestFetchResultDoesNotAutoTriggerCostLookupWhenDisabled(t *testing.T) {
 }
 
 func TestCostGuideForAWSIncludesCliFormats(t *testing.T) {
-	guide := costGuide(core.VM{Name: "alpha", ID: "i-123"}, core.CloudContext{
+	guide := buildCostCommand(core.VM{Name: "alpha", ID: "i-123"}, core.CloudContext{
 		Provider:          "AWS",
 		AccountID:         "9431",
 		AccountName:       "main",
@@ -308,14 +308,11 @@ func TestCostGuideForAWSIncludesCliFormats(t *testing.T) {
 		CredentialProfile: "aws-main-9431",
 	}, config.AppConfig{})
 
-	if !strings.Contains(guide, "aws ce get-cost-and-usage") {
+	if !strings.Contains(guide, "aws --no-cli-pager ce get-cost-and-usage") {
 		t.Fatal("expected AWS CLI cost command in cost guide")
 	}
 	if !strings.Contains(guide, "--profile aws-main-9431") {
 		t.Fatal("expected auth profile in AWS cost command")
-	}
-	if !strings.Contains(guide, "--output json") {
-		t.Fatal("expected JSON output variant in AWS cost guide")
 	}
 	if !strings.Contains(guide, "--output table") {
 		t.Fatal("expected table output variant in AWS cost guide")

@@ -390,6 +390,11 @@ func registerBuiltins() {
 				},
 				k9s: aws.GetK9sCmd,
 			},
+			Databases: databaseFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
+					return aws.FetchDatabasesCLI(cloudCtx.CredentialProfile, cloudCtx.Region)
+				},
+			},
 			Metrics: metricsFuncs{
 				fetch: func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error) {
 					return aws.FetchVMMetricsSDK(ctx, cloudCtx.CredentialProfile, cloudCtx.Region, vm.ID, period)
@@ -449,6 +454,11 @@ func registerBuiltins() {
 					return aws.FetchClustersSDK(ctx, cloudCtx.CredentialProfile, cloudCtx.Region)
 				},
 				k9s: aws.GetK9sCmd,
+			},
+			Databases: databaseFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
+					return aws.FetchDatabasesSDK(ctx, cloudCtx.CredentialProfile, cloudCtx.Region)
+				},
 			},
 			Metrics: metricsFuncs{
 				fetch: func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error) {
@@ -533,6 +543,11 @@ func registerBuiltins() {
 				},
 				k9s: gcp.GetK9sCmd,
 			},
+			Databases: databaseFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
+					return gcp.FetchDatabasesCLI(cloudCtx.AccountID)
+				},
+			},
 			Metrics: metricsFuncs{
 				fetch: func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error) {
 					return gcp.FetchVMMetricsSDK(ctx, cloudCtx.AccountID, vm.Zone, vm.ID, period)
@@ -540,10 +555,11 @@ func registerBuiltins() {
 			},
 			Billing: billingFuncs{
 				account: func(ctx context.Context, cloudCtx core.CloudContext) (*core.AccountCost, error) {
-					return gcp.FetchAccountCostSDK(ctx, cloudCtx.AccountID, "billing_dataset", "gcp_billing_export_v1")
+					// Fallbacks to default empty strings for config-less execution if not fully integrated
+					return gcp.FetchAccountCostSDK(ctx, cloudCtx.AccountID, "", "")
 				},
 				resource: func(ctx context.Context, resourceID string, cloudCtx core.CloudContext) (*core.ResourceCost, error) {
-					return gcp.FetchVMCostSDK(ctx, cloudCtx.AccountID, resourceID)
+					return gcp.FetchVMCostSDK(ctx, cloudCtx.AccountID, resourceID, "", "")
 				},
 				recommendation: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Recommendation, error) {
 					return gcp.FetchRecommendationsSDK(ctx, cloudCtx.AccountID)
@@ -593,6 +609,11 @@ func registerBuiltins() {
 				},
 				k9s: gcp.GetK9sCmd,
 			},
+			Databases: databaseFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
+					return gcp.FetchDatabasesSDKWithCLIAuthFallback(ctx, cloudCtx.AccountID)
+				},
+			},
 			Metrics: metricsFuncs{
 				fetch: func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error) {
 					return gcp.FetchVMMetricsSDK(ctx, cloudCtx.AccountID, vm.Zone, vm.ID, period)
@@ -600,10 +621,11 @@ func registerBuiltins() {
 			},
 			Billing: billingFuncs{
 				account: func(ctx context.Context, cloudCtx core.CloudContext) (*core.AccountCost, error) {
-					return gcp.FetchAccountCostSDK(ctx, cloudCtx.AccountID, "billing_dataset", "gcp_billing_export_v1")
+					// Fallbacks to default empty strings for config-less execution if not fully integrated
+					return gcp.FetchAccountCostSDK(ctx, cloudCtx.AccountID, "", "")
 				},
 				resource: func(ctx context.Context, resourceID string, cloudCtx core.CloudContext) (*core.ResourceCost, error) {
-					return gcp.FetchVMCostSDK(ctx, cloudCtx.AccountID, resourceID)
+					return gcp.FetchVMCostSDK(ctx, cloudCtx.AccountID, resourceID, "", "")
 				},
 				recommendation: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Recommendation, error) {
 					return gcp.FetchRecommendationsSDK(ctx, cloudCtx.AccountID)
@@ -676,6 +698,11 @@ func registerBuiltins() {
 					return azure.FetchClustersSDK(ctx, cloudCtx.AccountID)
 				},
 				k9s: azure.GetK9sCmd,
+			},
+			Databases: databaseFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
+					return azure.FetchDatabasesSDK(ctx, cloudCtx.AccountID)
+				},
 			},
 			Metrics: metricsFuncs{
 				fetch: func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error) {
