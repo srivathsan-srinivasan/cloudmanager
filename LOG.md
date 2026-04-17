@@ -552,3 +552,10 @@ Completed a request to completely rewrite `ExecuteFirewallActionSDK` to use nati
 - Updated the AI prompt to actively instruct Gemini to act as a DevOps architect issuing CLI commands. The prompt now requires Gemini to provide explicit, copy-pasteable CLI execution strategies (e.g., `aws ec2 modify-instance-attribute`, `gcloud compute instances set-machine-type`) to apply its rightsizing recommendations.
 - Updated the AI prompt to support Markdown, enabling bolding, headers, and code blocks for clearer readability within the UI's `Describe` pane.
 - Upgraded the underlying `FetchVMCostSDK` for GCP (`internal/providers/gcp/billing.go`) to attempt a targeted BigQuery cost query for the specific compute instance instead of returning a hardcoded zero.
+
+## 2026-04-14 (Update 18)
+
+### What Was Done
+- **Bug Fix:** Fixed an issue where GCP VMs were not rendering for users running in `SDK` mode without Google Application Default Credentials (ADC) configured.
+- The GCP Go SDK strictly requires ADC (`gcloud auth application-default login`). Unlike other resources (Disks, Snapshots, Clusters) which properly caught the SDK auth error and fell back to executing the CLI (`gcloud compute ...`), the `FetchVMsSDK` function was missing its `SDKWithCLIAuthFallback` wrapper. 
+- Implemented the wrapper in `internal/providers/gcp/client.go` and updated `internal/providers/registry.go` to ensure GCP VM queries gracefully fall back to the CLI when ADC is missing.

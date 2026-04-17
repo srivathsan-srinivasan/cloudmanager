@@ -81,3 +81,4 @@ func FetchSubnetsSDK(ctx context.Context, projectID string) ([]core.Subnet, erro
 
 	return subnets, nil
 }
+

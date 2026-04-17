@@ -10,6 +10,7 @@ import (
 	"google.golang.org/api/compute/v1"
 
 	"cloudmanager/internal/core"
+	"cloudmanager/internal/logging"
 )
 
 // --- CLI Backend ---
@@ -191,4 +192,13 @@ func gcpInstanceToVM(inst gcpInstance) core.VM {
 		PrivateIP: privIP, PublicIP: pubIP, Zone: zone,
 		Network: network, Subnet: subnet, Labels: strings.Join(labelPairs, ", "), SecurityGroups: network,
 	}
+}
+
+func FetchVMsSDKWithCLIAuthFallback(ctx context.Context, project string) ([]core.VM, error) {
+	vms, err := FetchVMsSDK(ctx, project)
+	if err != nil {
+		logging.Warnf("component=gcp resource=vms mode=sdk fallback=cli project=%s err=%v", project, err)
+		return FetchVMsCLI(project)
+	}
+	return vms, nil
 }

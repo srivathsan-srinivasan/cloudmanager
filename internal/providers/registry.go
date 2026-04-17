@@ -569,7 +569,7 @@ func registerBuiltins() {
 		SDK: backendBindings{
 			Compute: computeFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error) {
-					return gcp.FetchVMsSDK(ctx, cloudCtx.AccountID)
+					return gcp.FetchVMsSDKWithCLIAuthFallback(ctx, cloudCtx.AccountID)
 				},
 				execute: gcp.ExecuteActionSDK,
 				ssh:     gcp.GetSSHCmdSDK,
