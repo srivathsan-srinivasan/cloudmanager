@@ -84,3 +84,23 @@ func TestBuildFlatList(t *testing.T) {
 		t.Errorf("Expected second node to be 9431 (main), got %s", flat[1].(*TreeNode).Label)
 	}
 }
+
+func TestBuildContextTreeCollapsesManualHosts(t *testing.T) {
+	rootNodes := BuildContextTree([]core.CloudContext{
+		{Provider: "Manual", AccountID: "manual-hosts", AccountName: "Manual Hosts", Region: "global"},
+	})
+
+	if len(rootNodes) != 1 {
+		t.Fatalf("expected one provider, got %d", len(rootNodes))
+	}
+	if rootNodes[0].Label != "Manual" {
+		t.Fatalf("expected Manual provider node, got %q", rootNodes[0].Label)
+	}
+	if len(rootNodes[0].Children) != 1 {
+		t.Fatalf("expected one direct child, got %+v", rootNodes[0].Children)
+	}
+	child := rootNodes[0].Children[0]
+	if !child.IsLeaf || child.Level != 1 || child.Label != "Hosts" {
+		t.Fatalf("expected direct Hosts leaf, got %+v", child)
+	}
+}

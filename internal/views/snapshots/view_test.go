@@ -115,3 +115,21 @@ func TestSelectedSnapshotUsesVisibleRows(t *testing.T) {
 		t.Fatalf("expected filtered selection to return snap-2, got %s", selected.ID)
 	}
 }
+
+func TestSetSearchQueryFiltersSnapshots(t *testing.T) {
+	cfg := config.AppConfig{SnapshotColumns: []string{"Name", "ID", "State"}}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.snapData = []core.Snapshot{
+		{Name: "alpha", ID: "snap-1"},
+		{Name: "beta", ID: "snap-2"},
+	}
+	view.refreshTable()
+
+	view.SetSearchQuery("snap-2")
+
+	if len(view.visibleSnaps) != 1 || view.visibleSnaps[0].ID != "snap-2" {
+		t.Fatalf("expected search handoff to filter to snap-2, got %+v", view.visibleSnaps)
+	}
+}

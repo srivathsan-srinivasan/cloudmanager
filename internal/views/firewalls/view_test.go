@@ -179,6 +179,23 @@ func TestRenderRiskyGroupsFitsWidth(t *testing.T) {
 	}
 }
 
+func TestSetSearchQueryFiltersSecurityGroups(t *testing.T) {
+	view := New(&config.AppConfig{})
+	view.width = 100
+	view.height = 30
+	view.groupData = []core.SecurityGroup{
+		{Name: "alpha", ID: "sg-1"},
+		{Name: "beta", ID: "sg-2"},
+	}
+	view.refreshTable()
+
+	view.SetSearchQuery("sg-2")
+
+	if len(view.visibleGroups) != 1 || view.visibleGroups[0].ID != "sg-2" {
+		t.Fatalf("expected search handoff to filter to sg-2, got %+v", view.visibleGroups)
+	}
+}
+
 func TestNewFilteredLimitsVisibleGroups(t *testing.T) {
 	view := NewFiltered(&config.AppConfig{}, []string{"sg-2"}, "VM: web-1")
 	view.width = 100

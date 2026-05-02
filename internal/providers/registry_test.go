@@ -40,4 +40,28 @@ func TestSupportsUsesRegisteredCapabilities(t *testing.T) {
 	if !Supports("GCP", CapabilityFirewalls) {
 		t.Fatal("expected GCP to support firewalls")
 	}
+	if !Supports("Azure", CapabilityStorage) {
+		t.Fatal("expected Azure to support storage")
+	}
+	if Supports("DigitalOcean", CapabilityStorage) {
+		t.Fatal("did not expect DigitalOcean to support storage yet")
+	}
+}
+
+func TestAzureFirewallBindingsSupportMutation(t *testing.T) {
+	for _, provider := range RegisteredProviders() {
+		if provider.Metadata.ID != "Azure" {
+			continue
+		}
+		cliBindings, ok := provider.CLI.Firewalls.(firewallFuncs)
+		if !ok || cliBindings.execute == nil {
+			t.Fatal("expected Azure CLI firewall bindings to include execute support")
+		}
+		sdkBindings, ok := provider.SDK.Firewalls.(firewallFuncs)
+		if !ok || sdkBindings.execute == nil {
+			t.Fatal("expected Azure SDK firewall bindings to include execute support")
+		}
+		return
+	}
+	t.Fatal("expected Azure provider registration")
 }

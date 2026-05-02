@@ -9,6 +9,7 @@ import (
 	"cloudmanager/internal/core"
 	"cloudmanager/internal/providers"
 	"cloudmanager/internal/ui"
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -65,12 +66,91 @@ func TestSyncVisibleRowsClampsCursor(t *testing.T) {
 	}
 }
 
+func TestKubernetesNodesHiddenByDefaultWhenConfigured(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns, HideKubernetesNodes: true}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.vmData = []core.VM{
+		{Name: "api", ID: "vm-1", State: "running"},
+		{Name: "gke-prod-pool-abc", ID: "vm-2", State: "running", Labels: "goog-gke-node=true, cloud.google.com/gke-nodepool=pool-a"},
+	}
+
+	view.refreshTable()
+	view.syncVisibleRows()
+
+	if len(view.visibleVMs) != 1 || view.visibleVMs[0].ID != "vm-1" {
+		t.Fatalf("expected only non-kubernetes VM visible, got %+v", view.visibleVMs)
+	}
+	if !strings.Contains(view.Render(), "K8s nodes hidden: 1") {
+		t.Fatalf("expected hidden-node banner, got:\n%s", view.Render())
+	}
+}
+
+func TestKubernetesNodesCanBeShownWithToggle(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns, HideKubernetesNodes: true}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.vmData = []core.VM{
+		{Name: "api", ID: "vm-1", State: "running"},
+		{Name: "ip-10-0-0-1", ID: "vm-2", State: "running", Labels: "eks:cluster-name=prod, eks:nodegroup-name=spot"},
+	}
+	view.refreshTable()
+	view.syncVisibleRows()
+
+	updated, _ := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'K'}})
+	next := updated.(*VMsView)
+
+	if len(next.visibleVMs) != 2 {
+		t.Fatalf("expected kubernetes node to be visible after toggle, got %+v", next.visibleVMs)
+	}
+	if !strings.Contains(next.statusMsg, "Showing Kubernetes") {
+		t.Fatalf("expected toggle status, got %q", next.statusMsg)
+	}
+}
+
+func TestTagSelectedVMSavesCloudManagerTagOverlay(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.activeCtx = core.CloudContext{Provider: "GCP", AccountID: "project-a", AccountName: "project-a", Region: "us-central1"}
+	view.vmData = []core.VM{{Name: "vf-web-1", ID: "gce-1", PublicIP: "203.0.113.10"}}
+	view.refreshTable()
+	view.syncVisibleRows()
+
+	updated, cmd := view.handleTableKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	view = updated.(*VMsView)
+	if cmd == nil || view.activePane != paneTag {
+		t.Fatalf("expected tag pane and blink command, pane=%d cmd=%v", view.activePane, cmd)
+	}
+	view.tagInput.SetValue("VFWEB, prod")
+	updated, _ = view.handleTagKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	view = updated.(*VMsView)
+
+	if len(cfg.ResourceTags) != 1 {
+		t.Fatalf("expected saved CloudManager resource tag, got %+v", cfg.ResourceTags)
+	}
+	if !strings.Contains(view.vmData[0].Labels, "cm:VFWEB") {
+		t.Fatalf("expected VM labels to include CloudManager tag, got %q", view.vmData[0].Labels)
+	}
+	view.searchInput.SetValue("VFWEB")
+	view.syncVisibleRows()
+	if len(view.visibleVMs) != 1 || view.visibleVMs[0].ID != "gce-1" {
+		t.Fatalf("expected CloudManager tag to be searchable, got %+v", view.visibleVMs)
+	}
+}
+
 func TestInitResetsTransientSelectionState(t *testing.T) {
 	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
 	view := New(&cfg)
 	view.activePane = paneActions
 	view.isSearching = true
 	view.searchInput.SetValue("stale-query")
+	view.copyableText = "stale"
 
 	view.Init(core.CloudContext{
 		Provider:    "AWS",
@@ -86,6 +166,135 @@ func TestInitResetsTransientSelectionState(t *testing.T) {
 	}
 	if got := view.searchInput.Value(); got != "" {
 		t.Fatalf("expected init to clear the search query, got %q", got)
+	}
+	if view.copyableText != "" {
+		t.Fatalf("expected init to clear copyable text, got %q", view.copyableText)
+	}
+}
+
+func TestDescribePaneRendersBorderlessCopyableText(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(80, 20, false)
+	command := "gcloud compute ssh web-1 --tunnel-through-iap"
+
+	view.showCopyableDetail("SSH CONNECTION FAILED\n\n" + command)
+	rendered := view.Render()
+
+	if !strings.Contains(rendered, command) {
+		t.Fatalf("expected rendered detail to contain command, got:\n%s", rendered)
+	}
+	for _, border := range []string{"╭", "╮", "╰", "╯", "│"} {
+		if strings.Contains(rendered, border) {
+			t.Fatalf("expected copyable detail pane to be borderless, found %q in:\n%s", border, rendered)
+		}
+	}
+	if view.copyableText == "" {
+		t.Fatal("expected copyable text to be stored")
+	}
+}
+
+func TestDescribeKeyEmitsCopyHintStatus(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.vmData = []core.VM{{Name: "alpha", ID: "i-123", State: "running"}}
+	view.refreshTable()
+	view.syncVisibleRows()
+
+	_, cmd := view.handleTableKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd == nil {
+		t.Fatal("expected describe key to emit a status update")
+	}
+	msg := cmd()
+	status, ok := msg.(ui.StatusUpdateMsg)
+	if !ok {
+		t.Fatalf("expected status update, got %T", msg)
+	}
+	if !strings.Contains(status.Msg, "c copy") {
+		t.Fatalf("expected copy hint in status, got %q", status.Msg)
+	}
+}
+
+func TestAccessResolvedOpensPickerAndSelectsCommand(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(100, 30, false)
+
+	updated, _ := view.Update(accessResolvedMsg{
+		vm: core.VM{Name: "alpha", ID: "i-123"},
+		methods: []core.AccessMethod{
+			{
+				ID:        "direct-ssh",
+				Kind:      "ssh",
+				Label:     "Direct SSH",
+				Command:   []string{"ssh", "203.0.113.10"},
+				CopyText:  "ssh 203.0.113.10",
+				Available: true,
+			},
+		},
+	})
+	next := updated.(*VMsView)
+
+	if next.activePane != paneAccess {
+		t.Fatalf("expected access picker pane, got %d", next.activePane)
+	}
+	method, ok := next.selectedAccessMethod()
+	if !ok {
+		t.Fatal("expected selected access method")
+	}
+	if method.CopyText != "ssh 203.0.113.10" {
+		t.Fatalf("expected direct ssh command selected, got %+v", method)
+	}
+	if !strings.Contains(next.Render(), "Direct SSH") {
+		t.Fatalf("expected rendered access picker, got:\n%s", next.Render())
+	}
+}
+
+func TestAccessCopyCopiesOnlySelectedCommand(t *testing.T) {
+	originalCopy := copyToClipboard
+	defer func() { copyToClipboard = originalCopy }()
+
+	var copied string
+	copyToClipboard = func(text string) error {
+		copied = text
+		return nil
+	}
+
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(100, 30, false)
+	view.activePane = paneAccess
+	view.pendingVM = core.VM{Name: "alpha", ID: "i-123"}
+	view.accessMethods.SetItems([]list.Item{
+		accessItem{method: core.AccessMethod{
+			ID:        "direct-ssh",
+			Kind:      "ssh",
+			Label:     "Direct SSH",
+			Command:   []string{"ssh", "203.0.113.10"},
+			CopyText:  "ssh 203.0.113.10",
+			Available: true,
+		}},
+	})
+
+	_, cmd := view.handleAccessKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Fatal("expected copy command")
+	}
+	msg := cmd()
+	clip, ok := msg.(clipboardCompleteMsg)
+	if !ok {
+		t.Fatalf("expected clipboard message, got %T", msg)
+	}
+	if clip.err != nil {
+		t.Fatalf("copy failed: %v", clip.err)
+	}
+	if copied != "ssh 203.0.113.10" {
+		t.Fatalf("expected only selected command copied, got %q", copied)
+	}
+	if view.copyableText != "ssh 203.0.113.10" {
+		t.Fatalf("expected borderless fallback text to be only command, got %q", view.copyableText)
 	}
 }
 
@@ -244,6 +453,8 @@ func TestEnrichCostCmdUsesProviderCostsAndCache(t *testing.T) {
 
 	input := []core.VM{{Name: "alpha", ID: "i-123", State: "running"}}
 	msg := view.enrichCostCmd(input)().(vmCostEnrichedMsg)
+	updated, _ := view.Update(msg)
+	view = updated.(*VMsView)
 
 	if got := msg.vms[0].MonthlyCost; got != "$12.50" {
 		t.Fatalf("expected monthly cost to be rendered, got %q", got)
@@ -288,8 +499,12 @@ func TestFetchResultDoesNotAutoTriggerCostLookupWhenDisabled(t *testing.T) {
 	})
 
 	next := updated.(*VMsView)
-	if cmd != nil {
-		t.Fatal("expected no automatic cost enrichment command after fetch")
+	if cmd == nil {
+		t.Fatal("expected VM index update command after fetch")
+	}
+	msg := cmd()
+	if _, ok := msg.(ui.VMIndexUpdateMsg); !ok {
+		t.Fatalf("expected VM index update command, got %T", msg)
 	}
 	if got := next.vmData[0].MonthlyCost; got != "-" {
 		t.Fatalf("expected placeholder cost without auto-fetch, got %q", got)
@@ -300,13 +515,13 @@ func TestFetchResultDoesNotAutoTriggerCostLookupWhenDisabled(t *testing.T) {
 }
 
 func TestCostGuideForAWSIncludesCliFormats(t *testing.T) {
-	guide := buildCostCommand(core.VM{Name: "alpha", ID: "i-123"}, core.CloudContext{
+	guide := formatShellCommand(buildCostCommand(core.VM{Name: "alpha", ID: "i-123"}, core.CloudContext{
 		Provider:          "AWS",
 		AccountID:         "9431",
 		AccountName:       "main",
 		Region:            "us-east-2",
 		CredentialProfile: "aws-main-9431",
-	}, config.AppConfig{})
+	}, config.AppConfig{}))
 
 	if !strings.Contains(guide, "aws --no-cli-pager ce get-cost-and-usage") {
 		t.Fatal("expected AWS CLI cost command in cost guide")
@@ -316,6 +531,42 @@ func TestCostGuideForAWSIncludesCliFormats(t *testing.T) {
 	}
 	if !strings.Contains(guide, "--output table") {
 		t.Fatal("expected table output variant in AWS cost guide")
+	}
+}
+
+func TestFetchResultDoesNotAutoTriggerCostLookupWhenEnabled(t *testing.T) {
+	cfg := config.AppConfig{
+		VMColumns:      config.DefaultVMColumns,
+		BillingEnabled: true,
+	}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.activeCtx = core.CloudContext{
+		Provider:    "AWS",
+		AccountID:   "9431",
+		AccountName: "main",
+		Region:      "us-east-2",
+	}
+	view.requestKey = view.activeCtx.CacheKey()
+
+	updated, cmd := view.Update(vmFetchMsg{
+		requestKey: view.requestKey,
+		vms: []core.VM{
+			{Name: "alpha", ID: "i-123", State: "running"},
+		},
+	})
+
+	next := updated.(*VMsView)
+	if cmd == nil {
+		t.Fatal("expected VM index update command after fetch")
+	}
+	msg := cmd()
+	if _, ok := msg.(ui.VMIndexUpdateMsg); !ok {
+		t.Fatalf("expected VM index update command, got %T", msg)
+	}
+	if got := next.vmData[0].MonthlyCost; got != "-" {
+		t.Fatalf("expected placeholder cost without auto-fetch, got %q", got)
 	}
 }
 

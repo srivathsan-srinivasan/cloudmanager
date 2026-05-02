@@ -6,22 +6,21 @@ import (
 	"strings"
 	"time"
 
-	recommender "cloud.google.com/go/recommender/apiv1"
-	"cloudmanager/internal/core"
 	"cloud.google.com/go/recommender/apiv1/recommenderpb"
+	"cloudmanager/internal/core"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/iterator"
 )
 
 // FetchRecommendationsSDK fetches VM recommendations from GCP Recommender.
 func FetchRecommendationsSDK(ctx context.Context, projectID string) ([]core.Recommendation, error) {
-	client, err := recommender.NewClient(ctx)
+	client, err := newRecommenderClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create recommender client: %w", err)
 	}
 	defer client.Close()
 
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return nil, err
 	}

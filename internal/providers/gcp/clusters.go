@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/api/container/v1"
-
 	"cloudmanager/internal/core"
 	"cloudmanager/internal/logging"
 )
 
 func FetchClustersSDK(ctx context.Context, project string) ([]core.Cluster, error) {
-	service, err := container.NewService(ctx)
+	service, err := newContainerService(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -32,13 +30,13 @@ func FetchClustersSDK(ctx context.Context, project string) ([]core.Cluster, erro
 		}
 
 		clusters = append(clusters, core.Cluster{
-			ID:       c.SelfLink,
-			Name:     c.Name,
-			Location: c.Location,
-			Status:   c.Status,
-			Version:  c.CurrentMasterVersion,
+			ID:        c.SelfLink,
+			Name:      c.Name,
+			Location:  c.Location,
+			Status:    c.Status,
+			Version:   c.CurrentMasterVersion,
 			NodeCount: fmt.Sprintf("%d", c.CurrentNodeCount),
-			Labels:   strings.Join(labels, ", "),
+			Labels:    strings.Join(labels, ", "),
 		})
 	}
 

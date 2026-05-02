@@ -82,7 +82,7 @@ func GetSSHCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (
 // --- SDK Backend ---
 
 func FetchVMsSDK(ctx context.Context, project string) ([]core.VM, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gcp compute service: %w", err)
 	}
@@ -126,7 +126,7 @@ func FetchVMsSDK(ctx context.Context, project string) ([]core.VM, error) {
 }
 
 func ExecuteActionSDK(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create gcp compute service: %w", err)
 	}

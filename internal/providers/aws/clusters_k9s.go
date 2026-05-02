@@ -1,11 +1,10 @@
 package aws
 
 import (
+	"cloudmanager/internal/core"
 	"context"
 	"fmt"
 	"os/exec"
-	"cloudmanager/internal/core"
-	
 )
 
 func GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudContext) (*exec.Cmd, error) {
@@ -13,10 +12,15 @@ func GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudCon
 		return nil, fmt.Errorf("cluster name and region are required")
 	}
 	expectedCtx := fmt.Sprintf("arn:aws:eks:%s:%s:cluster/%s", cloudCtx.Region, cloudCtx.AccountID, cluster.Name)
-	fetchCmd := fmt.Sprintf("aws eks update-kubeconfig --name %s --region %s", cluster.Name, cloudCtx.Region)
+	fetchArgs := []string{"eks", "update-kubeconfig", "--name", cluster.Name, "--region", cloudCtx.Region}
 	if cloudCtx.CredentialProfile != "" {
-		fetchCmd += fmt.Sprintf(" --profile %s", cloudCtx.CredentialProfile)
+		fetchArgs = append(fetchArgs, "--profile", cloudCtx.CredentialProfile)
 	}
-	fetchCmd += " && k9s"
-	return core.EnsureKubeContext(ctx, expectedCtx, fetchCmd)
+	return core.EnsureKubeContextForTarget(ctx, core.KubeContextTarget{
+		ExpectedContext: expectedCtx,
+		ClusterName:     cluster.Name,
+		ClusterID:       cluster.ID,
+		AccountID:       cloudCtx.AccountID,
+		Location:        cloudCtx.Region,
+	}, "aws", fetchArgs...)
 }

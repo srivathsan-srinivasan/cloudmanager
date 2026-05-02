@@ -3,23 +3,26 @@ package clusters
 import (
 	"context"
 	"fmt"
-		"github.com/charmbracelet/bubbles/list"
+	"os/exec"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"cloudmanager/internal/config"
 	"cloudmanager/internal/core"
+	"cloudmanager/internal/iac"
 	"cloudmanager/internal/providers"
 	"cloudmanager/internal/ui"
 )
-
-
 
 type actionItem struct {
 	TitleStr string
 	DescStr  string
 }
+
 func (i actionItem) Title() string       { return i.TitleStr }
 func (i actionItem) Description() string { return i.DescStr }
 func (i actionItem) FilterValue() string { return i.TitleStr }
@@ -28,6 +31,11 @@ type clustersFetchMsg struct {
 	requestKey string
 	clusters   []core.Cluster
 	err        error
+}
+
+type k9sReadyMsg struct {
+	cmd *exec.Cmd
+	err error
 }
 
 type ClustersView struct {
@@ -42,6 +50,7 @@ type ClustersView struct {
 	width, height  int
 	loading        bool
 	statusMsg      string
+	searchQuery    string
 	requestKey     string
 	canScrollLeft  bool
 	canScrollRight bool
@@ -49,7 +58,7 @@ type ClustersView struct {
 }
 
 func New(cfg *config.AppConfig) *ClustersView {
-		// Actions list
+	// Actions list
 	actionItems := []list.Item{
 		actionItem{TitleStr: "Jump to k9s", DescStr: "Open k9s terminal for this cluster"},
 	}
@@ -62,13 +71,20 @@ func New(cfg *config.AppConfig) *ClustersView {
 
 	return &ClustersView{
 		actions: actionList,
-		cfg: cfg,
+		cfg:     cfg,
 	}
 }
 
 func (v *ClustersView) Title() string { return "Clusters" }
-func (v *ClustersView) ShortHelp() string { return "↑↓: Navigate • Enter: Actions • r: Refresh" }
+func (v *ClustersView) ShortHelp() string {
+	return "↑↓: Navigate • Enter: Actions • r: Refresh"
+}
 func (v *ClustersView) IsInputActive() bool { return v.activePane == 1 }
+
+func (v *ClustersView) SetSearchQuery(query string) {
+	v.searchQuery = strings.TrimSpace(query)
+	v.refreshTable()
+}
 
 func (v *ClustersView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
 	v.activePane = 0
@@ -91,7 +107,7 @@ func (v *ClustersView) Resize(width, height int, showSidebar bool) {
 
 func (v *ClustersView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 	var cmd tea.Cmd
-	
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "esc" && v.activePane == 1 {
@@ -104,20 +120,9 @@ func (v *ClustersView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			case "enter":
 				action := v.actions.SelectedItem().(actionItem)
 				if action.TitleStr == "Jump to k9s" {
-					provider := providers.GetProvider(*v.cfg)
-					clusterProvider, ok := provider.(providers.ClusterProvider)
-					if ok {
-						k9sCmd, err := clusterProvider.GetK9sCmd(context.Background(), v.selectedItem, v.activeCtx)
-						if err == nil && k9sCmd != nil {
-							v.activePane = 0
-							v.statusMsg = fmt.Sprintf("Launching k9s for %s...", v.selectedItem.Name)
-							return v, tea.ExecProcess(k9sCmd, func(err error) tea.Msg {
-								return clustersFetchMsg{requestKey: v.requestKey, clusters: v.clustersData, err: err}
-							})
-						}
-						v.statusMsg = fmt.Sprintf("k9s not supported: %v", err)
-					}
 					v.activePane = 0
+					v.statusMsg = fmt.Sprintf("Preparing k9s for %s...", v.selectedItem.Name)
+					return v, v.prepareK9sCmd(v.selectedItem)
 				}
 			}
 			v.actions, cmd = v.actions.Update(msg)
@@ -146,15 +151,34 @@ func (v *ClustersView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			return v, nil
 		}
 		v.loading = false
-		v.clustersData = msg.clusters
+		v.clustersData = iac.ApplyTerraformToClusters(v.cfg.TerraformStatePaths, v.activeCtx, msg.clusters)
 		if msg.err != nil {
 			v.statusMsg = fmt.Sprintf("Error: %v", msg.err)
 		} else {
 			v.statusMsg = fmt.Sprintf("Loaded %d clusters.", len(v.clustersData))
+			indexCtx := v.activeCtx
+			indexClusters := v.clustersData
+			cmd = func() tea.Msg {
+				return ui.ClusterIndexUpdateMsg{Ctx: indexCtx, Clusters: indexClusters}
+			}
 		}
 		v.refreshTable()
+
+	case k9sReadyMsg:
+		if msg.err != nil {
+			v.statusMsg = fmt.Sprintf("k9s not supported: %v", msg.err)
+			return v, nil
+		}
+		if msg.cmd == nil {
+			v.statusMsg = "k9s is unavailable for this cluster"
+			return v, nil
+		}
+		v.statusMsg = fmt.Sprintf("Launching k9s for %s...", v.selectedItem.Name)
+		return v, tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
+			return clustersFetchMsg{requestKey: v.requestKey, clusters: v.clustersData, err: err}
+		})
 	}
-	return v, nil
+	return v, cmd
 }
 
 func (v *ClustersView) Render() string {
@@ -163,7 +187,7 @@ func (v *ClustersView) Render() string {
 		content = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("Loading clusters...")
 	}
 	header := ui.BreadcrumbStyle.Render(fmt.Sprintf("%s \u203A %s \u203A Clusters", v.activeCtx.Provider, v.activeCtx.DisplayName()))
-	
+
 	if v.activePane == 1 {
 		overlay := ui.OverlayStyle.Render(v.actions.View())
 		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
@@ -178,19 +202,22 @@ func (v *ClustersView) refreshTable() {
 		return
 	}
 	var cols []table.Column
-	
+
 	columnNames := v.cfg.ClusterColumns
 	if len(columnNames) == 0 {
 		columnNames = core.DefaultClusterColumns
 	}
-	
+
 	for _, c := range columnNames {
 		cols = append(cols, table.Column{Title: c, Width: 15})
 	}
 	tbl, _, _, _, _ := ui.NewResourceTable(cols, v.width, 0, "Name")
-	
+
 	var rows []table.Row
 	for _, cluster := range v.clustersData {
+		if !clusterMatchesQuery(cluster, v.searchQuery) {
+			continue
+		}
 		var row []string
 		for _, col := range cols {
 			row = append(row, ui.TruncateText(cluster.GetField(col.Title), col.Width))
@@ -202,6 +229,16 @@ func (v *ClustersView) refreshTable() {
 	tbl.SetWidth(ui.TableViewportWidth(v.width))
 	v.table = tbl
 	v.tableCols = cols
+}
+
+func clusterMatchesQuery(cluster core.Cluster, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(strings.Join([]string{
+		cluster.Name, cluster.ID, cluster.Location, cluster.Version, cluster.Status, cluster.NodeCount, cluster.Labels,
+	}, " ")), query)
 }
 
 func (v *ClustersView) fetchClustersCmd() tea.Cmd {
@@ -216,5 +253,19 @@ func (v *ClustersView) fetchClustersCmd() tea.Cmd {
 		}
 		clusters, err := clusterProvider.FetchClusters(context.Background(), activeCtx)
 		return clustersFetchMsg{requestKey: requestKey, clusters: clusters, err: err}
+	}
+}
+
+func (v *ClustersView) prepareK9sCmd(cluster core.Cluster) tea.Cmd {
+	activeCtx := v.activeCtx
+	cfg := *v.cfg
+	return func() tea.Msg {
+		provider := providers.GetProvider(cfg)
+		clusterProvider, ok := provider.(providers.ClusterProvider)
+		if !ok {
+			return k9sReadyMsg{err: fmt.Errorf("clusters not supported by provider backend")}
+		}
+		cmd, err := clusterProvider.GetK9sCmd(context.Background(), cluster, activeCtx)
+		return k9sReadyMsg{cmd: cmd, err: err}
 	}
 }

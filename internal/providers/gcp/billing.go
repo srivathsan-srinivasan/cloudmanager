@@ -17,7 +17,7 @@ func FetchAccountCostSDK(ctx context.Context, projectID string, dataset, table s
 		return nil, fmt.Errorf("GCP billing export not configured. Showing estimated costs.")
 	}
 
-	client, err := bigquery.NewClient(ctx, projectID)
+	client, err := newBigQueryClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigQuery client: %w", err)
 	}
@@ -26,7 +26,7 @@ func FetchAccountCostSDK(ctx context.Context, projectID string, dataset, table s
 	now := time.Now()
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	startOfPrevMonth := startOfMonth.AddDate(0, -1, 0)
-	
+
 	// Query current month cost grouped by service
 	qStr := fmt.Sprintf(`
 		SELECT service.description as service_name, SUM(cost) as total_cost
@@ -112,7 +112,7 @@ func FetchVMCostSDK(ctx context.Context, projectID, instanceID, dataset, table s
 		}, nil
 	}
 
-	client, err := bigquery.NewClient(ctx, projectID)
+	client, err := newBigQueryClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigQuery client: %w", err)
 	}
@@ -121,7 +121,7 @@ func FetchVMCostSDK(ctx context.Context, projectID, instanceID, dataset, table s
 	now := time.Now()
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	startOfPrevMonth := startOfMonth.AddDate(0, -1, 0)
-	
+
 	// Try to match on resource name or ID. We use name since ID might not always be in billing perfectly.
 	qStr := fmt.Sprintf(`
 		SELECT SUM(cost) as total_cost

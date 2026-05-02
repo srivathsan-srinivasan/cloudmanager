@@ -1,11 +1,10 @@
 package digitalocean
 
 import (
+	"cloudmanager/internal/core"
 	"context"
 	"fmt"
 	"os/exec"
-	"cloudmanager/internal/core"
-	
 )
 
 func GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudContext) (*exec.Cmd, error) {
@@ -13,6 +12,11 @@ func GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudCon
 		return nil, fmt.Errorf("cluster ID is required")
 	}
 	expectedCtx := fmt.Sprintf("do-%s-%s", cloudCtx.Region, cluster.Name)
-	fetchCmd := fmt.Sprintf("doctl kubernetes cluster kubeconfig save %s && k9s", cluster.ID)
-	return core.EnsureKubeContext(ctx, expectedCtx, fetchCmd)
+	return core.EnsureKubeContextForTarget(ctx, core.KubeContextTarget{
+		ExpectedContext: expectedCtx,
+		ClusterName:     cluster.Name,
+		ClusterID:       cluster.ID,
+		AccountID:       cloudCtx.AccountID,
+		Location:        cloudCtx.Region,
+	}, "doctl", "kubernetes", "cluster", "kubeconfig", "save", cluster.ID)
 }

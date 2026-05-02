@@ -27,6 +27,7 @@ const (
 	paneSortConfig
 	paneConfirm
 	paneEditRule
+	paneAddRule
 )
 
 type securityGroupFetchMsg struct {
@@ -182,6 +183,14 @@ func (v *FirewallsView) ShortHelp() string {
 
 func (v *FirewallsView) IsInputActive() bool {
 	return v.isSearching || v.activePane == paneActions || v.activePane == paneDescribe || v.activePane == paneColumnConfig || v.activePane == paneSortConfig
+}
+
+func (v *FirewallsView) SetSearchQuery(query string) {
+	v.activePane = paneTable
+	v.isSearching = false
+	v.searchInput.SetValue(strings.TrimSpace(query))
+	v.searchInput.Blur()
+	v.syncVisibleRows()
 }
 
 func (v *FirewallsView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
@@ -346,7 +355,8 @@ func (v *FirewallsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		}
 		v.actions.Title = fmt.Sprintf("Actions: %s", sg.Name)
 		v.activePane = paneActions
-	case "/":		v.isSearching = true
+	case "/":
+		v.isSearching = true
 		v.searchInput.Focus()
 	case "left", "h":
 		if v.columnOffset > 0 {

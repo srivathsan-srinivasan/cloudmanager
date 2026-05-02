@@ -117,3 +117,21 @@ func TestSelectedDiskUsesVisibleRows(t *testing.T) {
 		t.Fatalf("expected filtered selection to return disk-2, got %s", selected.ID)
 	}
 }
+
+func TestSetSearchQueryFiltersDisks(t *testing.T) {
+	cfg := config.AppConfig{DiskColumns: []string{"Name", "ID", "State"}}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.diskData = []core.Disk{
+		{Name: "alpha", ID: "disk-1"},
+		{Name: "beta", ID: "disk-2"},
+	}
+	view.refreshTable()
+
+	view.SetSearchQuery("disk-2")
+
+	if len(view.visibleDisks) != 1 || view.visibleDisks[0].ID != "disk-2" {
+		t.Fatalf("expected search handoff to filter to disk-2, got %+v", view.visibleDisks)
+	}
+}

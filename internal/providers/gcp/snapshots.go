@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/api/compute/v1"
 	"cloudmanager/internal/core"
+	"google.golang.org/api/compute/v1"
 )
 
 // FetchSnapshotsSDK fetches snapshots using the GCP SDK.
 func FetchSnapshotsSDK(ctx context.Context, project string) ([]core.Snapshot, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create compute service: %w", err)
 	}
@@ -57,7 +57,7 @@ func FetchSnapshotsSDK(ctx context.Context, project string) ([]core.Snapshot, er
 
 // ExecuteSnapshotActionSDK executes an action on a GCP snapshot.
 func ExecuteSnapshotActionSDK(ctx context.Context, action string, snap core.Snapshot, cloudCtx core.CloudContext) (string, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create compute service: %w", err)
 	}

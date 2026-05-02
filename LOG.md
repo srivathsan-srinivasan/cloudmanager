@@ -1,5 +1,1453 @@
 # LOG
 
+## 2026-05-02 (Update 12)
+
+### User Request Handled
+
+- Add cloud storage listing/indexing as the next resource surface.
+
+### Key Code And UI Changes
+
+1. Added a read-only Storage tab registered as resource view `8`; Hosts moved to `9`.
+2. Added normalized `core.StorageBucket` data plus configurable `storage_columns`.
+3. Added provider storage fetchers for AWS S3 buckets, GCP Cloud Storage buckets, and Azure storage accounts.
+4. Added `CapabilityStorage`, CLI/SDK provider bindings, storage dashboard card, `:find-storage`, `:index-storage`, and storage support in `:index-all`.
+5. Persisted storage rows and storage summaries in the local resource index cache.
+6. Updated docs and provider authoring guidance for storage support.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers ./internal/ui ./internal/views/storage ./internal/config`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Storage is list/search only; no bucket/container mutation actions were added.
+2. AWS storage listing uses global `list-buckets`, so per-bucket region/encryption/versioning remain `unknown` until we add optional deeper enrichment.
+
+## 2026-05-02 (Update 11)
+
+### User Request Handled
+
+- Restore normal table-style selection highlighting in Find Resources views.
+
+### Key Code And UI Changes
+
+1. Find Resources now opens with the result table focused, not the text input.
+2. Arrow keys move the selected row immediately, so the selected-row style renders like normal resource views.
+3. `/` now focuses the Find filter input.
+4. `Esc` first leaves filter-edit mode, then closes Find on the next press.
+5. Added regression tests for table-first Find focus and `/` filter focus.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestFindOpensWithTableFocused|TestFindSlashFocusesFilterInput|TestFind|TestSelectableDashboard|TestOpenSelectedGlobalVM' -count=1 -v`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Find uses the same selected-row style as other tables; future theme changes should keep table styles centralized.
+
+## 2026-05-02 (Update 10)
+
+### User Request Handled
+
+- Tighten the non-VM local resource index cache after it still behaved unlike the VM cache.
+
+### Key Code And UI Changes
+
+1. Existing config files now default `resource_index_persistence_enabled` to true when the key is missing.
+2. Resource cache loading now counts summary-only cache payloads too, so dashboard counts can survive restart even if a resource type has zero rows.
+3. Find Resources now refreshes when cluster, database, or resource-summary index updates arrive.
+4. Find metadata now reports the correct indexed totals for disks, snapshots, networks, subnets, firewalls, and all indexed resources.
+5. Added regression coverage for existing-config defaults and summary-only resource cache loading.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui -run 'TestLoadDefaultsResourceIndexPersistenceForExistingConfig|TestResourceIndexCache' -count=1 -v`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Resource destination views still perform live provider refresh when opened; cached rows currently power Find/dashboard, not offline table rendering.
+
+## 2026-05-02 (Update 9)
+
+### User Request Handled
+
+- Make Find Resources results drop into the selected resource view with the matching row filtered.
+
+### Key Code And UI Changes
+
+1. Added `SetSearchQuery` support to Disks, Snapshots, Firewalls, and Networks views.
+2. Selecting Find results now opens the target tab and applies the selected resource ID/name filter.
+3. Subnet Find results now open the Networks view directly in the Subnets pane using a `subnet:<id>` handoff.
+4. Added regression tests for search handoff in disks, snapshots, networks, subnets, firewalls, and existing Find flows.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/disks ./internal/views/snapshots ./internal/views/networks ./internal/views/firewalls ./internal/ui -run 'TestSetSearchQuery|TestFind|TestSelectableDashboard' -count=1 -v`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The selected destination view still fetches fresh provider data on open; the cache/index is used for Find, then the view refreshes its live table.
+
+## 2026-05-02 (Update 8)
+
+### User Request Handled
+
+- Persist `index-all` resource indexes locally like the VM index, with a 24 hour default TTL.
+
+### Key Code And UI Changes
+
+1. Added a separate resource index cache at `~/.cloudmanager-resource-index.json`.
+2. Persisted indexed clusters, databases, disks, snapshots, networks, subnets, firewalls, and resource summary counts.
+3. Added config keys:
+   - `resource_index_persistence_enabled`
+   - `resource_index_cache_ttl_hours`
+4. Added Settings controls for resource-index persistence and TTL.
+5. Resource indexes load on app startup and immediately feed dashboard counts and scoped Find Resources.
+6. Updated README config example.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestResourceIndexCacheRoundTrip|TestVMIndexCacheRoundTrip|TestSelectableDashboard' -count=1 -v`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Resource cache is still JSON. SQLite + FTS remains the roadmap upgrade for very large estates.
+2. VM index cache remains in its existing separate file for compatibility.
+
+## 2026-05-02 (Update 7)
+
+### User Request Handled
+
+- Add SQLite and external-tool integration direction to the roadmap without turning CloudManager into a bloated all-in-one platform.
+
+### Key Code And UI Changes
+
+1. Updated `docs/ROADMAP.md` with a vNext lane for lean integrations.
+2. Captured SQLite + FTS as a later local-index upgrade when JSON cache/search latency becomes visible.
+3. Captured optional adapter direction for Steampipe, Cloudlist, CloudQuery, and Prowler.
+4. Kept the product boundary explicit: external engines feed Find Resources and dashboard context; CloudManager remains the operator cockpit.
+
+### Validation Performed
+
+- Documentation-only change; no test run needed.
+
+### Remaining Risks Or Follow-Up
+
+1. The actual adapter protocol and storage schema still need design before implementation.
+
+## 2026-05-02 (Update 6)
+
+### User Request Handled
+
+- Wire Home dashboard resource cards to scoped Find views instead of only showing counts.
+
+### Key Code And UI Changes
+
+1. Added row-level Find indexes for indexed disks, snapshots, networks, subnets, and security groups.
+2. Added scoped commands:
+   - `:find-disks`
+   - `:find-snapshots`
+   - `:find-networks`
+   - `:find-subnets`
+   - `:find-firewalls`
+3. Dashboard cards for disks, snapshots, networks, subnets, and security groups now open the matching Find scope.
+4. `index-all` now stores the fetched resource rows for these Find scopes, not just summary counts.
+5. Network indexing now keeps network rows even if subnet listing fails, while logging the subnet warning.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestSelectableDashboard' -count=1 -v`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Selecting a Find result opens the target tab, but disk/snapshot/network/firewall destination views still need table-local search handoff for perfect landing/filtering parity with DBs and clusters.
+
+## 2026-05-02 (Update 5)
+
+### User Request Handled
+
+- Fix Home dashboard arrow navigation still not moving between cards.
+
+### Key Code And UI Changes
+
+1. Fixed the real Home key-routing condition.
+   - Home can render while an initial tab view is still present in `viewStack`.
+   - Dashboard key handling now checks the actual Home state (`activeCtx.Provider == ""`) instead of requiring an empty `viewStack`.
+
+2. Preserved view input behavior.
+   - View-level input handling is skipped only while Home is active.
+   - Context filter Enter still activates matching contexts.
+
+3. Added regression coverage.
+   - New UI test verifies right arrow moves the dashboard cursor even when Home is visible with an initial view stack.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestHomeDashboardArrowKeys|TestSelectableDashboard' -count=1 -v`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+## 2026-05-02 (Update 4)
+
+### User Request Handled
+
+- Fix Home dashboard navigation, show the new dashboard boxes, and add an index-all option.
+
+### Key Code And UI Changes
+
+1. Fixed Home dashboard keyboard focus.
+   - New app sessions now focus the Home dashboard instead of the sidebar.
+   - Arrow keys and `h/j/k/l` move across dashboard cards immediately.
+   - Context filter Enter still activates matching context rows.
+
+2. Added dashboard summary boxes.
+   - Disks indexed.
+   - Snapshots indexed.
+   - Networks seen.
+   - Subnets seen.
+   - Security groups seen.
+   - Existing legacy default dashboard configs are upgraded to include the new default boxes.
+
+3. Added `index-all`.
+   - New command aliases: `:index-all`, `:refresh-all`, `:reindex-all`.
+   - New Settings action: `Index all resources now`.
+   - Index-all refreshes supported VM, DB, cluster, disk, snapshot, network, and firewall summaries across contexts.
+
+4. Kept counts honest.
+   - Disk/snapshot counts come from explicit index-all summary fetches.
+   - Network/subnet/firewall counts prefer provider summaries when indexed and fall back to VM-derived metadata otherwise.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Disks/snapshots are dashboard summaries only; Find scopes for disks/snapshots still need app-level row indexes.
+2. Index-all can be API-heavy across many contexts, so it is command/settings-triggered rather than automatic startup behavior.
+
+## 2026-05-02 (Update 3)
+
+### User Request Handled
+
+- Avoid polluting local kubeconfig when jumping from a cluster to k9s.
+
+### Key Code And UI Changes
+
+1. Added target-aware kube context resolution.
+   - `core.EnsureKubeContextForTarget` now checks existing kubeconfig contexts before running provider credential fetch commands.
+   - Matching prefers exact expected context, exact cluster name, normalized equivalents, then high-confidence fuzzy matches using cluster name plus account/location/id metadata.
+
+2. Updated Kubernetes provider launchers.
+   - AWS, GCP, Azure, and DigitalOcean k9s launch paths now pass cluster metadata into the resolver.
+   - Provider `get-credentials` / `update-kubeconfig` commands only run when no existing context matches.
+
+3. Added regression coverage.
+   - Existing exact context behavior remains covered.
+   - New test verifies a renamed local context can be reused without running the fetch command.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/core ./internal/providers/aws ./internal/providers/gcp ./internal/providers/azure ./internal/providers/digitalocean ./internal/views/clusters`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Fuzzy matching is conservative. Ambiguous or weak matches intentionally fall back to provider credential fetch.
+2. A future UX pass can show which kube context was selected before launching k9s.
+
+## 2026-05-02 (Update 2)
+
+### User Request Handled
+
+- Make the Home dashboard selectable and more useful as a command surface.
+
+### Key Code And UI Changes
+
+1. Added selectable dashboard widgets.
+   - Arrow keys / `h j k l` move between Home dashboard cards.
+   - `Enter` opens the selected card's operational destination.
+   - VM cards open Find VMs, DB cards open Find Databases, Kubernetes opens Find Kubernetes, Terraform opens Find All with `iac:terraform`, and manual hosts opens Find Hosts.
+   - Network/subnet cards open Networks; security group card opens Firewalls.
+
+2. Added more dashboard widgets.
+   - Networks seen.
+   - Subnets seen.
+   - Security groups seen.
+   - Terraform managed.
+   - Manual hosts.
+
+3. Kept summary counts honest.
+   - Network/subnet/security-group counts are derived from indexed VM metadata, not claimed as full provider inventory.
+   - Disk counts were not added because there is no app-level disk index yet.
+
+4. Updated README dashboard widget example.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. True disk/network/firewall global summaries need app-level indexes for those resource types.
+2. A future pass can add Find scopes for networks, subnets, and firewalls once those indexes exist.
+
+## 2026-05-02
+
+### User Request Handled
+
+- Add Terraform state ingestion for read-only cross-reference of IaC-managed cloud resources.
+
+### Key Code And UI Changes
+
+1. Added local Terraform state indexing.
+   - New `internal/iac` package parses configured `.tfstate` files.
+   - Parsed state is cached by path, file size, and modification time to avoid repeated startup work.
+   - Matching supports VMs, databases, and Kubernetes clusters using provider, ID, name, and VM IP signals.
+
+2. Added CloudManager config support.
+   - New `terraform_state_paths` config key accepts local state file paths.
+   - Paths are normalized without lowercasing so case-sensitive filesystems remain safe.
+
+3. Wired IaC labels into indexed resources.
+   - Matching resources get display labels like `iac:terraform` and `tf:<terraform-address>`.
+   - VM, database, and cluster indexes now carry these labels into Find Resources.
+   - The feature is read-only and does not run Terraform or mutate cloud resources.
+
+4. Updated README.
+   - Added `terraform_state_paths` example and a short safety note.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/iac ./internal/config ./internal/ui ./internal/views/vms ./internal/views/databases ./internal/views/clusters`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Only local state files are supported. Remote backend pull/import UX is future work.
+2. Matching is intentionally best-effort metadata enrichment, not authoritative ownership proof.
+3. No TUI file picker yet for adding Terraform state paths.
+
+## 2026-05-01 (Update 4)
+
+### User Request Handled
+
+- Clarify product naming: the feature is `Find Resources`; `Find VMs` is only one scope.
+
+### Key Code And UI Changes
+
+1. Updated UI copy.
+   - Default find input placeholder is now `find resources`.
+   - Find picker footer uses `Find Resources`.
+   - Settings status says `Find resources`.
+
+2. Preserved scoped labels.
+   - Scope panels still render `Find VMs`, `Find Databases`, `Find Kubernetes`, etc.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. `global_search_enabled` remains the config key for backwards compatibility; user-facing wording now says Find Resources.
+
+## 2026-05-01 (Update 3)
+
+### User Request Handled
+
+- Replace one noisy global search mental model with scoped Find Resources entry points.
+
+### Key Code And UI Changes
+
+1. Added scoped Find Resources.
+   - `g` now opens a Find scope picker instead of jumping straight into VM search.
+   - Added scopes for VMs, databases, Kubernetes clusters, manual hosts, and all indexed resources.
+
+2. Added command aliases.
+   - `:find-vms`
+   - `:find-dbs`
+   - `:find-k8s`
+   - `:find-hosts`
+   - `:find-all`
+
+3. Reworked the existing VM global search table into the first scoped resource finder.
+   - The panel title now reflects the active scope, e.g. `Find VMs` or `Find Databases`.
+   - Results use a generic row shape: type, name, ID, provider, context, region, status, match.
+   - Existing VM search behavior is preserved as the VM scope, not as the whole feature name.
+
+4. Wired DB and Kubernetes indexes into Find.
+   - Database find searches the app-level database index and opens the Databases tab.
+   - Kubernetes find searches the app-level cluster index and opens the Clusters tab.
+   - DB and Cluster views now accept `SetSearchQuery` so selected find results filter the destination view.
+
+5. Updated README keybindings.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/databases ./internal/views/clusters`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Network, subnet, and firewall find scopes are not wired yet because they need app-level indexes like VMs/DBs/clusters.
+2. `find-all` intentionally searches indexed resources only; stale or missing indexes still require opening the relevant tab or running refresh/index commands.
+
+## 2026-05-01 (Update 2)
+
+### User Request Handled
+
+- Add the next practical step: TUI Azure subscription picker for profile/context import.
+
+### Key Code And UI Changes
+
+1. Added an Azure subscription picker.
+   - Available from `Profiles / Contexts` with `z`.
+   - Also available from Settings as `Import Azure subscriptions`.
+   - Command palette aliases: `:azure-profiles`, `:azure-contexts`, `:azure-subscriptions`, `:import-azure`.
+
+2. Added multi-select import behavior.
+   - Runs Azure context discovery through `az account list`.
+   - New subscriptions are selected by default.
+   - Existing subscriptions are marked `saved` and left unselected.
+   - `Space` toggles one subscription, `a` toggles all, `Enter` imports selected subscriptions.
+
+3. Added Azure-safe upsert behavior.
+   - Upserts by Azure subscription ID.
+   - Preserves an existing CloudManager-friendly `context_name`.
+   - Refreshes subscription display name and tenant from Azure.
+   - Does not call `az account set`.
+
+4. Updated README with the picker flow.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The picker does not yet provide inline renaming during import. Users can edit friendly names after import in `Profiles / Contexts`.
+2. A future pass should add equivalent pickers for AWS/GCP account/project discovery where useful.
+
+## 2026-05-01
+
+### User Request Handled
+
+- Fix `go run .` startup panic: `index out of range [6] with length 6` from Bubble Tea table resize.
+
+### Key Code And UI Changes
+
+1. Fixed global search table resizing.
+   - `resizeGlobalSearch()` now clears existing table rows before changing visible columns.
+   - This avoids Charm table rendering old 8-column rows against a narrower responsive column set during startup/window resize.
+
+2. Added regression coverage.
+   - New UI test verifies resizing global search with existing rows does not panic.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+- `GOCACHE=/tmp/go-build-cache go run .` started the TUI without the table panic; quit with `q`.
+
+### Remaining Risks Or Follow-Up
+
+1. Sandbox blocked writing `/Users/ranger/.cloudmanager.log` during the interactive check, but the TUI still started and the reported panic did not recur.
+
+## 2026-04-29 (Update 18)
+
+### User Request Handled
+
+- Make profile/context management primarily TUI-driven instead of command-driven.
+
+### Key Code And UI Changes
+
+1. Upgraded the managed context screen into `Profiles / Contexts`.
+   - Shows the current profile/context with a `*` marker.
+   - `a` adds, `e`/`Enter` edits, `u` sets current, `l` logs in, `d` removes, `r` discovers, and `b` backs up config.
+
+2. Added selected-profile login from the TUI.
+   - Azure runs `az login --use-device-code` and includes `--tenant` when configured.
+   - AWS runs `aws sso login` and includes `--profile` when configured.
+   - GCP runs `gcloud auth login --no-browser`.
+   - DigitalOcean runs `doctl auth init`.
+
+3. Added safer delete behavior.
+   - Delete now requires `y` confirmation.
+   - Removing the current context clears `current_context` and the active context.
+
+4. Added command-palette aliases.
+   - `:profiles`, `:profile`, `:contexts`, `:creds`, and `:credentials` open the TUI profile manager.
+   - `:add-profile` and `:add-context` open the add form.
+
+5. Updated README to document the TUI-first flow.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/config .`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The selected-profile login flow still delegates to provider CLIs. A CloudManager-only credential broker/JIT vault remains future work.
+2. A richer Azure subscription picker after `az account list` would improve add-profile ergonomics further.
+
+## 2026-04-29 (Update 17)
+
+### User Request Handled
+
+- Implement an AWS-profile-style Azure profile/context system for the CLI/TUI.
+
+### Key Code And UI Changes
+
+1. Added first-class CloudManager context names.
+   - Managed contexts now persist `context_name` and `tenant`.
+   - `current_context` tracks the selected profile/context in `~/.cloudmanager.json`.
+   - Context display, filtering, auth refs, and cache identity now understand human-friendly names.
+
+2. Added profile/context CLI commands.
+   - `cloudmanager profile list`
+   - `cloudmanager profile add <name> --provider azure --tenant <tenant> --subscription-id <id> --subscription-name <name>`
+   - `cloudmanager profile use <name>`
+   - `cloudmanager profile current`
+   - `cloudmanager login <name>`
+   - `cloudmanager context ...` is an alias for `profile ...`.
+
+3. Mapped provider discovery into the context model.
+   - AWS discovered profiles keep the AWS profile name as the CloudManager context.
+   - Azure discovered subscriptions get sanitized names from subscription display names, tenant IDs are retained, and subscription IDs remain the execution target.
+
+4. Wired current context into TUI startup.
+   - If `current_context` is set, the context list selects it and makes it active on launch.
+   - Context filtering now matches context name and Azure tenant.
+
+5. Expanded managed context editing.
+   - The TUI context form now captures context name and tenant alongside provider, account, auth mode, persistence, credential ref, and regions.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test . ./internal/config ./internal/providers/aws ./internal/providers/azure ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Azure resource command execution should continue to pass subscription IDs explicitly. This update establishes the context resolver and CLI UX; provider command paths should be audited next for any hidden `az account set` assumptions.
+2. The profile store intentionally reuses `~/.cloudmanager.json` instead of adding a parallel `~/.config/<tool>/profiles.yaml`.
+
+## 2026-04-29 (Update 16)
+
+### User Request Handled
+
+- Start the practical secure-auth build order: auth modes, persistence policy, add-provider entry point, and runtime-only session scaffolding.
+
+### Key Code And UI Changes
+
+1. Added explicit auth metadata to managed contexts.
+   - `auth_mode`: `native-cli`, `jit-session`, `awsume`, `vault`, `manual`
+   - `credential_persistence`: `memory`, `keychain`, `native-cli`, `vault`, `none`
+   - Defaults preserve compatibility: native CLI contexts default to `native-cli` persistence.
+   - JIT/awsume contexts default to `memory`.
+
+2. Propagated auth metadata into `core.CloudContext`.
+   - `AuthMode`
+   - `CredentialScope`
+   - Context filtering now includes these fields.
+
+3. Added runtime-only auth session scaffolding in `internal/auth`.
+   - In-memory session store.
+   - Expiry-aware retrieval.
+   - Child-process environment injection helper.
+   - No persistence and no parent-shell export.
+
+4. Added an Add Provider entry point.
+   - `:add-provider`, `:provider`, and `:providers` open a managed context form.
+   - The form now captures provider, account, display name, auth mode, persistence policy, credential ref, and regions.
+   - Settings includes `Add provider`.
+
+5. Updated README with `:add-provider` and auth metadata examples.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/auth ./internal/config ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Providers do not yet consume `internal/auth.Session`; native CLI mode remains the working execution path.
+2. Next implementation slice should wire AWS awsume/JIT session resolution into provider command/env execution, then repeat for Azure and GCP.
+
+## 2026-04-29 (Update 15)
+
+### User Request Handled
+
+- Make GCP CLI login terminal-safe for CloudManager's wrapped login flow.
+
+### Key Code And UI Changes
+
+1. Updated provider login items in `internal/ui/app.go`.
+   - GCP user login now runs `gcloud auth login --no-browser`.
+   - ADC login remains a separate explicit option.
+
+2. Added regression coverage in `internal/ui/app_test.go`.
+   - Verifies GCP user login keeps `--no-browser`.
+
+3. Updated README GCP prerequisite text.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Native CLI login flows still persist credentials in each provider CLI's normal location. A CloudManager-only JIT credential broker is a separate architecture from wrapped CLI auth.
+
+## 2026-04-29 (Update 14)
+
+### User Request Handled
+
+- Add Bubble Tea wrapped interactive login flows for provider CLIs, with Azure login support for multiple subscriptions.
+
+### Key Code And UI Changes
+
+1. Added a provider login picker in `internal/ui/app.go`.
+   - New command aliases: `:login`, `:auth`, `:provider-login`, `:cli-login`.
+   - Settings includes `Provider CLI login`.
+   - Managed contexts view includes `l:Login`.
+
+2. Added wrapped native CLI login commands.
+   - Azure: `az login --use-device-code`
+   - GCP: `gcloud auth login`
+   - GCP ADC: `gcloud auth application-default login`
+   - AWS SSO setup: `aws configure sso`
+   - AWS access key setup: `aws configure`
+   - AWS SSO login: `aws sso login`
+   - DigitalOcean: `doctl auth init`
+
+3. Login completion now refreshes context discovery.
+   - After a successful login command exits, CloudManager runs provider discovery.
+   - For Azure, `az account list` discovery will import all visible subscriptions.
+   - Missing CLIs show as unavailable instead of failing only after selection.
+
+4. Updated README with `:login` and DigitalOcean CLI prerequisites.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. AWS SSO login without an active default profile may still require `aws configure sso` first; both paths are exposed.
+2. Provider-specific subscription/account selection after login is still handled by discovery and managed-context editing, not a dedicated post-login wizard.
+
+## 2026-04-29 (Update 13)
+
+### User Request Handled
+
+- Fix access-command copying so it copies only the selected command, and make startup faster by lazying cloud CLI discovery.
+
+### Key Code And UI Changes
+
+1. Tightened VM access copy behavior.
+   - `c` in the access picker now copies only the selected method's `CopyText`.
+   - It also opens a borderless fallback detail pane containing only that command, so visual copy no longer includes picker borders.
+   - Added an injectable clipboard writer and regression coverage for exact command copy.
+
+2. Made context discovery explicit for fast startup.
+   - Added config key `discover_contexts_on_start`, default `false`.
+   - Startup now loads managed contexts and local index cache without scanning provider CLIs unless the option is enabled.
+   - Added `:discover` / `:discover-contexts` / `:scan-contexts` to run cloud CLI context discovery on demand.
+   - Settings now includes `Discover contexts on startup`.
+
+3. Kept the access resolver lighter.
+   - `internal/access` no longer imports the provider registry; provider-native commands are supplied by the VM view.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/vms ./internal/config ./internal/access`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Go compile/link time is still affected by the broad provider SDK imports in the main binary. Runtime startup is now lazier; compile-time slimming would need a larger provider-package split or build tags.
+
+## 2026-04-29 (Update 12)
+
+### User Request Handled
+
+- Implement the first access resolver flow for easier VM access instead of directly attempting a single provider SSH command.
+
+### Key Code And UI Changes
+
+1. Added a reusable access model and resolver.
+   - New `internal/core/access.go` defines `AccessMethod`.
+   - New `internal/access/` resolves provider-native SSH, matching `~/.ssh/config` entries, direct SSH by public/private IP, and a remediation guide fallback.
+   - `CLOUDMANAGER_SSH_CONFIG` can point the resolver at a custom SSH config file.
+
+2. Updated VM SSH UX.
+   - Pressing `s` or choosing `SSH` now opens an access-method picker.
+   - `Enter` runs the selected method.
+   - `c` copies the selected command.
+   - If a connection fails, the view returns to the picker so another method can be tried.
+
+3. Added tests for SSH config matching and the access picker.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/access ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Manual hosts, SSH key scanning, per-instance key mapping, and authorized_keys/provider-metadata remediation are still the next layer.
+2. The resolver currently parses simple OpenSSH config entries; complex `Include`, `Match`, and wildcard expansion are intentionally not implemented yet.
+
+## 2026-04-28 (Update 11)
+
+### User Request Handled
+
+- Improve the home dashboard visual design and add selectable dashboard themes with heavier, btop-style separators.
+
+### Key Code And UI Changes
+
+1. Reworked the home dashboard renderer in `internal/ui/app.go`.
+   - Replaced the noisy bordered card grid with compact metric blocks.
+   - Switched the dashboard divider to a heavy rule.
+   - Added a cleaner inventory summary with accent bars and a borderless command row.
+
+2. Added dashboard theme selection.
+   - New config key: `dashboard_theme`.
+   - Supported themes: `btop`, `neon`, `classic`, `mono`.
+   - Settings now includes `Dashboard theme` and cycles through these choices.
+
+3. Updated README config example with `dashboard_theme`.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The global `theme` color object still controls the app shell colors; `dashboard_theme` currently controls only the home dashboard.
+
+## 2026-04-28 (Update 10)
+
+### User Request Handled
+
+- Make copyable VM commands and multi-line remediation output easier to copy without terminal border characters.
+
+### Key Code And UI Changes
+
+1. Made the VM detail/remediation pane copy-first in `internal/views/vms/view.go`.
+   - Removed the rounded border from the VM detail viewport.
+   - Detail, cost, FinOps, action-failure, and SSH remediation output is now stored as copyable text.
+   - `c` copies the current VM detail/remediation output to the system clipboard.
+   - Clipboard support checks `pbcopy`, `wl-copy`, `xclip`, then `xsel`.
+
+2. Added app-level status updates for child views.
+   - `ui.StatusUpdateMsg` lets VM detail panes surface hints like `c copy, Esc close` in the main footer.
+
+3. Updated README keybindings.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Other resource detail panes still use their existing bordered viewport styles. VM command/remediation output was fixed first because it contains the IAP, SSM, SSH, and cost commands users copy most often.
+
+## 2026-04-28 (Update 9)
+
+### User Request Handled
+
+- Improve the home dashboard layout when the context sidebar is hidden, and add a database indexing option.
+
+### Key Code And UI Changes
+
+1. Improved home dashboard layout in `internal/ui/app.go`.
+   - Home content is now centered in a constrained canvas when extra width is available.
+   - Dashboard cards adapt to available width and can render up to four cards per row.
+   - Summary details are grouped in a bordered section.
+   - Dashboard actions render as compact command chips instead of a sparse vertical help list.
+
+2. Added database indexing controls.
+   - Settings now includes `Index databases`.
+   - `prefetch_resources` can include `databases`.
+   - `:index-db`, `:index-dbs`, and `:index-databases` refresh the database index.
+   - `:summary` refreshes databases only when database indexing is enabled; clusters still refresh for Kubernetes summary.
+
+3. Updated README.
+   - Added `:index-db`.
+   - Config example now includes `databases` in `prefetch_resources`.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Database indexing is in-memory only today. Persisting database indexes like the VM index is a logical next step.
+2. A visual browser-style screenshot is not available for the Bubble Tea TUI in this environment; validation covered rendering width behavior through tests.
+
+## 2026-04-28 (Update 8)
+
+### User Request Handled
+
+- Add user-configurable dashboard widgets.
+
+### Key Code And UI Changes
+
+1. Added dashboard widget configuration in `internal/config/config.go`.
+   - New config key: `dashboard_widgets`.
+   - Default widgets:
+     - `contexts`
+     - `indexed_vms`
+     - `running_vms`
+     - `stopped_vms`
+     - `public_ips`
+     - `backend`
+     - `databases`
+     - `kubernetes`
+     - `db_contexts`
+   - Supported optional widgets also include `vm_providers`, `vm_index_age`, and `k8s_hidden`.
+   - Unknown or duplicate widget IDs are ignored; an empty/invalid list falls back to defaults.
+
+2. Reworked the home dashboard renderer in `internal/ui/app.go`.
+   - Dashboard cards now render in the exact order from `dashboard_widgets`.
+   - Cards auto-wrap three per row.
+   - Widgets read only from local indexes/caches; dashboard rendering does not call cloud APIs.
+
+3. Updated README config example with `dashboard_widgets`.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. This is config-file driven. A later UI pass can add a dashboard editor screen for toggling/reordering widgets without editing JSON.
+
+## 2026-04-28 (Update 7)
+
+### User Request Handled
+
+- Make the dashboard less confusing and add high-level database/Kubernetes summary cards.
+
+### Key Code And UI Changes
+
+1. Updated the home dashboard in `internal/ui/app.go`.
+   - Reworded the VM ratio line from `Running mix` to `VMs running`.
+   - Reworded provider totals to `VMs by provider`.
+   - Added database summary card: total DBs plus running/stopped counts.
+   - Added Kubernetes summary card: `clusters:pools:nodes`.
+
+2. Added local app-level indexes for clusters and databases.
+   - `ClusterIndexUpdateMsg` and `DatabaseIndexUpdateMsg` update dashboard summaries from real fetched data.
+   - Cluster and database views now publish index updates after successful tab fetches.
+   - Added `:summary`, `:refresh-dashboard`, and `:dashboard-refresh` to fetch database and cluster summaries across known contexts.
+
+3. Improved Kubernetes node metadata parsing in `internal/core/vm.go`.
+   - Extracts cluster names and nodepool names from common EKS, GKE, AKS, and Karpenter labels/tags.
+
+4. Updated README with the new `:summary` command.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/core ./internal/ui ./internal/views/clusters ./internal/views/databases`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Database and cluster summaries are in-memory for now. They populate after opening those tabs or running `:summary`; they are not persisted to disk yet like the VM index.
+2. Kubernetes pool inference depends on provider tags/labels. More markers can be added from real account data.
+
+## 2026-04-28 (Update 6)
+
+### User Request Handled
+
+- Fix global search result activation so selecting a VM reliably drops into the VM resource view.
+
+### Key Code And UI Changes
+
+1. Hardened global search activation in `internal/ui/app.go`.
+   - Selecting a global VM search result now forces the VM root tab/view instead of relying on the existing view stack.
+   - This prevents stale drill-down views from receiving the VM initialization/search query.
+   - The selected VM context is still applied and the VM table is filtered by instance ID.
+
+2. Added regression coverage in `internal/ui/app_test.go`.
+   - Verifies global search initializes the VM tab and filter.
+   - Verifies global search truncates an existing VM drill-down stack back to the VM root view.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. If a VM result no longer exists in the provider after cache load, CloudManager will still open the VM tab filtered to that instance ID; the live VM fetch may then show zero rows until the index is refreshed.
+
+## 2026-04-28 (Update 5)
+
+### User Request Handled
+
+- Stop startup VM indexing when a persisted VM index cache is already available.
+
+### Key Code And UI Changes
+
+1. Fixed startup VM prefetch ordering in `internal/ui/app.go`.
+   - Context loading now waits for the VM index cache check before starting automatic VM prefetch.
+   - If a valid persisted VM index is loaded, startup prefetch is skipped and the app uses the cached records.
+   - If the cache is empty, expired, missing, disabled, or fails to load, `prefetch_on_start` still indexes VMs as configured.
+   - Manual `:index`, `:reindex`, and Settings `Refresh VM index now` still force a refresh.
+
+2. Added regression coverage in `internal/ui/app_test.go`.
+   - Verifies startup prefetch waits for the cache check.
+   - Verifies warm cache skips prefetch.
+   - Verifies empty cache still triggers configured startup prefetch.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. With `prefetch_on_start=true` and no usable cache, startup indexing still runs by design. To never index on startup, disable `Index VMs on startup` in Settings or set `prefetch_on_start=false`.
+
+## 2026-04-28 (Update 4)
+
+### User Request Handled
+
+- Hide Kubernetes worker-node VMs by default so VM lists, search, and dashboard are not polluted by ephemeral cluster nodes.
+
+### Key Code And UI Changes
+
+1. Added Kubernetes worker-node classification in `internal/core/vm.go`.
+   - Detects strong EKS, GKE, AKS, Karpenter, and Kubernetes cluster/nodepool metadata in VM names, labels, resource groups, networks, subnets, and security groups.
+   - Avoids hiding generic machines just because their name contains `node`.
+
+2. Added default hide behavior and toggles.
+   - New config key: `hide_kubernetes_nodes`, default `true`.
+   - `K` toggles Kubernetes worker nodes in the VM table, home dashboard, and global VM search.
+   - `:k8s-nodes` and `:kubernetes-nodes` also toggle visibility.
+   - Settings exposes `Hide Kubernetes nodes`.
+
+3. Applied the filter consistently.
+   - VM table hides Kubernetes worker nodes by default and shows a hidden-node banner.
+   - Home dashboard and global search compute counts from the filtered VM index unless the toggle is enabled.
+   - The persisted VM index still keeps all VMs; filtering is display/search behavior only.
+
+4. Updated README keybindings and config example.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/core ./internal/config ./internal/ui ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Detection is heuristic because cloud providers expose node metadata differently. It currently keys off strong provider/Kubernetes markers; more markers can be added if real accounts expose different tags.
+
+## 2026-04-28 (Update 3)
+
+### User Request Handled
+
+- Add a home dashboard for indexed VM inventory and make it easy to return home.
+
+### Key Code And UI Changes
+
+1. Expanded the home panel in `internal/ui/app.go`.
+   - Shows indexed VM totals, running count, stopped count, public-IP count, backend mode, indexed-context count, provider breakdown, running mix, and last-index age.
+   - Dashboard stats are computed from the persisted/global VM index, so it works without refetching when cache data exists.
+
+2. Added home navigation.
+   - `H` returns to the home dashboard.
+   - `:home`, `:dashboard`, and `:dash` open the same dashboard.
+   - Footer and README keybindings now expose the home/dashboard path.
+
+3. Added regression coverage in `internal/ui/app_test.go`.
+   - Verifies VM dashboard aggregation.
+   - Verifies `:dashboard` clears the active resource view and returns to home.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Dashboard currently summarizes the local VM index only. A Steampipe-style query plugin can be added later as an optional backend for richer cross-resource SQL queries.
+
+## 2026-04-28 (Update 2)
+
+### User Request Handled
+
+- Persist the VM global-search index locally so CloudManager does not need to re-index every startup.
+
+### Key Code And UI Changes
+
+1. Added VM index persistence.
+   - New config keys:
+     - `vm_index_persistence_enabled` defaults to `true`
+     - `vm_index_cache_ttl_hours` defaults to `24`
+   - The VM index is saved as `~/.cloudmanager-vm-index.json` with `0600` permissions.
+   - The cache format is versioned JSON with context, VM, and `seen_at` fields.
+   - Expired records are dropped on load according to the TTL.
+
+2. Wired cache load/save into the app shell.
+   - `App.Init()` now loads contexts and the persisted VM index in parallel.
+   - VM index updates from normal VM loads or startup/manual indexing save the cache automatically when persistence is enabled.
+
+3. Added refresh controls.
+   - Settings now includes:
+     - Persist VM index
+     - VM index cache TTL
+     - Refresh VM index now
+   - Command palette supports `:refresh-index`, `:reindex`, and `:index`.
+
+4. Updated README config example with the new VM index persistence keys.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The cache is not encrypted. It is protected with file mode `0600`; real encryption can be added later if needed. Base64 was intentionally not used because it is obfuscation, not encryption.
+
+## 2026-04-28
+
+### User Request Handled
+
+- Fix cloud-context sidebar filtering so pressing Enter on a filtered context opens resources.
+
+### Key Code And UI Changes
+
+1. Fixed filtered sidebar selection in `internal/ui/app.go`.
+   - When the sidebar list is filtered, `Enter` now applies the filter and resolves the best matching leaf cloud context.
+   - If the filtered selection lands on a provider/account node, CloudManager now chooses the first leaf context under that node instead of only expanding the tree.
+   - After activation, focus moves to the main resource pane and initializes the active resource view.
+
+2. Improved context filter matching in `internal/ui/tree.go`.
+   - Tree filter values now include provider, account ID, account name, display name, region, credential profile, and descendant context text.
+   - This lets context-name searches match collapsed account/provider nodes and still open resources.
+
+3. Added regression coverage in `internal/ui/app_test.go`.
+   - Covers filtering to a collapsed account/context and pressing Enter to activate the matching cloud context.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. If multiple contexts match the same query, the first match in tree order is opened. More explicit disambiguation could be added later if needed.
+
+## 2026-04-27 (Update 4)
+
+### User Request Handled
+
+- Expand Settings, add managed credential/context backup/edit/remove flows, and improve the main page.
+
+### Key Code And UI Changes
+
+1. Expanded the Settings screen in `internal/ui/app.go`.
+   - Settings now exposes backend mode, global search, VM startup indexing, prefetch concurrency, resource cache TTL, billing, billing cache TTL, metrics, metrics period, metrics cache TTL, managed contexts, and config backup.
+   - Settings remains available through `,`, `:settings`, `:set`, `:prefs`, and `:preferences`.
+
+2. Added managed context credential management.
+   - `:creds`, `:credentials`, and `:contexts` open the managed-context screen.
+   - Operators can add, edit, remove, or manually back up CloudManager managed contexts.
+   - Add/edit form supports provider, account ID, account name, credential profile/auth reference, and regions.
+   - Remove and save paths call `config.BackupConfig()` before mutating `~/.cloudmanager.json`.
+   - This manages CloudManager config contexts only; it does not delete external AWS/GCP/Azure credential files.
+
+3. Added config backup support in `internal/config/config.go`.
+   - Backups are written beside the config as `.cloudmanager.backup-YYYYMMDD-HHMMSS.json`.
+
+4. Improved the initial home panel.
+   - Added metric cards for context count, indexed VM count, and backend mode.
+   - Added settings and managed-context hints.
+
+5. Updated README keybindings for Settings, global search, and managed contexts.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Settings uses toggles/cycles and a managed-context form; arbitrary string settings such as theme colors or Gemini model are still best edited directly in the config file for now.
+
+## 2026-04-27 (Update 3)
+
+### User Request Handled
+
+- Add an in-app option to enable VM indexing and make settings accessible.
+
+### Key Code And UI Changes
+
+1. Added a dedicated Settings screen in `internal/ui/app.go`.
+   - `,` opens Settings.
+   - `:settings`, `:set`, `:prefs`, and `:preferences` also open Settings.
+   - Settings currently exposes:
+     - Global VM search
+     - Index VMs on startup
+
+2. Settings toggles persist to `~/.cloudmanager.json`.
+   - Enabling VM indexing sets `prefetch_on_start` and ensures `vms` is in `prefetch_resources`.
+   - Enabling VM indexing from the running app starts the VM prefetch flow immediately when contexts are available.
+
+3. Updated the empty-state help and footer to show Settings access.
+4. Updated README keybindings with `,` and `g`.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Settings currently covers global search and VM startup indexing only; broader app preferences can be added under the same screen.
+
+## 2026-04-27 (Update 2)
+
+### User Request Handled
+
+- Add a path toward global VM search with configurable startup prefetch.
+
+### Key Code And UI Changes
+
+1. Added config switches in `internal/config/config.go`:
+   - `global_search_enabled` defaults to `true`.
+   - `prefetch_on_start` defaults to `false`.
+   - `prefetch_resources` defaults to `["vms"]` and also accepts `"all"`.
+   - `prefetch_concurrency` defaults to `4` and is capped at `16`.
+
+2. Added app-owned VM indexing in `internal/ui/app.go`.
+   - VM search records include the VM plus its provider/account/region context.
+   - Startup prefetch, when enabled, fetches VM lists per context in bounded background batches.
+   - Prefetch results update the index only through Bubble Tea messages on the app update path.
+   - Normal VM view loads also publish VM index updates, so global search works for visited contexts even without startup prefetch.
+
+3. Added global VM search UX.
+   - `g` opens global VM search.
+   - `:find <query>` / `:search <query>` opens global search with an initial query.
+   - Search matches VM name, instance ID, private IP, public IP, labels, network, subnet, security groups, resource group, zone, provider, account, and region.
+   - `Enter` on a match switches to the VM's context and opens the VM tab filtered to that instance ID.
+
+4. Replaced the empty initial main pane with a concise help panel when no context is selected.
+   - Shows global search, command palette, tab, backend, and log shortcuts.
+   - Shows VM indexing status when prefetch is running.
+
+5. Updated README config example with the new global search and prefetch keys.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Prefetch currently indexes VMs only; the config is shaped to allow more resource types later.
+2. No live cloud prefetch run was executed in this environment, so provider API throttling behavior is validated structurally but not against live accounts.
+
+## 2026-04-27
+
+### User Request Handled
+
+- Cleanup unnecessary files in the repository.
+
+### Key Code And UI Changes
+
+1. Updated `.gitignore` to exclude:
+   - All `*.log` files.
+   - OS metadata (`.DS_Store`).
+   - Local tooling directory (`.codex-mcp/`).
+
+2. Removed the following unnecessary files and directories:
+   - Temporary scripts: `fix_file.py`, `fix_file2.py`, `fix_file3.py`, `fix_lucide.sh`, `patch_lucide.sh`, `append_actions.sh`, `patch_actions.sh`, `patch_analytics.sh`, `fix_ui.go`, `patch_rules.go`.
+   - Log files: `current_ui.log`, `err_run.log`, `err.log`.
+   - OS metadata: `.DS_Store` and `internal/.DS_Store`.
+   - Local MCP tooling: `.codex-mcp/`.
+
+### Validation Performed
+
+- Verified scripts were not imported in the Go codebase or mentioned in the documentation.
+- Updated `.gitignore` to prevent re-addition of logs and metadata.
+
+## 2026-04-24
+
+### User Request Handled
+
+- Identify and fix the critical flaws in the project called out during review.
+
+### Key Code And UI Changes
+
+1. Removed shell-string execution from cluster and cost flows.
+   - Reworked `internal/core/cluster.go` so kube-context preparation now runs explicit argument-safe commands instead of `bash -c`.
+   - Updated AWS, GCP, Azure, and DigitalOcean k9s launchers to pass structured command args.
+   - Reworked VM cost-command execution in `internal/views/vms/view.go` to build argv slices and execute them directly, while preserving a rendered command preview for the UI.
+
+2. Removed unsafe cache mutation from async view commands.
+   - VM, disk, and snapshot fetch commands no longer read/write view cache maps from background closures.
+   - VM metrics and cost enrichment now apply cached data on the UI side and only persist cache updates back in the Bubble Tea update path.
+   - VM auto-billing fan-out on every fetch was removed; the VM table no longer triggers per-instance billing lookups just from loading the screen.
+
+3. Fixed double-processing of key events in the networks view.
+   - `internal/views/networks/view.go` no longer updates the network/subnet tables inside both the key handlers and the outer update router.
+   - This restores single-step cursor movement and stable selection behavior.
+
+4. Added focused regression coverage.
+   - Added cluster helper tests for existing-context and fetch-failure handling.
+   - Added network view tests for single-step cursor movement in both network and subnet tables.
+   - Updated VM tests for the new explicit cost-command builder and non-automatic billing behavior.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/core ./internal/views/vms ./internal/views/networks ./internal/views/disks ./internal/views/snapshots ./internal/views/clusters`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/aws ./internal/providers/gcp ./internal/providers/azure ./internal/providers/digitalocean`
+
+### Remaining Risks Or Follow-Up
+
+1. The cluster preparation path now executes provider kubeconfig commands before launching `k9s`; that is safer than shell composition, but it still depends on the relevant CLIs being installed and authenticated in the operator shell.
+2. The VM table now avoids automatic billing fan-out entirely. If table-level cost enrichment is wanted later, it should be reintroduced as an explicit user action with bounded concurrency and provider-aware rate limiting.
+
+## 2026-04-20
+
+### User Request Handled
+
+- Fix firewall rule update/edit behavior across the supported cloud providers.
+
+### Key Code And UI Changes
+
+1. Fixed Azure firewall mutation wiring in `internal/providers/registry.go`.
+   - Azure firewall bindings now include `ExecuteFirewallActionSDK` in both CLI-backed and SDK-backed provider registrations.
+   - This restores rule edit/delete execution from the shared `FirewallProvider` path instead of returning the registry-level “firewall modification not supported” error.
+
+2. Fixed Azure firewall rule normalization in `internal/providers/azure/firewalls.go`.
+   - Azure firewall-rule rows now preserve the rule name, NSG resource ID, provider label, and parent resource metadata needed later by edit/delete flows.
+   - This fixes the path where fetched Azure rules reached the editor without enough identity data to update the selected NSG rule.
+
+3. Fixed GCP firewall-rule round-tripping in `internal/providers/gcp/firewalls.go` and `internal/providers/gcp/firewalls_edit.go`.
+   - Normalized GCP firewall rows now retain the underlying firewall object name.
+   - Disabled classic GCP rules now carry a visible disabled marker in the description so the direct toggle flow can infer the current state.
+   - GCP add/edit mutation helpers now:
+     - split comma-separated ports into valid Compute API port lists
+     - round-trip tag and service-account selectors instead of flattening them into ranges
+     - preserve sibling `allowed[]` / `denied[]` entries when editing a single selected row
+     - remove only the selected row entry on delete, deleting the whole firewall object only when the last entry is removed
+
+4. Blocked read-only GCP policy-derived firewall rows from mutation in `internal/views/firewalls/rules_view.go`.
+   - Effective firewall-policy rows remain visible in the table, but edit/delete now stop early with an in-app read-only explanation instead of attempting an invalid `Firewalls.Patch` call.
+
+5. Added regression coverage.
+   - Added Azure mapping assertions for mutation-critical fields.
+   - Added GCP tests for disabled-rule markers and sibling-preserving edit patches.
+   - Added a provider-registry test ensuring Azure firewall bindings expose mutation support.
+   - Added a firewall-rules view test ensuring GCP policy-derived rows are blocked as read-only.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/aws ./internal/providers/gcp ./internal/providers/azure`
+
+### Remaining Risks Or Follow-Up
+
+1. These fixes were validated through unit tests only in this session; they were not exercised against live AWS, GCP, or Azure APIs from this environment.
+2. GCP firewall-policy rows are intentionally read-only in the current UI because they are sourced from effective policy evaluation, not directly mutable classic firewall resources.
+
+## 2026-04-20 (Update 2)
+
+### User Request Handled
+
+- Fix AWS firewall rule updates that still were not applying.
+- Clean up the firewall JSON edit screen.
+
+### Key Code And UI Changes
+
+1. Reworked AWS firewall-rule loading in `internal/providers/aws/firewalls.go`.
+   - AWS firewall rows now load from `DescribeSecurityGroupRules` instead of expanding `DescribeSecurityGroups` permissions into synthetic row IDs.
+   - Each normalized AWS row now carries the real `SecurityGroupRuleId` (`sgr-...`), which is the identifier AWS needs for precise rule mutation.
+
+2. Tightened AWS firewall mutation behavior in `internal/providers/aws/firewalls_edit.go`.
+   - Delete now revokes by `SecurityGroupRuleId` when available.
+   - Edit now uses `ModifySecurityGroupRules` for in-place updates when the selected rule can be modified directly.
+   - If the edit changes the AWS rule kind/direction beyond what in-place modification supports, the code falls back to revoke-by-ID plus authorize-new-rule.
+   - Added normalization helpers so placeholder values like `-` are not pushed back into AWS as literal field values.
+
+3. Cleaned up the firewall JSON editor in `internal/views/firewalls/rules_view.go`.
+   - The edit pane now uses a full-width panel instead of a cramped side-by-side overlay.
+   - The JSON payload now contains editable fields only:
+     - direction
+     - protocol
+     - portRange
+     - source
+     - destination
+     - action
+     - priority
+     - description
+   - Read-only resource metadata is shown separately above the editor instead of being mixed into the JSON buffer.
+   - The editor now shows line numbers and no longer renders placeholder `-` values as editable content.
+
+4. Added focused AWS and editor regressions.
+   - Added AWS tests for real rule-ID mapping, rule-request generation, and in-place modify eligibility.
+   - Added a firewall edit-pane layout test so the JSON editor must stay within the active window.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/aws ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. AWS edit behavior was validated through unit tests only in this environment; no live AWS rule modification was executed here.
+2. AWS in-place modify still follows AWS API limits: changing a rule between CIDR, prefix-list, and referenced-security-group types falls back to revoke-and-authorize instead of using `ModifySecurityGroupRules`.
+
+## 2026-04-20 (Update 3)
+
+### User Request Handled
+
+- Replace the awkward JSON firewall-rule editor with an easier terminal form for AWS security-group rule edits.
+
+### Key Code And UI Changes
+
+1. Replaced the AWS edit experience in `internal/views/firewalls/rules_view.go`.
+   - Pressing `e` on an AWS security-group rule now opens a compact terminal form instead of a raw JSON editor.
+   - The AWS form exposes the fields operators actually care about:
+     - direction
+     - protocol
+     - ports
+     - peer (`CIDR`, `sg-...`, or `pl-...`)
+     - description
+   - AWS `Action` is no longer editable in the form because security-group rules are allow-only.
+
+2. Kept non-AWS firewall edits functional with a generic form.
+   - GCP/Azure-style rules now use a structured field form instead of JSON as well.
+   - Generic fields include direction, action, protocol, ports, source, destination, description, and priority.
+
+3. Improved terminal ergonomics for firewall-rule editing.
+   - The edit view now uses a full-width form panel instead of a cramped JSON block.
+   - Added direct field validation for bad direction/action/priority input.
+   - Updated rule-edit help text and form focus handling (`Tab`, `Shift+Tab`, `Enter`, `F2`, `Ctrl+S`).
+
+4. Updated firewall-rule view tests.
+   - Added/updated coverage for:
+     - opening the AWS terminal edit form
+     - submitting an edited AWS SG rule through the form
+     - rejecting invalid form input
+     - keeping the edit pane within the active terminal window
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The new terminal form was validated through unit tests only in this environment; it was not exercised against a live AWS account in this session.
+2. The AWS edit form intentionally models the security-group abstraction, not AWS Network Firewall resources.
+
+## 2026-04-20 (Update 4)
+
+### User Request Handled
+
+- Fix AWS security-group rule edits that still were not saving when operators added another port in the terminal form.
+
+### Key Code And UI Changes
+
+1. Finished the AWS multi-port edit/replace path in `internal/providers/aws/firewalls_edit.go`.
+   - AWS edit logic now consistently treats comma-separated ports as multiple SG rules when an operator edits a single selected rule into multiple ports.
+   - Revoke and authorize flows now both use the same multi-permission builder, so replace-style edits can revoke the original rule and create the new split port rules correctly.
+   - In-place AWS modify still stays limited to a single port/range per rule, matching EC2 `ModifySecurityGroupRules`.
+
+2. Tightened AWS rule-request and permission validation.
+   - Invalid AWS port segments now fail early with a clear error instead of silently producing a partial permission.
+   - Description fields are only attached to AWS peers when present, avoiding noisy empty values in the generated request payload.
+
+3. Kept failed saves visible in the firewall edit form.
+   - Firewall provider errors now remain in the edit pane as `formError` instead of feeling like the save was ignored.
+   - The AWS edit helper text now explicitly states that comma-separated ports create separate AWS SG rules.
+
+4. Added regression coverage for the exact AWS SG edit case.
+   - Added AWS tests for:
+     - rejecting multi-port in-place modify requests
+     - splitting comma-separated ports into multiple EC2 permissions
+     - forcing replace behavior when an edit expands to multiple ports
+   - Added a firewall-view test ensuring provider save errors keep the edit form open and visible.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/aws`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The fix was validated through unit tests only in this environment; no live AWS security-group edit was executed here.
+2. Editing one AWS SG row into multiple ports intentionally replaces the selected rule with multiple EC2 security-group rules, because AWS SG rules do not support a single row containing multiple discrete ports.
+
+## 2026-04-21
+
+### User Request Handled
+
+- Fix GCP SDK auth failures that were stopping resource screens with `could not find default credentials` when ADC was not configured.
+
+### Key Code And UI Changes
+
+1. Added shared GCP SDK auth fallback in `internal/providers/gcp/auth.go`.
+   - GCP SDK clients now try normal Google Application Default Credentials first.
+   - If ADC is missing, CloudManager now falls back to the active `gcloud` login by calling `gcloud auth print-access-token` and building the SDK client from that token.
+   - If both ADC and `gcloud` token fallback fail, the returned error now explains both attempts and points operators at the concrete fixes:
+     - `gcloud auth application-default login`
+     - `GOOGLE_APPLICATION_CREDENTIALS`
+     - `gcloud auth login`
+
+2. Applied the shared auth helper across GCP SDK-backed provider paths.
+   - Compute-backed resource flows now use the fallback helper:
+     - VMs
+     - disks
+     - snapshots
+     - networks
+     - firewalls
+     - firewall edits
+   - The same fallback path now also covers GKE, Cloud SQL, Monitoring, Recommender, and BigQuery SDK clients.
+
+3. Added focused GCP auth tests.
+   - Added tests for:
+     - trimming the `gcloud auth print-access-token` output correctly
+     - preserving CLI stderr in fallback errors so auth failures are diagnosable in the terminal
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/gcp`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. This was validated through unit tests only in this environment; no live GCP SDK call was executed here.
+2. The CLI-token fallback uses a static access token per client creation. That is fine for the app’s short-lived request pattern, but long-running background operations would need a refreshable token source instead.
+
 ## 2026-03-27
 
 ### Purpose
@@ -559,3 +2007,632 @@ Completed a request to completely rewrite `ExecuteFirewallActionSDK` to use nati
 - **Bug Fix:** Fixed an issue where GCP VMs were not rendering for users running in `SDK` mode without Google Application Default Credentials (ADC) configured.
 - The GCP Go SDK strictly requires ADC (`gcloud auth application-default login`). Unlike other resources (Disks, Snapshots, Clusters) which properly caught the SDK auth error and fell back to executing the CLI (`gcloud compute ...`), the `FetchVMsSDK` function was missing its `SDKWithCLIAuthFallback` wrapper. 
 - Implemented the wrapper in `internal/providers/gcp/client.go` and updated `internal/providers/registry.go` to ensure GCP VM queries gracefully fall back to the CLI when ADC is missing.
+
+## 2026-04-14 (Update 19)
+
+### What Was Done
+- **Feature Request:** Added functionality to create completely new firewall rules from scratch across AWS, GCP, and Azure directly from the TUI.
+- Users can now press `a` while viewing a Security Group's rules to open the `➕ ADD FIREWALL RULE` form.
+- The 5-field form captures `Direction`, `Action`, `Protocol`, `Ports`, and `IP/CIDR`.
+- **SDK Execution:** 
+  - AWS: Submits a new `AuthorizeSecurityGroupIngress/Egress` payload.
+  - GCP: Auto-generates a unique rule name (`fw-rule-[timestamp]`), binds it to the global network URL matching the parent group, and calls `compute.Service.Firewalls.Insert`.
+  - Azure: Auto-generates a unique rule name (`rule-[timestamp]`), defaults priority to 1000 to ensure evaluation, and calls `BeginCreateOrUpdate`.
+- Added corresponding `AUDIT` logging entries for all new rule creations.
+
+## 2026-04-14 (Update 20)
+
+### What Was Done
+- **UX Consistency:** The `Command Bar` (`:`) and `Firewall Edit/Add Forms` previously used the legacy overlay engine, which erased the table context behind a blank background. 
+- Overhauled the Command Bar to render strictly inside the Header/Breadcrumb row layout component (`app.go`), retaining full table visibility while active.
+- Overhauled the `paneEditRule` and `paneAddRule` in `internal/views/firewalls/rules_view.go` to use the `lipgloss.JoinHorizontal` responsive split engine. The forms now render natively on the right sidebar while gracefully shrinking and truncating the Firewall Rules table on the left, keeping context visually intact.
+
+## 2026-04-14 (Update 21)
+
+### What Was Done
+- **UX Fix:** Fixed silent error failures when triggering the FinOps recommendation engine without a valid `GEMINI_API_KEY`.
+- Previously, a missing API key would only log an error to the bottom status bar, leaving the user staring at an unchanged table. The application now gracefully intercepts the error, transitions to the `Describe` pane, and provides a beautifully formatted Markdown overlay with exact instructions on how to acquire and configure the Gemini API key.
+- **UX Addition:** Discovered that the `FinOps` action lacked a top-level hotkey. Added `f` to the VMs table key bindings so users can instantly trigger Gemini AI FinOps recommendations without opening the action menu. Updated the `ShortHelp` bar to advertise this new shortcut.
+
+## 2026-04-18
+
+### User Request Handled
+
+- Fixed the firewall add/edit form flow so pressing `Enter` submits as expected instead of only working on the final field.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - `Enter` now advances to the next field when the form cursor is not on the last input.
+   - `Enter` still submits the add/edit form from the final field.
+   - Added small focus helpers so add/edit forms share the same navigation behavior.
+
+2. Added regression coverage in `internal/views/firewalls/rules_view_test.go`.
+   - Added tests for Enter advancing focus on add/edit forms.
+   - Added tests for Enter submitting add/edit forms from the final field.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Tab and Shift+Tab remain the primary explicit field-navigation keys, but Enter now works as a forward form action.
+
+## 2026-04-18 (Update)
+
+### User Request Handled
+
+- Made firewall rule actions context-aware and blocked firewall mutations in CLI mode with a clear SDK-mode hint.
+
+### Key Code And UI Changes
+
+1. Updated firewall rule action generation in `internal/core/firewall_rule.go`.
+   - `Enable` and `Disable` are now only included for GCP firewall rules.
+   - AWS and Azure rule menus no longer show GCP-only toggle actions.
+
+2. Updated `internal/views/firewalls/rules_view.go`.
+   - Firewalls now build action menus from the active provider context.
+   - CLI mode now blocks firewall mutations and opens a warning pane instead of opening the edit/add flow.
+   - Added info/warn/error logging around firewall action attempts and blocked CLI mutations.
+
+3. Updated `internal/providers/cli.go`.
+   - CLI-backed firewall mutation calls now return a direct SDK-mode error instead of attempting a mutation path.
+
+4. Added regression coverage in `internal/views/firewalls/rules_view_test.go`.
+   - Verified AWS no longer receives GCP-only toggle actions.
+   - Verified CLI-mode firewall mutation attempts are blocked with an SDK-mode warning.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls ./internal/providers`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Firewall edits still use the existing multi-field rule form in SDK mode. If you want true inline single-field editing, that is a separate UX change.
+
+## 2026-04-18 (Update 2)
+
+### User Request Handled
+
+- Replaced the firewall rule edit form with a k9s-style inline quick-edit flow.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - Pressing `e` now opens a single-field inline editor instead of a multi-input form.
+   - `Tab` / `Shift+Tab` cycle editable fields.
+   - `Enter` saves the currently selected field immediately.
+   - The edit pane now renders as `QUICK EDIT FIREWALL RULE` and shows the current field plus its current value.
+   - Added field-aware logging so action attempts include the specific field being edited.
+
+2. Updated `internal/providers/gcp/firewalls_edit.go`.
+   - GCP firewall edits now patch `Description` as well as the existing rule fields.
+
+3. Updated `internal/views/firewalls/rules_view_test.go`.
+   - Added coverage for opening the inline editor from `e`.
+   - Added coverage for cycling quick-edit fields and submitting a single-field edit.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls ./internal/providers/gcp`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- The quick-edit flow currently exposes the most practical rule fields inline. If you want direction or other provider-specific metadata editable in the same pane, that can be added next.
+
+## 2026-04-18 (Update 3)
+
+### User Request Handled
+
+- Removed the edit-pane form and changed firewall rule editing to a true inline quick-edit bar.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - The edit pane now renders as a simple inline bar below the table instead of a boxed form.
+   - `e` opens inline edit mode on one field at a time.
+   - `Tab` / `Shift+Tab` cycle fields, and `Enter` saves the current field directly.
+   - The table stays full-width while editing instead of shrinking into a form split.
+
+2. Kept add-rule behavior separate.
+   - The `Add` flow still uses the existing multi-field form.
+   - Only the edit path was converted to inline editing.
+
+3. Updated tests in `internal/views/firewalls/rules_view_test.go`.
+   - Verified the inline edit bar opens from `e`.
+   - Verified field cycling and inline submit behavior.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Inline edit currently targets a small set of practical firewall fields. If you want more provider-specific fields exposed inline, that can be extended per provider.
+
+## 2026-04-19
+
+### User Request Handled
+
+- Tightened firewall editing so the edit flow is a true in-place inline prompt instead of a form-style pane.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - The edit state now renders as a minimal inline prompt line beneath the table.
+   - No boxed edit form or split-pane editor is used for rule edits.
+   - `Tab` / `Shift+Tab` still cycle fields, and `Enter` saves the current field immediately.
+
+2. Kept add-rule behavior unchanged.
+   - The add-rule workflow still uses the existing multi-field form.
+
+3. Expanded and adjusted coverage in `internal/views/firewalls/rules_view_test.go`.
+   - Verified the inline edit prompt is shown.
+   - Verified add-rule submit behavior.
+   - Verified edit-rule field cycling and submit behavior.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- The inline editor currently edits one field at a time and is optimized for the most common firewall properties. Provider-specific field expansion can be added later if needed.
+
+## 2026-04-19 (Update)
+
+### User Request Handled
+
+- Investigated why firewall submit appeared to do nothing and added execution-level tests for add/edit submits.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - Edit hotkey setup now returns the inline editor initialization command instead of dropping it.
+   - Added explicit submit/open logging for firewall add and edit actions.
+   - Routed firewall mutation execution through a testable provider lookup hook so submit tests can exercise the real command path.
+
+2. Updated `internal/providers/mock.go`.
+   - Added `ExecuteFirewallActionFn` to the mock provider so tests can verify actual add/edit execution without cloud side effects.
+
+3. Expanded `internal/views/firewalls/rules_view_test.go`.
+   - Added execution-level add submit coverage that invokes the returned command and confirms the mock provider receives the mutation.
+   - Added execution-level edit submit coverage with the same end-to-end command invocation.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- If the live app still shows no change after submit, the remaining likely causes are backend auth/permissions or provider-side API errors, which should now surface in the log file and mutation completion path.
+
+## 2026-04-20
+
+### User Request Handled
+
+- Moved firewall editing fully into the highlighted table row so the active field is edited in place instead of in any separate prompt area.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - The edit state now renders the selected row with the active field value replaced by the live inline input.
+   - The edit pane no longer renders a separate bottom editor bar.
+   - Typing updates the selected row immediately so the operator edits directly in the table.
+   - Submit logging was kept in place for add and edit flows.
+
+2. Expanded `internal/views/firewalls/rules_view_test.go`.
+   - Updated inline-edit coverage to assert the active value appears in the rendered table row.
+   - Kept add and edit execution tests that invoke the returned submit command.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- This is still row-inline, not a true per-cell cursor model. If you want actual arrow-key cell navigation, that would require a deeper table interaction refactor.
+
+## 2026-04-20 (Update)
+
+### User Request Handled
+
+- Fixed the inline firewall editor so typed text is committed into the rule model immediately, not only on submit.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - Inline edit now commits the current cell value into `pendingRule` on every keystroke.
+   - Switching fields preserves unsaved edits instead of dropping them.
+   - Enter still submits the currently highlighted field, but the underlying rule state is already current before submit.
+
+2. Expanded `internal/views/firewalls/rules_view_test.go`.
+   - Added coverage to verify typing updates the inline cell value immediately.
+   - Added coverage to verify tabbing away from a field keeps the typed value.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- The inline editor is still row-based rather than a true table-cell cursor implementation with left/right cell focus.
+
+## 2026-04-20 (Update 2)
+
+### User Request Handled
+
+- Added true inline cell navigation for firewall rule edits so the active field can be moved with left/right arrows, not just Tab.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - Edit mode now treats `←/→` as field navigation between editable columns.
+   - `Tab` still advances and `Shift+Tab` still moves backward, but the row editor now matches the requested left/right cell behavior.
+   - Updated the short help text to advertise inline edit field navigation.
+
+2. Expanded `internal/views/firewalls/rules_view_test.go`.
+   - Added coverage for `←/→` moving between fields.
+   - Kept the inline typing test to verify edits persist while moving between fields.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- This is still one-row-at-a-time inline editing. A full spreadsheet-style cursor inside table cells would be a larger interaction refactor.
+
+## 2026-04-20 (Update 3)
+
+### User Request Handled
+
+- Fixed the firewall inline edit rendering bug where embedding the full text input widget inside the table was corrupting the row layout.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - Replaced `textinput.View()` rendering inside the table cell with a plain inline cell renderer.
+   - The active cell now shows the current text plus a small cursor marker, which keeps table layout stable while preserving inline edit feedback.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- The editor is still inline-row based rather than a true cell widget with per-character cursor rendering inside the table cell.
+
+## 2026-04-20 (Update 5)
+
+### User Request Handled
+
+- Replaced firewall rule edit mode with a raw JSON editor that marshals the normalized firewall rule payload the SDK mutation path already consumes.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - Edit mode now opens a multiline JSON textarea instead of field-by-field inline editing.
+   - The editor is seeded from the selected rule as pretty-printed JSON.
+   - `Ctrl+S` parses the JSON and submits it through the existing provider mutation command.
+   - Invalid JSON now stays in the editor and surfaces an error message instead of silently failing.
+
+2. Updated `internal/views/firewalls/rules_view_test.go`.
+   - Added coverage for opening the JSON editor.
+   - Added coverage for JSON submit executing the provider.
+   - Added coverage for invalid JSON blocking submit.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- JSON submit currently uses `Ctrl+S`; if you want a different save key or a dedicated JSON schema/validation pass, that can be added next.
+
+## 2026-04-20 (Update 4)
+
+### User Request Handled
+
+- Fixed the inline firewall cursor behavior so left/right movement can stay inside the active field and only changes fields at the edges.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - Removed the accidental overlap where `right` was being treated as a field-switch key before cursor movement ran.
+   - The edit mode now uses `left`/`right` for character-level cursor motion within the current field.
+   - The same keys only switch fields when the cursor is already at the start or end of the current value.
+   - Added per-field cursor position tracking so the inline editor restores cursor location when returning to a field.
+
+2. Updated `internal/views/firewalls/rules_view_test.go`.
+   - Added coverage that right-arrow moves the cursor inside the current field without switching fields.
+   - Kept coverage for switching to adjacent fields when the cursor is at a boundary.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls -run TestEditRuleArrowKeysMoveCursorWithinField -v`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- The editor is still an inline row editor rather than a full spreadsheet-style per-cell widget with independent column focus state outside the rule edit flow.
+
+## 2026-04-20 (Update 6)
+
+### User Request Handled
+
+- Fixed the firewall JSON edit save flow so it uses a terminal-safe submit key and is easier to complete in a live TUI session.
+
+### Key Code And UI Changes
+
+1. Updated `internal/views/firewalls/rules_view.go`.
+   - JSON edit submit now accepts `F2` as the primary save key, with `Ctrl+S` kept as a secondary path.
+   - Updated the JSON editor footer to advertise `F2/Ctrl+S` instead of only `Ctrl+S`.
+   - Added stronger submit-path logging around the existing edit action flow.
+
+2. Updated `internal/views/firewalls/rules_view_test.go`.
+   - Switched the JSON submit tests to use `F2` so the coverage matches the terminal-safe save path.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- If you want a one-key submit that is even more discoverable, we can add an explicit "Save" action in the edit pane alongside the `F2` shortcut.
+
+## 2026-04-22
+
+### User Request Handled
+
+- Fixed Codex MCP startup failures for `fetch` and `desktop-commander`.
+
+### Key Code And Runtime Changes
+
+1. Repaired Codex MCP server configuration in `/Users/ranger/.codex/config.toml`.
+   - Replaced the broken `fetch` npm entry (`@modelcontextprotocol/server-fetch`, which now 404s) with a local Python runtime:
+     - command: `/Users/ranger/CLOUDMANAGER/.codex-mcp/fetch-venv/bin/python`
+     - args: `["-m", "mcp_server_fetch"]`
+   - Replaced the broken cached `desktop-commander` `npx` entry with a clean repo-local install:
+     - command: `node`
+     - args: `["/Users/ranger/CLOUDMANAGER/.codex-mcp/desktop-commander/node_modules/@wonderwhy-er/desktop-commander/dist/index.js"]`
+
+2. Added local MCP runtimes under `/Users/ranger/CLOUDMANAGER/.codex-mcp/`.
+   - `desktop-commander/` contains a clean npm install of `@wonderwhy-er/desktop-commander@0.2.38`.
+   - `fetch-venv/` contains a Python virtualenv with `mcp-server-fetch`.
+
+3. Backed up the prior Codex config before editing.
+   - Backup file: `/Users/ranger/.codex/config.toml.bak-mcp-fix-20260422`
+
+### Validation Performed
+
+- Executed raw MCP stdio `initialize` handshakes against both repaired runtimes.
+- Verified `desktop-commander` initialize response:
+  - `name: desktop-commander`
+  - `version: 0.2.38`
+- Verified `fetch` initialize response:
+  - `name: mcp-fetch`
+  - `version: 1.27.0`
+
+### Remaining Risks Or Follow-Up
+
+1. Codex needs a restart or MCP server reload to pick up the new `~/.codex/config.toml` entries if the current app process still has the old startup state cached.
+2. The repaired MCP runtimes now live inside the repo at `.codex-mcp/`; if that directory is deleted, the Codex MCP config will need to be updated again or the runtimes reinstalled.
+
+## 2026-04-29 (Manual Hosts)
+
+### User Request Handled
+
+- Added a practical path for unmanaged/third-party VMs where the user has IP/DNS, username, and SSH key or SSH config, but does not want provider API credentials.
+
+### Key Code And UI Changes
+
+1. Added manual host config and indexing.
+   - `manual_hosts` now persists in `~/.cloudmanager.json`.
+   - Manual hosts create a synthetic `Manual / manual-hosts / global` context.
+   - Manual hosts are projected into the local VM search index so global search can find them by name, IP, username, tags, or ID.
+
+2. Added the Hosts resource view.
+   - Registered tab `8` as `Hosts`.
+   - Added `:add-host`, `:host-add`, and `:manual-host`.
+   - Settings now includes `Add manual host`.
+   - The Hosts view supports `Enter`/`s` to launch SSH and `c` to copy only the SSH command.
+
+3. Added manual SSH access resolution.
+   - `ssh_config_host` produces `ssh <alias>`.
+   - `key_path` produces `ssh -i <key> user@host`.
+   - Non-SSH manual connections are stored as metadata but are not runnable yet.
+
+4. Fixed global-search drop behavior for manual hosts.
+   - Selecting a manual host result opens the Hosts tab instead of the VM tab.
+   - The Hosts view receives a search filter so the selected host is narrowed immediately.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/access ./internal/hosts ./internal/views/hosts ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- RDP is metadata-only today; no runnable RDP launcher has been added.
+- `key_ref` and `password_ref` are placeholders for a later keychain/vault-backed secret resolver.
+- Edit/remove flows for manual hosts are not implemented yet.
+- Manual hosts currently reuse the VM search index shape; a future global search model should support typed resources directly.
+
+## 2026-04-29 (CloudManager Tags)
+
+### User Request Handled
+
+- Added CloudManager-only tags so the same logical tag, for example `VFWEB`, can be applied across providers, accounts, projects, regions, and manual hosts without mutating provider metadata.
+
+### Key Code And UI Changes
+
+1. Added `resource_tags` config support.
+   - Tags can target a VM by provider/account/region plus resource ID, name, private IP, or public IP.
+   - Tags are stored only in CloudManager config.
+   - Provider tags, GCP labels, and instance metadata are not modified.
+
+2. Added VM table tagging UX.
+   - Select a VM and press `t`.
+   - Enter comma-separated tags such as `VFWEB,prod`.
+   - CloudManager backs up config before saving.
+
+3. Applied tag overlays during indexing and rendering.
+   - Tags render into VM labels as `cm:<tag>`, for example `cm:VFWEB`.
+   - Global search can match these local tags.
+   - Cached VM index records get the overlay reapplied at load time.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Tag remove/edit UI is not implemented yet.
+- Tags currently target VMs only; disks, databases, clusters, and firewalls can use the same model later.
+
+## 2026-04-29 (Provider Authoring)
+
+### User Request Handled
+
+- Clarified where community providers should be added, using an OVHcloud-style provider as the example, while keeping CloudManager lightweight and portable.
+
+### Key Code And Docs Changes
+
+1. Updated `docs/PROVIDER_GUIDE.md`.
+   - Added provider tiers: manual hosts, CLI provider, SDK provider, external provider process.
+   - Documented where a new provider belongs: `internal/providers/<provider>/`.
+   - Added an OVHcloud-style registration example.
+   - Expanded the current capability list to include hosts, clusters, databases, and metrics.
+
+2. Added lightweight-binary guidance.
+   - Default binary should avoid pulling every long-tail provider SDK.
+   - New providers should start CLI-only or manual when possible.
+   - Large SDKs should move behind optional builds or a future external provider process.
+
+3. Added global access/configure UX target.
+   - Current surfaces: `g`, `,`, `:`, `:login`, `:add-provider`, `:add-host`.
+   - Target is one command palette that exposes configured resources, missing setup, manual hosts, login, tags, indexing, settings, and logs.
+
+### Validation Performed
+
+- Documentation-only change; no test run required.
+
+### Remaining Risks Or Follow-Up
+
+- External provider process protocol is not implemented yet.
+- The default binary still imports built-in provider packages directly; slimming long-tail SDKs needs build-tag or sidecar work.
+
+## 2026-04-29 (SDK Update Policy)
+
+### User Request Handled
+
+- Added explicit guidance for updating current cloud SDK dependencies.
+
+### Key Docs Changes
+
+1. Updated `docs/PROVIDER_GUIDE.md`.
+   - Added `SDK Update Policy`.
+   - Requires scoped, reversible upgrades.
+   - Documents provider-specific cautions for AWS SDK v2, Azure ARM packages, and GCP mixed SDK/API clients.
+   - Defines required test matrix for SDK upgrades.
+   - Calls out auth fallback, normalized model mapping, unsupported capability behavior, and binary-size review.
+
+### Validation Performed
+
+- Documentation-only change; no test run required.
+
+### Remaining Risks Or Follow-Up
+
+- No automated dependency-update bot or SDK-upgrade CI matrix exists yet.
+
+## 2026-04-29 (Manual Host UX Fix)
+
+### User Request Handled
+
+- Fixed manual host add/save ergonomics and simplified the Manual context tree label.
+
+### Key Code And UI Changes
+
+1. Manual host form save keys.
+   - Save now accepts `Enter`, `Ctrl+J`, `Ctrl+M`, and `F2`.
+   - Footer now advertises `Enter/F2: Save`.
+
+2. Manual context tree label.
+   - Manual provider now renders as `Manual > Hosts`.
+   - Removed the confusing `Manual > Manual Hosts > Manual Hosts` nesting.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/providers ./internal/config`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- If a terminal still sends an unusual key sequence for Return, `F2` is now the explicit fallback save key.
+
+## 2026-04-29 (Manual Host Removal)
+
+### User Request Handled
+
+- Added an in-app way to remove manual hosts.
+
+### Key Code And UI Changes
+
+1. Hosts view removal.
+   - Press `d` on a selected manual host to remove it.
+   - CloudManager backs up config before saving.
+   - Hosts table refreshes immediately.
+
+2. Shell/index refresh.
+   - Manual host removal emits a shell refresh message.
+   - Context tree reloads from config.
+   - Manual host records are pruned from the local global-search index before reindexing remaining manual hosts.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/hosts ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- There is no confirmation prompt yet; removal is immediate after `d`, but config is backed up first.
+
+## 2026-04-29 (Manual Host Remove Confirmation)
+
+### User Request Handled
+
+- Added confirmation before removing a manual host.
+
+### Key Code And UI Changes
+
+1. Hosts view removal flow.
+   - `d` now opens a confirmation prompt.
+   - `Enter` or `y` confirms removal.
+   - `Esc` or `n` cancels.
+
+2. Added tests for confirm and cancel behavior.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/hosts ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Confirmation is inline in the Hosts view, not a shared modal component yet.

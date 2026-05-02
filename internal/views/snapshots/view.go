@@ -35,6 +35,7 @@ const (
 type snapFetchMsg struct {
 	requestKey string
 	snaps      []core.Snapshot
+	fromCache  bool
 	err        error
 }
 type commandCompleteMsg struct {
@@ -201,6 +202,14 @@ func (v *SnapshotsView) IsInputActive() bool {
 	return v.isSearching || v.activePane == paneCreateDisk || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
 }
 
+func (v *SnapshotsView) SetSearchQuery(query string) {
+	v.activePane = paneTable
+	v.isSearching = false
+	v.searchInput.SetValue(strings.TrimSpace(query))
+	v.searchInput.Blur()
+	v.syncVisibleRows()
+}
+
 func (v *SnapshotsView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
 	v.activeCtx = ctx
 	v.width = width
@@ -290,13 +299,17 @@ func (v *SnapshotsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			return v, nil
 		}
 		v.loading = false
-		v.snapData = msg.snaps
 		if msg.err != nil {
 			applog.Errorf("component=snapshots event=fetch_failed provider=%s account=%s region=%s mode=%s err=%v", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), msg.err)
 			v.statusMsg = fmt.Sprintf("Error: %v", msg.err)
+			v.snapData = nil
 			v.visibleSnaps = nil
 			v.snaps.SetRows([]table.Row{})
 		} else {
+			if !msg.fromCache {
+				v.snapCache[v.activeCtx.CacheKey()] = cacheEntry{snaps: msg.snaps, timestamp: time.Now()}
+			}
+			v.snapData = msg.snaps
 			applog.Infof("component=snapshots event=fetch_completed provider=%s account=%s region=%s mode=%s count=%d", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), len(msg.snaps))
 			sortSnaps(v.snapData, v.sortColumn, v.sortAsc)
 			v.syncVisibleRows()
@@ -743,18 +756,21 @@ func (v *SnapshotsView) fetchSnapsCmd(force bool) tea.Cmd {
 	activeCtx := v.activeCtx
 	requestKey := v.requestKey
 	mode := strings.ToUpper(v.cfg.Backend)
-	return func() tea.Msg {
-		applog.Infof("component=snapshots event=fetch_start provider=%s account=%s region=%s mode=%s force=%t", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+	if !force {
 		cacheKey := activeCtx.CacheKey()
 		ttl := time.Duration(v.cfg.CacheTTL) * time.Minute
-		if !force {
-			if entry, ok := v.snapCache[cacheKey]; ok {
-				if time.Since(entry.timestamp) < ttl {
-					return snapFetchMsg{requestKey: requestKey, snaps: entry.snaps}
-				}
+		if entry, ok := v.snapCache[cacheKey]; ok && time.Since(entry.timestamp) < ttl {
+			cachedRows := entry.snaps
+			return func() tea.Msg {
+				applog.Infof("component=snapshots event=fetch_start provider=%s account=%s region=%s mode=%s force=%t cache=hit", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+				return snapFetchMsg{requestKey: requestKey, snaps: cachedRows, fromCache: true}
 			}
 		}
-		provider := providers.GetProvider(*v.cfg)
+	}
+	cfg := *v.cfg
+	return func() tea.Msg {
+		applog.Infof("component=snapshots event=fetch_start provider=%s account=%s region=%s mode=%s force=%t", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+		provider := providers.GetProvider(cfg)
 		dp, ok := provider.(providers.SnapshotProvider)
 		if !ok {
 			return snapFetchMsg{requestKey: requestKey, err: fmt.Errorf("SnapshotProvider not implemented")}
@@ -763,7 +779,6 @@ func (v *SnapshotsView) fetchSnapsCmd(force bool) tea.Cmd {
 		if err != nil {
 			return snapFetchMsg{requestKey: requestKey, err: err}
 		}
-		v.snapCache[cacheKey] = cacheEntry{snaps: rows, timestamp: time.Now()}
 		return snapFetchMsg{requestKey: requestKey, snaps: rows}
 	}
 }

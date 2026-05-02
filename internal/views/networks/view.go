@@ -72,6 +72,7 @@ type NetworksView struct {
 	showSidebar    bool
 	pendingNetwork core.Network
 	filterVPCID    string
+	subnetSearch   string
 }
 
 func New(cfg *config.AppConfig) *NetworksView {
@@ -154,6 +155,24 @@ func (v *NetworksView) IsInputActive() bool {
 	return v.isSearching || v.activePane == paneActions || v.activePane == paneDescribe
 }
 
+func (v *NetworksView) SetSearchQuery(query string) {
+	query = strings.TrimSpace(query)
+	v.isSearching = false
+	v.searchInput.Blur()
+	if subnetID, ok := strings.CutPrefix(query, "subnet:"); ok {
+		v.activePane = paneSubnets
+		v.filterVPCID = ""
+		v.subnetSearch = strings.TrimSpace(subnetID)
+		v.searchInput.SetValue("")
+		v.syncVisibleSubnets()
+		return
+	}
+	v.activePane = paneTable
+	v.subnetSearch = ""
+	v.searchInput.SetValue(query)
+	v.syncVisibleRows()
+}
+
 func (v *NetworksView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
 	v.activeCtx = ctx
 	v.width = width
@@ -162,6 +181,7 @@ func (v *NetworksView) Init(ctx core.CloudContext, width, height int, showSideba
 	v.activePane = paneTable
 	v.isSearching = false
 	v.searchInput.SetValue("")
+	v.subnetSearch = ""
 	v.requestKey = ctx.CacheKey()
 	v.breadcrumbs = fmt.Sprintf("%s \u203A %s \u203A %s \u203A Networks", ctx.Provider, ctx.DisplayName(), ctx.Region)
 	v.loading = true
@@ -321,9 +341,7 @@ func (v *NetworksView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.loading = true
 		return v, v.fetchNetworksCmd()
 	}
-	var cmd tea.Cmd
-	v.networks, cmd = v.networks.Update(msg)
-	return v, cmd
+	return v, nil
 }
 
 func (v *NetworksView) handleSubnetTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
@@ -333,9 +351,7 @@ func (v *NetworksView) handleSubnetTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) 
 			v.activePane = paneSubnetActions
 		}
 	}
-	var cmd tea.Cmd
-	v.subnets, cmd = v.subnets.Update(msg)
-	return v, cmd
+	return v, nil
 }
 
 func (v *NetworksView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
@@ -361,6 +377,7 @@ func (v *NetworksView) handleNetworkAction() (ui.View, tea.Cmd) {
 	case "View Subnets":
 		v.activePane = paneSubnets
 		v.filterVPCID = net.ID
+		v.subnetSearch = ""
 		v.breadcrumbs = fmt.Sprintf("%s \u203A %s \u203A Subnets", v.breadcrumbs, net.ID)
 		v.syncVisibleSubnets()
 		if len(v.subnetData) == 0 {
@@ -461,9 +478,13 @@ func (v *NetworksView) syncVisibleRows() {
 }
 
 func (v *NetworksView) syncVisibleSubnets() {
+	query := strings.ToLower(strings.TrimSpace(v.subnetSearch))
 	var filtered []core.Subnet
 	for _, s := range v.subnetData {
-		if v.filterVPCID == "" || s.NetworkID == v.filterVPCID {
+		matchesNetwork := v.filterVPCID == "" || s.NetworkID == v.filterVPCID
+		blob := strings.ToLower(strings.Join([]string{s.Name, s.ID, s.CIDRBlock, s.AvailabilityZone, s.NetworkID, s.NetworkName, s.Region, s.ResourceGroup, s.Labels}, " "))
+		matchesQuery := query == "" || strings.Contains(blob, query)
+		if matchesNetwork && matchesQuery {
 			filtered = append(filtered, s)
 		}
 	}

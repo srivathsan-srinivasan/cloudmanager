@@ -36,6 +36,15 @@ func TestAzureSecurityRuleToCore(t *testing.T) {
 	if got.Source != "0.0.0.0/0" {
 		t.Fatalf("unexpected source: %s", got.Source)
 	}
+	if got.Name != "allow-ssh" {
+		t.Fatalf("expected rule name to be preserved, got %#v", got)
+	}
+	if got.ResourceID == "" || got.NetworkID == "" {
+		t.Fatalf("expected NSG identifiers on mapped rule, got %#v", got)
+	}
+	if got.Provider != "Azure" {
+		t.Fatalf("expected Azure provider label, got %#v", got)
+	}
 }
 
 func TestAzureRuleOpensPort(t *testing.T) {

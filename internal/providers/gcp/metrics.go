@@ -6,17 +6,16 @@ import (
 	"sort"
 	"time"
 
-	monitoring "cloud.google.com/go/monitoring/apiv3/v2"
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/iterator"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"golang.org/x/sync/errgroup"
 
 	"cloudmanager/internal/core"
 )
 
 func FetchVMMetricsSDK(ctx context.Context, project, zone, instanceID string, period time.Duration) (*core.VMMetrics, error) {
-	client, err := monitoring.NewMetricClient(ctx)
+	client, err := newMonitoringMetricClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create monitoring client: %w", err)
 	}
@@ -43,7 +42,7 @@ func FetchVMMetricsSDK(ctx context.Context, project, zone, instanceID string, pe
 		defer func() { <-sem }()
 
 		req := &monitoringpb.ListTimeSeriesRequest{
-			Name: "projects/" + project,
+			Name:   "projects/" + project,
 			Filter: fmt.Sprintf(`metric.type = "%s" AND resource.labels.instance_id = "%s"`, metricType, instanceID),
 			Interval: &monitoringpb.TimeInterval{
 				StartTime: timestamppb.New(startTime),
@@ -53,10 +52,10 @@ func FetchVMMetricsSDK(ctx context.Context, project, zone, instanceID string, pe
 		}
 
 		it := client.ListTimeSeries(ctx, req)
-		
+
 		// Map to aggregate values by timestamp (seconds)
 		aggr := make(map[int64]float64)
-		
+
 		for {
 			ts, err := it.Next()
 			if err == iterator.Done {

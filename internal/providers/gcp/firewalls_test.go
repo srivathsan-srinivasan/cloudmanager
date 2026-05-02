@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"cloudmanager/internal/core"
+
 	"google.golang.org/api/compute/v1"
 )
 
@@ -31,11 +33,91 @@ func TestGCPFirewallRuleToCoreIngressAllowAndDeny(t *testing.T) {
 	if rows[0].Action != "Allow" || rows[0].Protocol != "tcp" || rows[0].PortRange != "80,443" {
 		t.Fatalf("unexpected allow row: %#v", rows[0])
 	}
+	if rows[0].Name != "allow-web" {
+		t.Fatalf("expected underlying firewall name on normalized row, got %#v", rows[0])
+	}
 	if rows[0].Source != "0.0.0.0/0" || rows[0].Destination != "prod-vpc" {
 		t.Fatalf("unexpected allow endpoints: %#v", rows[0])
 	}
 	if rows[1].Action != "Deny" || rows[1].PortRange != "22" {
 		t.Fatalf("unexpected deny row: %#v", rows[1])
+	}
+}
+
+func TestGCPFirewallRuleToCoreMarksDisabledRules(t *testing.T) {
+	rule := &compute.Firewall{
+		Name:         "allow-admin",
+		Network:      "https://www.googleapis.com/compute/v1/projects/p1/global/networks/prod-vpc",
+		Direction:    "INGRESS",
+		SourceRanges: []string{"10.0.0.0/8"},
+		Allowed: []*compute.FirewallAllowed{
+			{IPProtocol: "tcp", Ports: []string{"22"}},
+		},
+		Disabled:    true,
+		Description: "admin access",
+	}
+
+	rows := gcpFirewallRuleToCore(rule, "prod-vpc")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if !strings.Contains(rows[0].Description, "Disabled") {
+		t.Fatalf("expected disabled marker in description, got %#v", rows[0])
+	}
+}
+
+func TestGCPBuildFirewallEditPatchPreservesSiblingEntries(t *testing.T) {
+	existing := &compute.Firewall{
+		Name:         "allow-app",
+		Network:      "projects/p1/global/networks/prod-vpc",
+		Direction:    "INGRESS",
+		SourceRanges: []string{"10.0.0.0/8"},
+		SourceTags:   []string{"batch"},
+		TargetTags:   []string{"web"},
+		Allowed: []*compute.FirewallAllowed{
+			{IPProtocol: "tcp", Ports: []string{"443"}},
+			{IPProtocol: "udp", Ports: []string{"53"}},
+		},
+		Description: "existing rule",
+		Priority:    1000,
+	}
+
+	original := core.FirewallRule{
+		ID:          "allow-app-allow-1",
+		Name:        "allow-app",
+		Action:      "Allow",
+		Direction:   "Inbound",
+		Protocol:    "udp",
+		PortRange:   "53",
+		Source:      "10.0.0.0/8, tag:batch",
+		Destination: "tag:web",
+		ResourceID:  "prod-vpc",
+		NetworkID:   "prod-vpc",
+		Provider:    "GCP",
+	}
+	updated := original
+	updated.PortRange = "53,123"
+	updated.Destination = "tag:web, sa:app@project.iam.gserviceaccount.com"
+	updated.Description = "updated rule"
+
+	patch, err := gcpBuildFirewallEditPatch(existing, original, updated)
+	if err != nil {
+		t.Fatalf("unexpected edit patch error: %v", err)
+	}
+	if len(patch.Allowed) != 2 {
+		t.Fatalf("expected sibling entries to be preserved, got %#v", patch.Allowed)
+	}
+	if patch.Allowed[0].IPProtocol != "tcp" || len(patch.Allowed[0].Ports) != 1 || patch.Allowed[0].Ports[0] != "443" {
+		t.Fatalf("expected first allow entry to remain unchanged, got %#v", patch.Allowed[0])
+	}
+	if patch.Allowed[1].IPProtocol != "udp" || strings.Join(patch.Allowed[1].Ports, ",") != "53,123" {
+		t.Fatalf("expected selected allow entry to be updated, got %#v", patch.Allowed[1])
+	}
+	if len(patch.TargetServiceAccounts) != 1 || patch.TargetServiceAccounts[0] != "app@project.iam.gserviceaccount.com" {
+		t.Fatalf("expected target service account to round-trip, got %#v", patch.TargetServiceAccounts)
+	}
+	if patch.Description != "updated rule" {
+		t.Fatalf("expected description update, got %#v", patch)
 	}
 }
 

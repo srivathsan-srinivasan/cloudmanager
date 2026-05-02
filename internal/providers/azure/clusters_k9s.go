@@ -1,12 +1,11 @@
 package azure
 
 import (
+	"cloudmanager/internal/core"
 	"context"
 	"fmt"
 	"os/exec"
 	"strings"
-	"cloudmanager/internal/core"
-	
 )
 
 func GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudContext) (*exec.Cmd, error) {
@@ -25,6 +24,23 @@ func GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudCon
 		return nil, fmt.Errorf("could not determine resource group from cluster ID")
 	}
 	expectedCtx := cluster.Name
-	fetchCmd := fmt.Sprintf("az aks get-credentials --resource-group %s --name %s --subscription %s && k9s", rg, cluster.Name, cloudCtx.AccountID)
-	return core.EnsureKubeContext(ctx, expectedCtx, fetchCmd)
+	return core.EnsureKubeContextForTarget(
+		ctx,
+		core.KubeContextTarget{
+			ExpectedContext: expectedCtx,
+			ClusterName:     cluster.Name,
+			ClusterID:       cluster.ID,
+			AccountID:       cloudCtx.AccountID,
+			Location:        cluster.Location,
+		},
+		"az",
+		"aks",
+		"get-credentials",
+		"--resource-group",
+		rg,
+		"--name",
+		cluster.Name,
+		"--subscription",
+		cloudCtx.AccountID,
+	)
 }

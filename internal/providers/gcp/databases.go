@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/api/sqladmin/v1beta4"
-
 	"cloudmanager/internal/core"
 	"cloudmanager/internal/logging"
 )
 
 func FetchDatabasesSDK(ctx context.Context, project string) ([]core.Database, error) {
-	service, err := sqladmin.NewService(ctx)
+	service, err := newSQLAdminService(ctx)
 	if err != nil {
 		return nil, err
 	}

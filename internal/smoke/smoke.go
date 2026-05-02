@@ -142,7 +142,7 @@ func previewCommands(vm core.VM, cloudCtx core.CloudContext) map[string][]string
 	case "AWS":
 		profile := cloudCtx.CredentialProfile
 		region := cloudCtx.Region
-		
+
 		buildCmd := func(base ...string) []string {
 			cmd := append([]string{"aws"}, base...)
 			if profile != "" {
@@ -199,8 +199,14 @@ func targetProviders(value string) ([]string, error) {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case "", "ALL":
 		names := providers.RegisteredProviderNames()
-		sort.Strings(names)
-		return names, nil
+		targets := make([]string, 0, len(names))
+		for _, name := range names {
+			if providers.Supports(name, providers.CapabilityVMs) {
+				targets = append(targets, name)
+			}
+		}
+		sort.Strings(targets)
+		return targets, nil
 	case "AWS":
 		return []string{"AWS"}, nil
 	case "GCP":

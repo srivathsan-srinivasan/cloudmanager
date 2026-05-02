@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/api/compute/v1"
 	"cloudmanager/internal/core"
+	"google.golang.org/api/compute/v1"
 )
 
 // FetchDisksSDK fetches Persistent Disks using the GCP SDK.
 func FetchDisksSDK(ctx context.Context, project string) ([]core.Disk, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create compute service: %w", err)
 	}
@@ -74,7 +74,7 @@ func FetchDisksSDK(ctx context.Context, project string) ([]core.Disk, error) {
 
 // ExecuteDiskActionSDK executes an action on a GCP disk.
 func ExecuteDiskActionSDK(ctx context.Context, action string, disk core.Disk, cloudCtx core.CloudContext) (string, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create compute service: %w", err)
 	}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"cloudmanager/internal/core"
+	applog "cloudmanager/internal/logging"
 )
 
 // CLIProvider wraps the native CLI tools (aws, gcloud, az) for cloud operations.
@@ -127,6 +129,14 @@ func (p *CLIProvider) FetchDatabases(ctx context.Context, cloudCtx core.CloudCon
 	return bindings.Databases.FetchDatabases(ctx, cloudCtx)
 }
 
+func (p *CLIProvider) FetchStorageBuckets(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+	bindings, ok := bindingsFor(cloudCtx.Provider, "cli")
+	if !ok || bindings.Storage == nil {
+		return nil, fmt.Errorf("storage not supported for %s", cloudCtx.Provider)
+	}
+	return bindings.Storage.FetchStorageBuckets(ctx, cloudCtx)
+}
+
 func (p *CLIProvider) GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudContext) (*exec.Cmd, error) {
 	bindings, ok := bindingsFor(cloudCtx.Provider, "cli")
 	if !ok || bindings.Clusters == nil {
@@ -136,11 +146,10 @@ func (p *CLIProvider) GetK9sCmd(ctx context.Context, cluster core.Cluster, cloud
 }
 
 func (p *CLIProvider) ExecuteFirewallAction(ctx context.Context, action string, rule core.FirewallRule, cloudCtx core.CloudContext) (string, error) {
-	bindings, ok := bindingsFor(cloudCtx.Provider, "cli")
-	if !ok || bindings.Firewalls == nil {
-		return "", fmt.Errorf("firewall actions not supported for %s", cloudCtx.Provider)
+	if strings.TrimSpace(action) != "" {
+		applog.Warnf("component=firewall_rules event=action_blocked provider=%s account=%s region=%s mode=CLI action=%s rule=%s err=firewall updates require SDK mode", cloudCtx.Provider, cloudCtx.AccountID, cloudCtx.Region, action, rule.ID)
 	}
-	return bindings.Firewalls.ExecuteFirewallAction(ctx, action, rule, cloudCtx)
+	return "", fmt.Errorf("firewall updates require SDK mode; switch to SDK and retry")
 }
 
 func (p *CLIProvider) FetchNetworks(ctx context.Context, cloudCtx core.CloudContext) ([]core.Network, error) {

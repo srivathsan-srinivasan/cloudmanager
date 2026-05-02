@@ -96,6 +96,7 @@ func loadContextsFromConfig(cfg *ini.File) ([]core.CloudContext, []string) {
 
 		contexts = append(contexts, core.CloudContext{
 			Provider:          "AWS",
+			ContextName:       authProfile(profile),
 			AccountID:         accountID,
 			AccountName:       accountName,
 			Region:            region,

@@ -39,3 +39,14 @@ type PushViewMsg struct {
 
 // PopViewMsg is returned by a View when it wants to go back to the parent view.
 type PopViewMsg struct{}
+
+// StatusUpdateMsg lets child views update the app-level status bar.
+type StatusUpdateMsg struct {
+	Msg string
+}
+
+// ManualHostsChangedMsg tells the shell to reload config-backed manual hosts,
+// context tree entries, and the local global-search index.
+type ManualHostsChangedMsg struct {
+	Msg string
+}

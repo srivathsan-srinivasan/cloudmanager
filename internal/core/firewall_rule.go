@@ -35,9 +35,11 @@ var DefaultFirewallRuleColumns = []string{
 	"Direction", "Protocol", "Ports", "Source", "Destination", "Action", "Description",
 }
 
-func (r FirewallRule) GetID() string   { return r.ID }
-func (r FirewallRule) GetName() string { 
-	if r.Name != "" { return r.Name }
+func (r FirewallRule) GetID() string { return r.ID }
+func (r FirewallRule) GetName() string {
+	if r.Name != "" {
+		return r.Name
+	}
 	return r.ID
 }
 func (r FirewallRule) GetKind() string { return "Firewall Rule" }
@@ -66,13 +68,23 @@ func (r FirewallRule) GetField(col string) string {
 }
 
 func FirewallRuleActions() []Action {
-	return []Action{
+	return FirewallRuleActionsForProvider("")
+}
+
+func FirewallRuleActionsForProvider(provider string) []Action {
+	actions := []Action{
 		{"Describe", "Show full rule details", false},
 		{"Edit", "Edit this firewall rule", false},
-		{"Enable", "Enable the firewall rule (GCP only)", false},
-		{"Disable", "Disable the firewall rule (GCP only)", false},
 		{"Delete", "Delete this firewall rule (Destructive)", true},
 	}
+
+	if strings.EqualFold(strings.TrimSpace(provider), "gcp") {
+		actions = append(actions,
+			Action{"Enable", "Enable the firewall rule (GCP only)", false},
+			Action{"Disable", "Disable the firewall rule (GCP only)", false},
+		)
+	}
+	return actions
 }
 
 func IsRuleRisky(r FirewallRule) bool {

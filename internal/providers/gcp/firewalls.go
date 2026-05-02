@@ -12,7 +12,7 @@ import (
 )
 
 func FetchSecurityGroupsSDK(ctx context.Context, project string) ([]core.SecurityGroup, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gcp compute service: %w", err)
 	}
@@ -34,7 +34,7 @@ func FetchSecurityGroupsSDK(ctx context.Context, project string) ([]core.Securit
 }
 
 func FetchFirewallRulesByNetworkSDK(ctx context.Context, project, networkName string) ([]core.FirewallRule, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gcp compute service: %w", err)
 	}
@@ -71,6 +71,7 @@ func gcpFirewallRuleToCore(rule *compute.Firewall, networkName string) []core.Fi
 
 	if len(rule.Allowed) == 0 && len(rule.Denied) == 0 {
 		rows = append(rows, core.FirewallRule{
+			Name:         rule.Name,
 			ID:           rule.Name,
 			Direction:    direction,
 			Protocol:     "all",
@@ -79,7 +80,7 @@ func gcpFirewallRuleToCore(rule *compute.Firewall, networkName string) []core.Fi
 			Destination:  destination,
 			Action:       "Allow",
 			Priority:     int(rule.Priority),
-			Description:  orDash(baseDescription),
+			Description:  gcpFirewallDescription(baseDescription, rule.Disabled),
 			ResourceID:   networkName,
 			ResourceName: networkName,
 			NetworkID:    networkName,
@@ -89,6 +90,7 @@ func gcpFirewallRuleToCore(rule *compute.Firewall, networkName string) []core.Fi
 
 	for idx, allowed := range rule.Allowed {
 		rows = append(rows, core.FirewallRule{
+			Name:         rule.Name,
 			ID:           fmt.Sprintf("%s-allow-%d", rule.Name, idx),
 			Direction:    direction,
 			Protocol:     strings.ToLower(orDash(allowed.IPProtocol)),
@@ -97,7 +99,7 @@ func gcpFirewallRuleToCore(rule *compute.Firewall, networkName string) []core.Fi
 			Destination:  destination,
 			Action:       "Allow",
 			Priority:     int(rule.Priority),
-			Description:  orDash(baseDescription),
+			Description:  gcpFirewallDescription(baseDescription, rule.Disabled),
 			ResourceID:   networkName,
 			ResourceName: networkName,
 			NetworkID:    networkName,
@@ -107,6 +109,7 @@ func gcpFirewallRuleToCore(rule *compute.Firewall, networkName string) []core.Fi
 
 	for idx, denied := range rule.Denied {
 		rows = append(rows, core.FirewallRule{
+			Name:         rule.Name,
 			ID:           fmt.Sprintf("%s-deny-%d", rule.Name, idx),
 			Direction:    direction,
 			Protocol:     strings.ToLower(orDash(denied.IPProtocol)),
@@ -115,7 +118,7 @@ func gcpFirewallRuleToCore(rule *compute.Firewall, networkName string) []core.Fi
 			Destination:  destination,
 			Action:       "Deny",
 			Priority:     int(rule.Priority),
-			Description:  orDash(baseDescription),
+			Description:  gcpFirewallDescription(baseDescription, rule.Disabled),
 			ResourceID:   networkName,
 			ResourceName: networkName,
 			NetworkID:    networkName,
@@ -124,6 +127,17 @@ func gcpFirewallRuleToCore(rule *compute.Firewall, networkName string) []core.Fi
 	}
 
 	return rows
+}
+
+func gcpFirewallDescription(description string, disabled bool) string {
+	description = strings.TrimSpace(description)
+	if disabled {
+		if description == "" {
+			return "[Disabled]"
+		}
+		return fmt.Sprintf("%s [Disabled]", description)
+	}
+	return orDash(description)
 }
 
 func gcpEffectiveFirewallRulesToCore(effective *compute.NetworksGetEffectiveFirewallsResponse, networkName string) []core.FirewallRule {

@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -18,8 +17,10 @@ import (
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 
+	"cloudmanager/internal/access"
 	"cloudmanager/internal/config"
 	"cloudmanager/internal/core"
+	"cloudmanager/internal/iac"
 	applog "cloudmanager/internal/logging"
 	"cloudmanager/internal/providers"
 	"cloudmanager/internal/ui"
@@ -29,10 +30,12 @@ import (
 const (
 	paneTable = iota
 	paneActions
+	paneAccess
 	paneDescribe
 	paneColumnConfig
 	paneSortConfig
 	paneConfirm
+	paneTag
 )
 
 // --- Bubble Tea messages ---
@@ -40,12 +43,14 @@ const (
 type vmFetchMsg struct {
 	requestKey string
 	vms        []core.VM
+	fromCache  bool
 	err        error
 }
 type vmCostEnrichedMsg struct {
-	requestKey string
-	vms        []core.VM
-	err        error
+	requestKey   string
+	vms          []core.VM
+	cacheUpdates map[string]costCacheEntry
+	err          error
 }
 type commandCompleteMsg struct {
 	output string
@@ -55,7 +60,15 @@ type describeCompleteMsg struct {
 	output string
 	err    error
 }
+type accessResolvedMsg struct {
+	vm      core.VM
+	methods []core.AccessMethod
+}
 type sshCompleteMsg struct{ err error }
+type clipboardCompleteMsg struct {
+	text string
+	err  error
+}
 type finopsRecommendMsg struct {
 	recommendation string
 	err            error
@@ -94,6 +107,29 @@ func (i actionItem) Title() string       { return i.title }
 func (i actionItem) Description() string { return i.desc }
 func (i actionItem) FilterValue() string { return i.title }
 
+type accessItem struct {
+	method core.AccessMethod
+}
+
+func (i accessItem) Title() string {
+	if !i.method.Available {
+		return "[unavailable] " + i.method.Label
+	}
+	return i.method.Label
+}
+
+func (i accessItem) Description() string {
+	if !i.method.Available {
+		return i.method.Reason
+	}
+	if strings.TrimSpace(i.method.CopyText) != "" {
+		return i.method.CopyText
+	}
+	return "Enter to open, c to copy"
+}
+
+func (i accessItem) FilterValue() string { return i.method.Label + " " + i.method.CopyText }
+
 type columnItem struct {
 	name     string
 	selected bool
@@ -120,19 +156,21 @@ func (i sortItem) FilterValue() string { return i.name }
 type VMsView struct {
 	vms              table.Model
 	actions          list.Model
+	accessMethods    list.Model
 	columnConfigList list.Model
 	sortList         list.Model
 	descView         viewport.Model
 	searchInput      textinput.Model
+	tagInput         textinput.Model
 	activePane       int
 
-	vmData     []core.VM
-	visibleVMs []core.VM
-	vmCache    map[string]cacheEntry
-	costCache  map[string]costCacheEntry
+	vmData       []core.VM
+	visibleVMs   []core.VM
+	vmCache      map[string]cacheEntry
+	costCache    map[string]costCacheEntry
 	metricsCache map[string]metricsCacheEntry
-	tableCols  []table.Column
-	cfg        *config.AppConfig
+	tableCols    []table.Column
+	cfg          *config.AppConfig
 
 	activeCtx      core.CloudContext
 	sortColumn     string
@@ -144,16 +182,19 @@ type VMsView struct {
 	loading        bool
 	breadcrumbs    string
 	statusMsg      string
+	copyableText   string
 
 	pendingAction actionItem
 	pendingVM     core.VM
+	pendingAccess []core.AccessMethod
 
 	width, height int
 	showSidebar   bool
 	requestKey    string
 
-	filterTerms []string
-	filterLabel string
+	filterTerms         []string
+	filterLabel         string
+	showKubernetesNodes bool
 }
 
 var getProvider = providers.GetProvider
@@ -175,6 +216,13 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 	actionList.Title = "Instance Actions"
 	actionList.SetShowStatusBar(false)
 	actionList.SetFilteringEnabled(false)
+
+	accessDelegate := list.NewDefaultDelegate()
+	accessDelegate.ShowDescription = true
+	accessList := list.New(nil, accessDelegate, 50, 15)
+	accessList.Title = "Access Methods"
+	accessList.SetShowStatusBar(false)
+	accessList.SetFilteringEnabled(false)
 
 	// Column config
 	var colItems []list.Item
@@ -204,41 +252,58 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 	sortList.SetFilteringEnabled(false)
 
 	vp := viewport.New(80, 20)
-	vp.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(ui.Highlight).PaddingRight(2)
+	vp.Style = lipgloss.NewStyle()
 
 	searchInput := textinput.New()
 	searchInput.Placeholder = "Search instances..."
 	searchInput.Prompt = "/ "
 	searchInput.CharLimit = 100
 	searchInput.Width = 30
+	tagInput := textinput.New()
+	tagInput.Placeholder = "VFWEB,prod-web"
+	tagInput.Prompt = "tags> "
+	tagInput.CharLimit = 160
+	tagInput.Width = 48
 
 	vmTable, tableCols, _, canScrollLeft, canScrollRight := createVMTable(*cfg, 80, 0)
 
 	return &VMsView{
-		vms: vmTable, actions: actionList,
+		vms: vmTable, actions: actionList, accessMethods: accessList,
 		columnConfigList: colList, sortList: sortList,
-		descView: vp, searchInput: searchInput,
+		descView: vp, searchInput: searchInput, tagInput: tagInput,
 		activePane: paneTable, tableCols: tableCols,
-		cfg: cfg, vmCache: make(map[string]cacheEntry), 
-		costCache: make(map[string]costCacheEntry),
+		cfg: cfg, vmCache: make(map[string]cacheEntry),
+		costCache:    make(map[string]costCacheEntry),
 		metricsCache: make(map[string]metricsCacheEntry),
-		sortColumn: "Name", sortAsc: true,
+		sortColumn:   "Name", sortAsc: true,
 		canScrollLeft: canScrollLeft, canScrollRight: canScrollRight,
-		breadcrumbs: "Select a context to view instances",
-		filterTerms: filterTerms,
-		filterLabel: filterLabel,
+		breadcrumbs:         "Select a context to view instances",
+		filterTerms:         filterTerms,
+		filterLabel:         filterLabel,
+		showKubernetesNodes: !cfg.HideKubernetesNodes,
 	}
 }
 
 func (v *VMsView) Title() string { return "VMs" }
 
 func (v *VMsView) ShortHelp() string {
-	return "\u2191\u2193: Nav \u2022 \u2190\u2192: Pan \u2022 c: Cost \u2022 s: SSH \u2022 d: Describe \u2022 ctrl+d: Terminate \u2022 Enter: Menu \u2022 /: Search"
+	return "\u2191\u2193: Nav \u2022 \u2190\u2192: Pan \u2022 K:K8s nodes \u2022 t: Tag \u2022 f: FinOps \u2022 c: Cost \u2022 s: SSH \u2022 d: Describe \u2022 Enter: Menu \u2022 /: Search"
+}
+
+func (v *VMsView) SetSearchQuery(query string) {
+	v.searchInput.SetValue(query)
+	v.isSearching = false
+	v.searchInput.Blur()
+	v.syncVisibleRows()
+}
+
+func (v *VMsView) SetKubernetesNodesVisible(show bool) {
+	v.showKubernetesNodes = show
+	v.syncVisibleRows()
 }
 
 func (v *VMsView) IsInputActive() bool {
-	return v.isSearching || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
+	return v.isSearching || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneAccess || v.activePane == paneConfirm || v.activePane == paneDescribe || v.activePane == paneTag
 }
 
 func (v *VMsView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
@@ -252,6 +317,7 @@ func (v *VMsView) Init(ctx core.CloudContext, width, height int, showSidebar boo
 	v.searchInput.Blur()
 	v.vmData = nil
 	v.visibleVMs = nil
+	v.copyableText = ""
 	v.columnOffset = 0
 	v.requestKey = ctx.CacheKey()
 	v.breadcrumbs = fmt.Sprintf("%s \u203A %s \u203A %s", ctx.Provider, ctx.DisplayName(), ctx.Region)
@@ -270,11 +336,12 @@ func (v *VMsView) Resize(width, height int, showSidebar bool) {
 	v.height = height
 	v.showSidebar = showSidebar
 	v.refreshTable()
-	v.descView.Width = width - 4
-	v.descView.Height = height - 4
+	v.descView.Width = width
+	v.descView.Height = height
 	v.columnConfigList.SetSize(width-4, height-4)
 	v.sortList.SetSize(width-4, height-4)
 	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
+	v.accessMethods.SetSize(64, ui.ActionListHeight(len(v.accessMethods.Items()), height))
 }
 
 func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
@@ -289,8 +356,9 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		// Intercept global keys
 		if msg.String() == "esc" {
 			switch v.activePane {
-			case paneActions, paneDescribe, paneColumnConfig, paneSortConfig:
+			case paneActions, paneAccess, paneDescribe, paneColumnConfig, paneSortConfig, paneTag:
 				v.activePane = paneTable
+				v.tagInput.Blur()
 				if msg.String() == "esc" {
 					v.refreshTable()
 				}
@@ -305,6 +373,8 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		switch v.activePane {
 		case paneActions:
 			_, cmd = v.handleActionKeys(msg)
+		case paneAccess:
+			_, cmd = v.handleAccessKeys(msg)
 		case paneConfirm:
 			_, cmd = v.handleConfirmKeys(msg)
 		case paneDescribe:
@@ -313,6 +383,8 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			_, cmd = v.handleColumnConfigKeys(msg)
 		case paneSortConfig:
 			_, cmd = v.handleSortConfigKeys(msg)
+		case paneTag:
+			_, cmd = v.handleTagKeys(msg)
 		case paneTable:
 			_, cmd = v.handleTableKeys(msg)
 		}
@@ -325,22 +397,38 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			return v, nil
 		}
 		v.loading = false
-		v.vmData = prepareVMs(msg.vms)
 		if msg.err != nil {
 			applog.Errorf("component=vms event=fetch_failed provider=%s account=%s region=%s mode=%s err=%v", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), msg.err)
 			v.statusMsg = fmt.Sprintf("Error: %v", msg.err)
+			v.vmData = nil
 			v.visibleVMs = nil
 			v.vms.SetRows([]table.Row{})
 		} else {
-			applog.Infof("component=vms event=fetch_completed provider=%s account=%s region=%s mode=%s count=%d", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), len(msg.vms))
+			taggedVMs := iac.ApplyTerraformToVMs(v.cfg.TerraformStatePaths, v.activeCtx, config.ApplyResourceTagsToVMs(*v.cfg, v.activeCtx, msg.vms))
+			if !msg.fromCache {
+				v.vmCache[v.activeCtx.CacheKey()] = cacheEntry{vms: taggedVMs, timestamp: time.Now()}
+			}
+			v.vmData = prepareVMs(taggedVMs)
+			applog.Infof("component=vms event=fetch_completed provider=%s account=%s region=%s mode=%s count=%d", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), len(taggedVMs))
+			var metricsCmd tea.Cmd
+			if v.anyMetricsColumnEnabled() {
+				metricsCmd = v.enrichMetricsCmd(v.vmData)
+			}
 			v.sortCurrentVMs()
 			v.syncVisibleRows()
-			v.statusMsg = fmt.Sprintf("Loaded %d instances.", len(msg.vms))
-			if v.anyMetricsColumnEnabled() {
-				cmds = append(cmds, v.enrichMetricsCmd(v.vmData))
+			v.statusMsg = fmt.Sprintf("Loaded %d instances.", len(taggedVMs))
+			if !v.showKubernetesNodes {
+				if hidden := countKubernetesNodes(v.vmData, v.searchInput.Value(), v.filterTerms); hidden > 0 {
+					v.statusMsg = fmt.Sprintf("Loaded %d instances. Hiding %d Kubernetes worker nodes.", len(taggedVMs), hidden)
+				}
 			}
-			if v.cfg.BillingEnabled {
-				cmds = append(cmds, v.enrichCostCmd(v.vmData))
+			indexCtx := v.activeCtx
+			indexVMs := taggedVMs
+			cmds = append(cmds, func() tea.Msg {
+				return ui.VMIndexUpdateMsg{Ctx: indexCtx, VMs: indexVMs}
+			})
+			if metricsCmd != nil {
+				cmds = append(cmds, metricsCmd)
 			}
 		}
 
@@ -351,7 +439,13 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		if msg.err != nil {
 			v.statusMsg = fmt.Sprintf("Cost enrichment failed: %v", msg.err)
 		} else {
-			v.vmData = prepareVMs(msg.vms)
+			for key, entry := range msg.cacheUpdates {
+				v.costCache[key] = entry
+			}
+			v.vmData = prepareVMs(iac.ApplyTerraformToVMs(v.cfg.TerraformStatePaths, v.activeCtx, config.ApplyResourceTagsToVMs(*v.cfg, v.activeCtx, msg.vms)))
+			if v.anyMetricsColumnEnabled() {
+				v.enrichMetricsCmd(v.vmData)
+			}
 			v.sortCurrentVMs()
 			v.syncVisibleRows()
 			v.statusMsg = "Loaded instance costs."
@@ -361,44 +455,92 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		if msg.requestKey != v.requestKey {
 			return v, nil
 		}
+		if msg.err == nil && msg.metrics != nil {
+			v.metricsCache[msg.vmID] = metricsCacheEntry{metrics: msg.metrics, timestamp: time.Now()}
+		}
 		v.updateVMMetrics(msg.vmID, msg.metrics, msg.err)
 		v.syncVisibleRows()
 
 	case commandCompleteMsg:
+		v.loading = false
 		if msg.err != nil {
 			v.statusMsg = fmt.Sprintf("Error: %v", msg.err)
+			v.showCopyableDetail(fmt.Sprintf("ACTION FAILED\n\nError: %v\n\nOutput:\n%s", msg.err, msg.output))
+			cmds = append(cmds, statusCmd("Action failed. Press c to copy, Esc to close."))
 		} else {
 			v.statusMsg = msg.output
 			v.loading = true
 			return v, v.fetchVMsCmd(true)
 		}
-
 	case describeCompleteMsg:
+		v.loading = false
 		if msg.err != nil {
 			v.statusMsg = fmt.Sprintf("Error: %v", msg.err)
+			v.showCopyableDetail(fmt.Sprintf("COMMAND FAILED\n\nError: %v\n\nOutput:\n%s", msg.err, msg.output))
+			cmds = append(cmds, statusCmd("Command failed. Press c to copy, Esc to close."))
 		} else {
-			v.descView.SetContent(msg.output)
-			v.activePane = paneDescribe
-			v.statusMsg = "Viewing details (Esc to close, Up/Down to scroll)."
+			v.showCopyableDetail(msg.output)
+			v.statusMsg = "Viewing details (c copy, Esc close, Up/Down scroll)."
+			cmds = append(cmds, statusCmd(v.statusMsg))
 		}
+
+	case accessResolvedMsg:
+		v.pendingVM = msg.vm
+		v.pendingAccess = msg.methods
+		v.accessMethods.Title = fmt.Sprintf("Access: %s", msg.vm.Name)
+		items := make([]list.Item, 0, len(msg.methods))
+		for _, method := range msg.methods {
+			items = append(items, accessItem{method: method})
+		}
+		v.accessMethods.SetItems(items)
+		v.accessMethods.Select(0)
+		v.accessMethods.SetSize(64, ui.ActionListHeight(len(items), v.height))
+		v.loading = false
+		v.activePane = paneAccess
+		v.statusMsg = "Choose access method (Enter run, c copy, Esc close)."
+		cmds = append(cmds, statusCmd(v.statusMsg))
 
 	case sshCompleteMsg:
 		if msg.err != nil {
 			v.statusMsg = fmt.Sprintf("SSH failed: %v", msg.err)
-			v.descView.SetContent(sshRemediationGuide(v.pendingVM, v.activeCtx))
-			v.activePane = paneDescribe
+			if len(v.pendingAccess) > 0 {
+				v.activePane = paneAccess
+				cmds = append(cmds, statusCmd("Access failed. Pick another method, or c to copy the selected command."))
+			} else {
+				v.showCopyableDetail(sshRemediationGuide(v.pendingVM, v.activeCtx))
+				cmds = append(cmds, statusCmd("SSH failed. Press c to copy the remediation guide, Esc to close."))
+			}
 		} else {
 			v.statusMsg = "SSH session closed."
 		}
-		return v, nil
+
+	case clipboardCompleteMsg:
+		if msg.err != nil {
+			v.statusMsg = fmt.Sprintf("Copy failed: %v", msg.err)
+		} else {
+			v.statusMsg = "Copied to clipboard."
+		}
+		cmds = append(cmds, statusCmd(v.statusMsg))
 
 	case finopsRecommendMsg:
+		v.loading = false
 		if msg.err != nil {
 			v.statusMsg = fmt.Sprintf("Gemini Error: %v", msg.err)
+
+			errorMsg := fmt.Sprintf("GEMINI FINOPS ERROR\n\nFailed to generate recommendation: %v\n\n", msg.err)
+			if strings.Contains(msg.err.Error(), "GEMINI_API_KEY") {
+				errorMsg += "To use CloudManager's AI FinOps features, you must provide a Google Gemini API Key.\n\n"
+				errorMsg += "1. Get a free key at: https://aistudio.google.com/app/apikey\n"
+				errorMsg += "2. Set the environment variable in your terminal:\n\n"
+				errorMsg += "   export GEMINI_API_KEY=\"your_api_key_here\"\n\n"
+				errorMsg += "3. Restart CloudManager and try again."
+			}
+			v.showCopyableDetail(errorMsg)
+			cmds = append(cmds, statusCmd("FinOps error. Press c to copy, Esc to close."))
 		} else {
-			v.descView.SetContent(fmt.Sprintf("GEMINI FINOPS RECOMMENDATION\n\n%s", msg.recommendation))
-			v.activePane = paneDescribe
-			v.statusMsg = "Viewing FinOps recommendation."
+			v.showCopyableDetail(fmt.Sprintf("GEMINI FINOPS RECOMMENDATION\n\n%s", msg.recommendation))
+			v.statusMsg = "Viewing FinOps recommendation (c copy, Esc close)."
+			cmds = append(cmds, statusCmd(v.statusMsg))
 		}
 
 	case tea.WindowSizeMsg:
@@ -412,6 +554,9 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	case paneActions:
 		v.actions, cmd = v.actions.Update(msg)
+		cmds = append(cmds, cmd)
+	case paneAccess:
+		v.accessMethods, cmd = v.accessMethods.Update(msg)
 		cmds = append(cmds, cmd)
 	case paneDescribe:
 		v.descView, cmd = v.descView.Update(msg)
@@ -429,6 +574,12 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 
 func (v *VMsView) Render() string {
 	header := ui.AppendScrollHint(ui.BreadcrumbStyle.Render(ui.TruncateText(v.breadcrumbs, v.width-2)), v.canScrollLeft, v.canScrollRight, v.width)
+	if !v.showKubernetesNodes {
+		hidden := countKubernetesNodes(v.vmData, v.searchInput.Value(), v.filterTerms)
+		if hidden > 0 {
+			header = ui.AppendScrollHint(ui.BreadcrumbStyle.Render(ui.TruncateText(fmt.Sprintf("%s | K8s nodes hidden: %d (K to show)", v.breadcrumbs, hidden), v.width-2)), v.canScrollLeft, v.canScrollRight, v.width)
+		}
+	}
 	tableContent := v.vms.View()
 
 	if v.loading {
@@ -451,6 +602,10 @@ func (v *VMsView) Render() string {
 		overlay := ui.OverlayStyle.Render(v.actions.View())
 		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+	case paneAccess:
+		overlay := ui.OverlayStyle.Render(v.accessMethods.View())
+		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-70).Render(tableContent), overlay)
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 	case paneConfirm:
 		confirmMsg := fmt.Sprintf("Are you sure you want to %s instance %s?", v.pendingAction.title, v.pendingVM.Name)
 		confirmStyle := ui.OverlayStyle.Copy().BorderForeground(ui.Alert).Padding(1, 2).Width(50)
@@ -460,6 +615,17 @@ func (v *VMsView) Render() string {
 			"\n", lipgloss.NewStyle().Foreground(ui.Subtle).Render("Enter: Confirm \u2022 Esc: Cancel"),
 		)
 		overlay := confirmStyle.Render(confirmView)
+		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+	case paneTag:
+		form := lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.NewStyle().Foreground(ui.Highlight).Bold(true).Render("CloudManager Tags"),
+			"",
+			v.tagInput.View(),
+			"",
+			lipgloss.NewStyle().Foreground(ui.Subtle).Render("Enter: Save \u2022 Esc: Cancel"),
+		)
+		overlay := ui.OverlayStyle.Render(form)
 		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 	}
@@ -474,36 +640,58 @@ func (v *VMsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 
 	switch msg.String() {
 	case "enter":
-		if !ok { return v, nil }
+		if !ok {
+			return v, nil
+		}
 		v.actions.Title = fmt.Sprintf("Actions: %s", vm.Name)
 		v.activePane = paneActions
 		v.refreshTable()
 	case "d":
-		if !ok { return v, nil }
-		v.descView.SetContent(core.DescribeVM(vm))
-		v.activePane = paneDescribe
+		if !ok {
+			return v, nil
+		}
+		v.showCopyableDetail(core.DescribeVM(vm))
+		v.statusMsg = "Viewing details (c copy, Esc close, Up/Down scroll)."
+		return v, statusCmd(v.statusMsg)
+	case "f":
+		if !ok {
+			return v, nil
+		}
+		v.activePane = paneTable
+		v.statusMsg = fmt.Sprintf("Querying Gemini AI for %s...", vm.Name)
+		v.loading = true
+		return v, v.finopsRecommendCmd(vm, v.cachedMetrics(vm.ID))
 	case "c":
-		if !ok { return v, nil }
+		if !ok {
+			return v, nil
+		}
 		v.activePane = paneTable
 		v.statusMsg = fmt.Sprintf("Fetching cost report for %s...", vm.Name)
 		v.loading = true
 		return v, executeCostCommandCmd(vm, v.activeCtx, *v.cfg)
 	case "s":
-		if !ok { return v, nil }
-		provider := getProvider(*v.cfg)
-		sshCmd, err := provider.GetSSHCmd(context.Background(), vm, v.activeCtx)
-		if err != nil || sshCmd == nil {
-			v.statusMsg = fmt.Sprintf("SSH not supported for %s", v.activeCtx.Provider)
-			v.activePane = paneTable
+		if !ok {
 			return v, nil
 		}
+		v.pendingVM = vm
 		v.activePane = paneTable
-		v.statusMsg = fmt.Sprintf("Starting SSH session with %s...", vm.Name)
-		return v, tea.ExecProcess(sshCmd, func(err error) tea.Msg {
-			return sshCompleteMsg{err: err}
-		})
+		v.loading = true
+		v.statusMsg = fmt.Sprintf("Resolving access methods for %s...", vm.Name)
+		return v, v.resolveAccessCmd(vm)
+	case "t":
+		if !ok {
+			return v, nil
+		}
+		v.pendingVM = vm
+		v.tagInput.SetValue("")
+		v.tagInput.Focus()
+		v.activePane = paneTag
+		v.statusMsg = fmt.Sprintf("Tag %s with CloudManager-only tags.", vm.Name)
+		return v, textinput.Blink
 	case "ctrl+d":
-		if !ok { return v, nil }
+		if !ok {
+			return v, nil
+		}
 		v.pendingAction = actionItem{title: "Terminate", desc: "Permanently delete the virtual machine"}
 		v.pendingVM = vm
 		v.activePane = paneConfirm
@@ -512,6 +700,14 @@ func (v *VMsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.isSearching = true
 		v.searchInput.Focus()
 		v.statusMsg = "Search (Enter/Esc to apply)"
+	case "K":
+		v.showKubernetesNodes = !v.showKubernetesNodes
+		v.syncVisibleRows()
+		if v.showKubernetesNodes {
+			v.statusMsg = "Showing Kubernetes worker nodes."
+		} else {
+			v.statusMsg = "Hiding Kubernetes worker nodes."
+		}
 	case "left", "h":
 		if v.columnOffset > 0 {
 			v.columnOffset--
@@ -534,6 +730,45 @@ func (v *VMsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.activePane = paneColumnConfig
 	}
 	return v, nil
+}
+
+func (v *VMsView) handleTagKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		v.tagInput.Blur()
+		v.activePane = paneTable
+		v.statusMsg = "Tag canceled."
+		return v, nil
+	case "enter":
+		tags := splitTagInput(v.tagInput.Value())
+		if len(tags) == 0 {
+			v.statusMsg = "No tags entered."
+			return v, statusCmd(v.statusMsg)
+		}
+		if _, err := config.BackupConfig(); err != nil {
+			v.statusMsg = fmt.Sprintf("Tag save canceled; backup failed: %v", err)
+			return v, statusCmd(v.statusMsg)
+		}
+		*v.cfg = config.UpsertVMResourceTags(*v.cfg, v.activeCtx, v.pendingVM, tags)
+		if err := config.Save(*v.cfg); err != nil {
+			v.statusMsg = fmt.Sprintf("Tag save failed: %v", err)
+			return v, statusCmd(v.statusMsg)
+		}
+		v.vmData = iac.ApplyTerraformToVMs(v.cfg.TerraformStatePaths, v.activeCtx, config.ApplyResourceTagsToVMs(*v.cfg, v.activeCtx, v.vmData))
+		v.sortCurrentVMs()
+		v.syncVisibleRows()
+		v.tagInput.Blur()
+		v.activePane = paneTable
+		v.statusMsg = fmt.Sprintf("Tagged %s with %s.", v.pendingVM.Name, strings.Join(tags, ","))
+		indexCtx := v.activeCtx
+		indexVMs := v.vmData
+		return v, tea.Batch(statusCmd(v.statusMsg), func() tea.Msg {
+			return ui.VMIndexUpdateMsg{Ctx: indexCtx, VMs: indexVMs}
+		})
+	}
+	var cmd tea.Cmd
+	v.tagInput, cmd = v.tagInput.Update(msg)
+	return v, cmd
 }
 
 func (v *VMsView) handleSearchKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
@@ -570,7 +805,7 @@ func (v *VMsView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			if action.title == "FinOps" {
 				v.activePane = paneTable
 				v.statusMsg = fmt.Sprintf("Querying Gemini AI for %s...", vm.Name)
-				return v, v.finopsRecommendCmd(vm)
+				return v, v.finopsRecommendCmd(vm, v.cachedMetrics(vm.ID))
 			}
 			if action.title == "View Firewalls" {
 				filters := vmFirewallFilters(vm, v.activeCtx.Provider)
@@ -594,24 +829,61 @@ func (v *VMsView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 				return v, executeCostCommandCmd(vm, v.activeCtx, *v.cfg)
 			}
 			if action.title == "SSH" {
-				provider := getProvider(*v.cfg)
-				sshCmd, err := provider.GetSSHCmd(context.Background(), vm, v.activeCtx)
-				if err != nil || sshCmd == nil {
-					v.statusMsg = fmt.Sprintf("SSH not supported for %s", v.activeCtx.Provider)
-					v.activePane = paneTable
-					return v, nil
-				}
+				v.pendingVM = vm
 				v.activePane = paneTable
-				v.statusMsg = fmt.Sprintf("Starting SSH session with %s...", vm.Name)
-				return v, tea.ExecProcess(sshCmd, func(err error) tea.Msg {
-					return sshCompleteMsg{err: err}
-				})
+				v.loading = true
+				v.statusMsg = fmt.Sprintf("Resolving access methods for %s...", vm.Name)
+				return v, v.resolveAccessCmd(vm)
 			}
 			// Other actions (Start, Stop, Restart, Describe)
 			v.activePane = paneTable
 			v.statusMsg = fmt.Sprintf("Executing %s on %s...", action.title, vm.Name)
 			return v, executeActionCmd(action.title, vm, v.activeCtx, v.cfg)
 		}
+	}
+	return v, nil
+}
+
+func (v *VMsView) handleAccessKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	method, ok := v.selectedAccessMethod()
+	switch msg.String() {
+	case "esc":
+		v.activePane = paneTable
+		return v, nil
+	case "c":
+		if !ok || strings.TrimSpace(method.CopyText) == "" {
+			v.statusMsg = "Nothing to copy."
+			return v, statusCmd(v.statusMsg)
+		}
+		v.showCopyableDetail(method.CopyText)
+		v.statusMsg = "Copying access command..."
+		return v, copyToClipboardCmd(method.CopyText)
+	case "enter":
+		if !ok {
+			return v, nil
+		}
+		if method.Kind == "remediation" || len(method.Command) == 0 {
+			v.showCopyableDetail(sshRemediationGuide(v.pendingVM, v.activeCtx))
+			v.statusMsg = "Viewing remediation guide (c copy, Esc close)."
+			return v, statusCmd(v.statusMsg)
+		}
+		if !method.Available {
+			v.statusMsg = strings.TrimSpace(method.Reason)
+			if v.statusMsg == "" {
+				v.statusMsg = "Access method unavailable."
+			}
+			return v, statusCmd(v.statusMsg)
+		}
+		cmd, err := access.ExecCommand(context.Background(), method)
+		if err != nil {
+			v.statusMsg = fmt.Sprintf("Access method failed: %v", err)
+			return v, statusCmd(v.statusMsg)
+		}
+		v.activePane = paneTable
+		v.statusMsg = fmt.Sprintf("Starting %s...", method.Label)
+		return v, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return sshCompleteMsg{err: err}
+		})
 	}
 	return v, nil
 }
@@ -630,8 +902,16 @@ func (v *VMsView) handleConfirmKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 }
 
 func (v *VMsView) handleDescribeKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
-	if msg.String() == "esc" {
+	switch msg.String() {
+	case "esc":
 		v.activePane = paneTable
+	case "c":
+		if strings.TrimSpace(v.copyableText) == "" {
+			v.statusMsg = "Nothing to copy."
+			return v, statusCmd(v.statusMsg)
+		}
+		v.statusMsg = "Copying to clipboard..."
+		return v, copyToClipboardCmd(v.copyableText)
 	}
 	return v, nil
 }
@@ -667,7 +947,9 @@ func (v *VMsView) handleColumnConfigKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.activePane = paneTable
 		v.statusMsg = "Columns saved."
 		if v.anyMetricsColumnEnabled() {
-			return v, v.enrichMetricsCmd(v.vmData)
+			cmd := v.enrichMetricsCmd(v.vmData)
+			v.syncVisibleRows()
+			return v, cmd
 		}
 		return v, nil
 	}
@@ -705,14 +987,30 @@ func (v *VMsView) handleSortConfigKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 
 // --- Table helpers ---
 
+func (v *VMsView) showCopyableDetail(content string) {
+	v.copyableText = content
+	v.descView.SetContent(content)
+	v.descView.GotoTop()
+	v.activePane = paneDescribe
+}
+
+func statusCmd(msg string) tea.Cmd {
+	return func() tea.Msg {
+		return ui.StatusUpdateMsg{Msg: msg}
+	}
+}
+
 func (v *VMsView) refreshTable() {
 	if v.width == 0 {
 		return
 	}
 
 	availWidth := v.width
-	if v.activePane == paneActions || v.activePane == paneConfirm {
+	if v.activePane == paneActions || v.activePane == paneAccess || v.activePane == paneConfirm || v.activePane == paneTag {
 		availWidth = v.width - 55
+		if v.activePane == paneAccess {
+			availWidth = v.width - 70
+		}
 		if availWidth < 40 {
 			availWidth = 40
 		}
@@ -739,7 +1037,7 @@ func (v *VMsView) refreshTable() {
 }
 
 func (v *VMsView) syncVisibleRows() {
-	v.visibleVMs = filterVMs(v.vmData, v.searchInput.Value(), v.filterTerms)
+	v.visibleVMs = filterVMs(v.vmData, v.searchInput.Value(), v.filterTerms, v.showKubernetesNodes)
 	rows := mapVMsToRows(v.visibleVMs, v.tableCols)
 	v.vms.SetRows(rows)
 	if len(rows) == 0 {
@@ -755,7 +1053,7 @@ func (v *VMsView) visibleRowsSource() []core.VM {
 	if v.visibleVMs != nil {
 		return v.visibleVMs
 	}
-	return filterVMs(v.vmData, v.searchInput.Value(), v.filterTerms)
+	return filterVMs(v.vmData, v.searchInput.Value(), v.filterTerms, v.showKubernetesNodes)
 }
 
 func (v *VMsView) selectedVM() (core.VM, bool) {
@@ -766,42 +1064,68 @@ func (v *VMsView) selectedVM() (core.VM, bool) {
 	return v.visibleVMs[cursor], true
 }
 
-func filterVMs(vms []core.VM, query string, filters []string) []core.VM {
+func (v *VMsView) selectedAccessMethod() (core.AccessMethod, bool) {
+	item := v.accessMethods.SelectedItem()
+	if item == nil {
+		return core.AccessMethod{}, false
+	}
+	accessItem, ok := item.(accessItem)
+	if !ok {
+		return core.AccessMethod{}, false
+	}
+	return accessItem.method, true
+}
+
+func filterVMs(vms []core.VM, query string, filters []string, showKubernetesNodes bool) []core.VM {
 	var filtered []core.VM
-	normalizedQuery := strings.ToLower(strings.TrimSpace(query))
-
 	for _, vm := range vms {
-		// Apply hard filters first (from drill-down)
-		if len(filters) > 0 {
-			matched := false
-			for _, f := range filters {
-				f = strings.ToLower(f)
-				if strings.Contains(strings.ToLower(vm.ID), f) ||
-					strings.Contains(strings.ToLower(vm.Name), f) ||
-					strings.Contains(strings.ToLower(vm.Network), f) ||
-					strings.Contains(strings.ToLower(vm.Subnet), f) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
+		if !showKubernetesNodes && vm.IsKubernetesNode() {
+			continue
 		}
-
-		// Apply search query
-		if normalizedQuery != "" {
-			if !strings.Contains(strings.ToLower(vm.Name), normalizedQuery) &&
-				!strings.Contains(strings.ToLower(vm.ID), normalizedQuery) &&
-				!strings.Contains(strings.ToLower(vm.PrivateIP), normalizedQuery) &&
-				!strings.Contains(strings.ToLower(vm.PublicIP), normalizedQuery) &&
-				!strings.Contains(strings.ToLower(vm.Labels), normalizedQuery) {
-				continue
-			}
+		if vmMatchesFilters(vm, query, filters) {
+			filtered = append(filtered, vm)
 		}
-		filtered = append(filtered, vm)
 	}
 	return filtered
+}
+
+func countKubernetesNodes(vms []core.VM, query string, filters []string) int {
+	count := 0
+	for _, vm := range vms {
+		if vm.IsKubernetesNode() && vmMatchesFilters(vm, query, filters) {
+			count++
+		}
+	}
+	return count
+}
+
+func vmMatchesFilters(vm core.VM, query string, filters []string) bool {
+	normalizedQuery := strings.ToLower(strings.TrimSpace(query))
+	if len(filters) > 0 {
+		matched := false
+		for _, f := range filters {
+			f = strings.ToLower(f)
+			if strings.Contains(strings.ToLower(vm.ID), f) ||
+				strings.Contains(strings.ToLower(vm.Name), f) ||
+				strings.Contains(strings.ToLower(vm.Network), f) ||
+				strings.Contains(strings.ToLower(vm.Subnet), f) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	if normalizedQuery == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(vm.Name), normalizedQuery) ||
+		strings.Contains(strings.ToLower(vm.ID), normalizedQuery) ||
+		strings.Contains(strings.ToLower(vm.PrivateIP), normalizedQuery) ||
+		strings.Contains(strings.ToLower(vm.PublicIP), normalizedQuery) ||
+		strings.Contains(strings.ToLower(vm.Labels), normalizedQuery)
 }
 
 func createVMTable(cfg config.AppConfig, availableWidth int, offset int) (table.Model, []table.Column, int, bool, bool) {
@@ -816,7 +1140,7 @@ func buildVMColumns(cfg config.AppConfig) []table.Column {
 		"Private IP": 15, "Public IP": 15, "Zone": 14,
 		"Resource Group": 18, "Network": 14, "Subnet": 14, "Labels": 24,
 		"Security Groups": 20,
-		"CPU %": 8, "Memory %": 10, "Disk Read": 12, "Disk Write": 12, "Net In": 12, "Net Out": 12,
+		"CPU %":           8, "Memory %": 10, "Disk Read": 12, "Disk Write": 12, "Net In": 12, "Net Out": 12,
 		"Cost": 10, "Cost Trend": 10, "Recommendation": 25, "Est. Savings": 12,
 	}
 	for _, col := range config.SanitizeVMColumns(cfg.VMColumns) {
@@ -846,6 +1170,27 @@ func mapVMsToRows(vms []core.VM, columns []table.Column) []table.Row {
 		rows = append(rows, table.Row(row))
 	}
 	return rows
+}
+
+func splitTagInput(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';'
+	})
+	tags := make([]string, 0, len(fields))
+	seen := map[string]bool{}
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		key := strings.ToLower(field)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		tags = append(tags, field)
+	}
+	return tags
 }
 
 func getStatusIcon(vm core.VM) string {
@@ -1028,7 +1373,14 @@ func (v *VMsView) updateVMMetrics(vmID string, metrics *core.VMMetrics, err erro
 func (v *VMsView) enrichMetricsCmd(vms []core.VM) tea.Cmd {
 	var cmds []tea.Cmd
 	for _, vm := range vms {
+		if metrics := v.cachedMetrics(vm.ID); metrics != nil {
+			v.updateVMMetrics(vm.ID, metrics, nil)
+			continue
+		}
 		cmds = append(cmds, v.fetchSingleVMMetricsCmd(vm))
+	}
+	if len(cmds) == 0 {
+		return nil
 	}
 	return tea.Batch(cmds...)
 }
@@ -1036,24 +1388,16 @@ func (v *VMsView) enrichMetricsCmd(vms []core.VM) tea.Cmd {
 func (v *VMsView) fetchSingleVMMetricsCmd(vm core.VM) tea.Cmd {
 	activeCtx := v.activeCtx
 	requestKey := v.requestKey
-	metricsTTL := 15 * time.Minute // TODO: from config
+	period := v.metricsPeriod()
+	cfg := *v.cfg
 
 	return func() tea.Msg {
-		provider := getProvider(*v.cfg)
+		provider := getProvider(cfg)
 		metricsProvider, ok := provider.(providers.MetricsProvider)
 		if !ok {
 			return nil
 		}
-
-		cacheKey := vm.ID
-		if entry, ok := v.metricsCache[cacheKey]; ok && time.Since(entry.timestamp) < metricsTTL {
-			return vmMetricsMsg{requestKey: requestKey, vmID: vm.ID, metrics: entry.metrics}
-		}
-
-		m, err := metricsProvider.FetchVMMetrics(context.Background(), vm, activeCtx, 24*time.Hour)
-		if err == nil && m != nil {
-			v.metricsCache[cacheKey] = metricsCacheEntry{metrics: m, timestamp: time.Now()}
-		}
+		m, err := metricsProvider.FetchVMMetrics(context.Background(), vm, activeCtx, period)
 		return vmMetricsMsg{requestKey: requestKey, vmID: vm.ID, metrics: m, err: err}
 	}
 }
@@ -1062,23 +1406,25 @@ func (v *VMsView) fetchVMsCmd(force bool) tea.Cmd {
 	activeCtx := v.activeCtx
 	requestKey := v.requestKey
 	mode := strings.ToUpper(v.cfg.Backend)
-	return func() tea.Msg {
-		applog.Infof("component=vms event=fetch_start provider=%s account=%s region=%s mode=%s force=%t", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+	if !force {
 		cacheKey := activeCtx.CacheKey()
 		ttl := time.Duration(v.cfg.CacheTTL) * time.Minute
-		if !force {
-			if entry, ok := v.vmCache[cacheKey]; ok {
-				if time.Since(entry.timestamp) < ttl {
-					return vmFetchMsg{requestKey: requestKey, vms: entry.vms}
-				}
+		if entry, ok := v.vmCache[cacheKey]; ok && time.Since(entry.timestamp) < ttl {
+			cachedRows := entry.vms
+			return func() tea.Msg {
+				applog.Infof("component=vms event=fetch_start provider=%s account=%s region=%s mode=%s force=%t cache=hit", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+				return vmFetchMsg{requestKey: requestKey, vms: cachedRows, fromCache: true}
 			}
 		}
-		provider := getProvider(*v.cfg)
+	}
+	cfg := *v.cfg
+	return func() tea.Msg {
+		applog.Infof("component=vms event=fetch_start provider=%s account=%s region=%s mode=%s force=%t", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+		provider := getProvider(cfg)
 		rows, err := provider.FetchVMs(context.Background(), activeCtx)
 		if err != nil {
 			return vmFetchMsg{requestKey: requestKey, err: err}
 		}
-		v.vmCache[cacheKey] = cacheEntry{vms: rows, timestamp: time.Now()}
 		return vmFetchMsg{requestKey: requestKey, vms: rows}
 	}
 }
@@ -1086,9 +1432,11 @@ func (v *VMsView) fetchVMsCmd(force bool) tea.Cmd {
 func (v *VMsView) enrichCostCmd(vms []core.VM) tea.Cmd {
 	activeCtx := v.activeCtx
 	requestKey := v.requestKey
-	billingTTL := time.Duration(v.cfg.BillingCacheTTL) * time.Minute
+	billingTTL := v.billingCacheTTL()
+	cachedCosts := v.cachedCosts(activeCtx, vms, billingTTL)
+	cfg := *v.cfg
 	return func() tea.Msg {
-		provider := getProvider(*v.cfg)
+		provider := getProvider(cfg)
 		billingProvider, ok := provider.(providers.BillingProvider)
 		if !ok {
 			return vmCostEnrichedMsg{requestKey: requestKey, vms: prepareVMs(vms)}
@@ -1109,12 +1457,8 @@ func (v *VMsView) enrichCostCmd(vms []core.VM) tea.Cmd {
 			recMap[id] = r
 		}
 
-		sem := make(chan struct{}, 8)
-		var costCacheMu sync.Mutex
-
-		var wg sync.WaitGroup
+		cacheUpdates := make(map[string]costCacheEntry)
 		for i := range enrichedVMs {
-			// Match recommendation
 			vmID := enrichedVMs[i].ID
 			if r, ok := recMap[vmID]; ok {
 				enrichedVMs[i].Recommendation = r.Summary
@@ -1122,35 +1466,26 @@ func (v *VMsView) enrichCostCmd(vms []core.VM) tea.Cmd {
 			}
 
 			cacheKey := vmCostCacheKey(activeCtx, enrichedVMs[i].ID)
-			if entry, ok := v.costCache[cacheKey]; ok && time.Since(entry.timestamp) < billingTTL {
+			if entry, ok := cachedCosts[cacheKey]; ok {
 				enrichedVMs[i].MonthlyCost = entry.monthlyCost
 				enrichedVMs[i].CostTrend = entry.costTrend
 				continue
 			}
-			wg.Add(1)
-			go func(idx int) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				vm := enrichedVMs[idx]
-				cost, err := billingProvider.FetchResourceCost(context.Background(), vm.ID, activeCtx)
-				if err == nil && cost != nil {
-					monthlyCost := core.FormatCost(cost.CurrentMonthCost)
-					costTrend := core.CostChangePercent(cost.CurrentMonthCost, cost.PreviousMonthCost)
-					enrichedVMs[idx].MonthlyCost = monthlyCost
-					enrichedVMs[idx].CostTrend = costTrend
-					costCacheMu.Lock()
-					v.costCache[cacheKey] = costCacheEntry{
-						monthlyCost: monthlyCost,
-						costTrend:   costTrend,
-						timestamp:   time.Now(),
-					}
-					costCacheMu.Unlock()
-				}
-			}(i)
+			cost, err := billingProvider.FetchResourceCost(context.Background(), enrichedVMs[i].ID, activeCtx)
+			if err != nil || cost == nil {
+				continue
+			}
+			monthlyCost := core.FormatCost(cost.CurrentMonthCost)
+			costTrend := core.CostChangePercent(cost.CurrentMonthCost, cost.PreviousMonthCost)
+			enrichedVMs[i].MonthlyCost = monthlyCost
+			enrichedVMs[i].CostTrend = costTrend
+			cacheUpdates[cacheKey] = costCacheEntry{
+				monthlyCost: monthlyCost,
+				costTrend:   costTrend,
+				timestamp:   time.Now(),
+			}
 		}
-		wg.Wait()
-		return vmCostEnrichedMsg{requestKey: requestKey, vms: enrichedVMs}
+		return vmCostEnrichedMsg{requestKey: requestKey, vms: enrichedVMs, cacheUpdates: cacheUpdates}
 	}
 }
 
@@ -1165,40 +1500,210 @@ func executeActionCmd(action string, vm core.VM, cloudCtx core.CloudContext, cfg
 	}
 }
 
+func (v *VMsView) resolveAccessCmd(vm core.VM) tea.Cmd {
+	req := access.Request{
+		Context:      v.activeCtx,
+		VM:           vm,
+		NativeMethod: v.providerNativeAccessMethod(vm),
+	}
+	return func() tea.Msg {
+		return accessResolvedMsg{
+			vm:      vm,
+			methods: access.Resolve(context.Background(), req),
+		}
+	}
+}
+
+func (v *VMsView) providerNativeAccessMethod(vm core.VM) *core.AccessMethod {
+	method := core.AccessMethod{
+		ID:       "provider-native",
+		Kind:     "native",
+		Label:    fmt.Sprintf("%s native access", v.activeCtx.Provider),
+		Priority: 10,
+	}
+	provider := getProvider(*v.cfg)
+	cmd, err := provider.GetSSHCmd(context.Background(), vm, v.activeCtx)
+	if err != nil || cmd == nil || len(cmd.Args) == 0 {
+		method.Reason = fmt.Sprintf("%s native access unavailable", v.activeCtx.Provider)
+		return &method
+	}
+	method.Command = cmd.Args
+	method.CopyText = access.FormatCommand(cmd.Args)
+	method.Available = true
+	return &method
+}
+
 func vmCostCacheKey(cloudCtx core.CloudContext, resourceID string) string {
 	return fmt.Sprintf("%s|%s", cloudCtx.CacheKey(), resourceID)
 }
 
-func buildCostCommand(vm core.VM, cloudCtx core.CloudContext, cfg config.AppConfig) string {
+func buildCostCommand(vm core.VM, cloudCtx core.CloudContext, cfg config.AppConfig) []string {
 	now := time.Now()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	end := start.AddDate(0, 1, 0)
 
 	switch cloudCtx.Provider {
 	case "AWS":
-		return fmt.Sprintf("aws --no-cli-pager ce get-cost-and-usage --time-period Start=%s,End=%s --granularity MONTHLY --metrics UnblendedCost --filter '{\"Dimensions\":{\"Key\":\"RESOURCE_ID\",\"Values\":[\"%s\"]}}' --profile %s --region us-east-1 --output table", start.Format("2006-01-02"), end.Format("2006-01-02"), vm.ID, cloudCtx.AuthRef())
+		args := []string{
+			"aws",
+			"--no-cli-pager",
+			"ce",
+			"get-cost-and-usage",
+			"--time-period",
+			fmt.Sprintf("Start=%s,End=%s", start.Format("2006-01-02"), end.Format("2006-01-02")),
+			"--granularity",
+			"MONTHLY",
+			"--metrics",
+			"UnblendedCost",
+			"--filter",
+			fmt.Sprintf("{\"Dimensions\":{\"Key\":\"RESOURCE_ID\",\"Values\":[\"%s\"]}}", vm.ID),
+			"--region",
+			"us-east-1",
+			"--output",
+			"table",
+		}
+		if profile := strings.TrimSpace(cloudCtx.AuthRef()); profile != "" {
+			args = append(args, "--profile", profile)
+		}
+		return args
 	case "GCP":
 		billingTable := gcpBillingTablePath(cloudCtx, cfg)
 		globalName := gcpVMGlobalName(vm, cloudCtx)
-		return fmt.Sprintf("bq query --use_legacy_sql=false --format=prettyjson 'SELECT service.description AS service, sku.description AS sku, SUM(cost) AS cost FROM `%s` WHERE usage_start_time >= TIMESTAMP(\"%s\") AND usage_start_time < TIMESTAMP(\"%s\") AND (resource.name = \"%s\" OR resource.global_name = \"%s\") GROUP BY service, sku ORDER BY cost DESC'", billingTable, start.Format("2006-01-02"), end.Format("2006-01-02"), vm.Name, globalName)
+		query := fmt.Sprintf(
+			"SELECT service.description AS service, sku.description AS sku, SUM(cost) AS cost FROM `%s` WHERE usage_start_time >= TIMESTAMP(\"%s\") AND usage_start_time < TIMESTAMP(\"%s\") AND (resource.name = \"%s\" OR resource.global_name = \"%s\") GROUP BY service, sku ORDER BY cost DESC",
+			billingTable,
+			start.Format("2006-01-02"),
+			end.Format("2006-01-02"),
+			vm.Name,
+			globalName,
+		)
+		return []string{"bq", "query", "--use_legacy_sql=false", "--format=prettyjson", query}
 	case "Azure":
 		scope := fmt.Sprintf("/subscriptions/%s", cloudCtx.AccountID)
-		return fmt.Sprintf("az rest --method post --url \"https://management.azure.com%s/providers/Microsoft.CostManagement/query?api-version=2025-03-01\" --body '{\"type\":\"ActualCost\",\"timeframe\":\"MonthToDate\",\"dataset\":{\"granularity\":\"None\",\"filter\":{\"dimensions\":{\"name\":\"ResourceId\",\"operator\":\"In\",\"values\":[\"%s\"]}},\"aggregation\":{\"totalCost\":{\"name\":\"PreTaxCost\",\"function\":\"Sum\"}},\"grouping\":[{\"type\":\"Dimension\",\"name\":\"ServiceName\"}]}}' --output table", scope, vm.ID)
+		body := fmt.Sprintf("{\"type\":\"ActualCost\",\"timeframe\":\"MonthToDate\",\"dataset\":{\"granularity\":\"None\",\"filter\":{\"dimensions\":{\"name\":\"ResourceId\",\"operator\":\"In\",\"values\":[\"%s\"]}},\"aggregation\":{\"totalCost\":{\"name\":\"PreTaxCost\",\"function\":\"Sum\"}},\"grouping\":[{\"type\":\"Dimension\",\"name\":\"ServiceName\"}]}}", vm.ID)
+		return []string{
+			"az",
+			"rest",
+			"--method",
+			"post",
+			"--url",
+			fmt.Sprintf("https://management.azure.com%s/providers/Microsoft.CostManagement/query?api-version=2025-03-01", scope),
+			"--body",
+			body,
+			"--output",
+			"table",
+		}
 	default:
-		return "echo 'Cost lookup not supported for this provider.'"
+		return []string{"echo", "Cost lookup not supported for this provider."}
 	}
 }
 
 func executeCostCommandCmd(vm core.VM, cloudCtx core.CloudContext, cfg config.AppConfig) tea.Cmd {
 	return func() tea.Msg {
-		cmdStr := buildCostCommand(vm, cloudCtx, cfg)
-		cmd := exec.Command("bash", "-c", cmdStr)
+		cmdArgs := buildCostCommand(vm, cloudCtx, cfg)
+		if len(cmdArgs) == 0 {
+			return describeCompleteMsg{output: "", err: fmt.Errorf("cost command is empty")}
+		}
+		cmd := exec.CommandContext(context.Background(), cmdArgs[0], cmdArgs[1:]...)
 		output, err := cmd.CombinedOutput()
-		
-		formattedOutput := fmt.Sprintf("COST REPORT FOR %s (%s)\n\n$ %s\n\n%s", vm.Name, cloudCtx.Provider, cmdStr, string(output))
-		
+
+		formattedOutput := fmt.Sprintf("COST REPORT FOR %s (%s)\n\n$ %s\n\n%s", vm.Name, cloudCtx.Provider, formatShellCommand(cmdArgs), string(output))
+
 		return describeCompleteMsg{output: formattedOutput, err: err}
 	}
+}
+
+func copyToClipboardCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		return clipboardCompleteMsg{text: text, err: copyToClipboard(text)}
+	}
+}
+
+var copyToClipboard = writeClipboard
+
+func writeClipboard(text string) error {
+	args, ok := clipboardCommand()
+	if !ok {
+		return fmt.Errorf("clipboard command not found")
+	}
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
+
+func clipboardCommand() ([]string, bool) {
+	candidates := [][]string{
+		{"pbcopy"},
+		{"wl-copy"},
+		{"xclip", "-selection", "clipboard"},
+		{"xsel", "--clipboard", "--input"},
+	}
+	for _, candidate := range candidates {
+		if _, err := exec.LookPath(candidate[0]); err == nil {
+			return candidate, true
+		}
+	}
+	return nil, false
+}
+
+func (v *VMsView) cachedMetrics(vmID string) *core.VMMetrics {
+	entry, ok := v.metricsCache[vmID]
+	if !ok || time.Since(entry.timestamp) >= v.metricsCacheTTL() {
+		return nil
+	}
+	return entry.metrics
+}
+
+func (v *VMsView) cachedCosts(cloudCtx core.CloudContext, vms []core.VM, ttl time.Duration) map[string]costCacheEntry {
+	cached := make(map[string]costCacheEntry)
+	for _, vm := range vms {
+		cacheKey := vmCostCacheKey(cloudCtx, vm.ID)
+		entry, ok := v.costCache[cacheKey]
+		if !ok || time.Since(entry.timestamp) >= ttl {
+			continue
+		}
+		cached[cacheKey] = entry
+	}
+	return cached
+}
+
+func (v *VMsView) metricsCacheTTL() time.Duration {
+	if v.cfg != nil && v.cfg.MetricsCacheTTL > 0 {
+		return time.Duration(v.cfg.MetricsCacheTTL) * time.Minute
+	}
+	return 15 * time.Minute
+}
+
+func (v *VMsView) billingCacheTTL() time.Duration {
+	if v.cfg != nil && v.cfg.BillingCacheTTL > 0 {
+		return time.Duration(v.cfg.BillingCacheTTL) * time.Minute
+	}
+	return 30 * time.Minute
+}
+
+func (v *VMsView) metricsPeriod() time.Duration {
+	if v.cfg != nil && v.cfg.MetricsPeriodHours > 0 {
+		return time.Duration(v.cfg.MetricsPeriodHours) * time.Hour
+	}
+	return 24 * time.Hour
+}
+
+func formatShellCommand(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuote(arg string) string {
+	if arg == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(arg, " \t\n'\"\\$&;|<>`(){}[]*?!") {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 }
 
 func sshRemediationGuide(vm core.VM, cloudCtx core.CloudContext) string {
@@ -1288,19 +1793,13 @@ func gcpVMGlobalName(vm core.VM, cloudCtx core.CloudContext) string {
 	return fmt.Sprintf("//compute.googleapis.com/projects/%s/zones/%s/instances/%s", cloudCtx.AccountID, vm.Zone, vm.Name)
 }
 
-func (v *VMsView) finopsRecommendCmd(vm core.VM) tea.Cmd {
+func (v *VMsView) finopsRecommendCmd(vm core.VM, metrics *core.VMMetrics) tea.Cmd {
 	activeCtx := v.activeCtx
 	cfg := *v.cfg
 	return func() tea.Msg {
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		if apiKey == "" {
 			return finopsRecommendMsg{err: fmt.Errorf("GEMINI_API_KEY not set")}
-		}
-
-		// 1. Gather all data (cached or fresh)
-		var metrics *core.VMMetrics
-		if entry, ok := v.metricsCache[vm.ID]; ok {
-			metrics = entry.metrics
 		}
 
 		// Use a dedicated context for the Gemini call

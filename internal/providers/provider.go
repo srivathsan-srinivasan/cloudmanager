@@ -36,6 +36,10 @@ type DatabaseProvider interface {
 	FetchDatabases(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error)
 }
 
+type StorageProvider interface {
+	FetchStorageBuckets(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error)
+}
+
 type FirewallProvider interface {
 	FetchSecurityGroups(ctx context.Context, cloudCtx core.CloudContext) ([]core.SecurityGroup, error)
 	FetchFirewallRules(ctx context.Context, groupID string, cloudCtx core.CloudContext) ([]core.FirewallRule, error)

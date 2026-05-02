@@ -144,6 +144,14 @@ func (p *SDKProvider) FetchDatabases(ctx context.Context, cloudCtx core.CloudCon
 	return bindings.Databases.FetchDatabases(ctx, cloudCtx)
 }
 
+func (p *SDKProvider) FetchStorageBuckets(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+	bindings, ok := bindingsFor(cloudCtx.Provider, "sdk")
+	if !ok || bindings.Storage == nil {
+		return nil, fmt.Errorf("storage not supported for %s", cloudCtx.Provider)
+	}
+	return bindings.Storage.FetchStorageBuckets(ctx, cloudCtx)
+}
+
 func (p *SDKProvider) GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudContext) (*exec.Cmd, error) {
 	bindings, ok := bindingsFor(cloudCtx.Provider, "sdk")
 	if !ok || bindings.Clusters == nil {

@@ -36,6 +36,7 @@ const (
 type diskFetchMsg struct {
 	requestKey string
 	disks      []core.Disk
+	fromCache  bool
 	err        error
 }
 type commandCompleteMsg struct {
@@ -204,6 +205,14 @@ func (v *DisksView) IsInputActive() bool {
 	return v.isSearching || v.activePane == paneResize || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
 }
 
+func (v *DisksView) SetSearchQuery(query string) {
+	v.activePane = paneTable
+	v.isSearching = false
+	v.searchInput.SetValue(strings.TrimSpace(query))
+	v.searchInput.Blur()
+	v.syncVisibleRows()
+}
+
 func (v *DisksView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
 	v.activeCtx = ctx
 	v.width = width
@@ -297,13 +306,17 @@ func (v *DisksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			return v, nil
 		}
 		v.loading = false
-		v.diskData = msg.disks
 		if msg.err != nil {
 			applog.Errorf("component=disks event=fetch_failed provider=%s account=%s region=%s mode=%s err=%v", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), msg.err)
 			v.statusMsg = fmt.Sprintf("Error: %v", msg.err)
+			v.diskData = nil
 			v.visibleDisks = nil
 			v.disks.SetRows([]table.Row{})
 		} else {
+			if !msg.fromCache {
+				v.diskCache[v.activeCtx.CacheKey()] = cacheEntry{disks: msg.disks, timestamp: time.Now()}
+			}
+			v.diskData = msg.disks
 			applog.Infof("component=disks event=fetch_completed provider=%s account=%s region=%s mode=%s count=%d", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), len(msg.disks))
 			sortDisks(v.diskData, v.sortColumn, v.sortAsc)
 			v.syncVisibleRows()
@@ -756,18 +769,21 @@ func (v *DisksView) fetchDisksCmd(force bool) tea.Cmd {
 	activeCtx := v.activeCtx
 	requestKey := v.requestKey
 	mode := strings.ToUpper(v.cfg.Backend)
-	return func() tea.Msg {
-		applog.Infof("component=disks event=fetch_start provider=%s account=%s region=%s mode=%s force=%t", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+	if !force {
 		cacheKey := activeCtx.CacheKey()
 		ttl := time.Duration(v.cfg.CacheTTL) * time.Minute
-		if !force {
-			if entry, ok := v.diskCache[cacheKey]; ok {
-				if time.Since(entry.timestamp) < ttl {
-					return diskFetchMsg{requestKey: requestKey, disks: entry.disks}
-				}
+		if entry, ok := v.diskCache[cacheKey]; ok && time.Since(entry.timestamp) < ttl {
+			cachedRows := entry.disks
+			return func() tea.Msg {
+				applog.Infof("component=disks event=fetch_start provider=%s account=%s region=%s mode=%s force=%t cache=hit", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+				return diskFetchMsg{requestKey: requestKey, disks: cachedRows, fromCache: true}
 			}
 		}
-		provider := providers.GetProvider(*v.cfg)
+	}
+	cfg := *v.cfg
+	return func() tea.Msg {
+		applog.Infof("component=disks event=fetch_start provider=%s account=%s region=%s mode=%s force=%t", activeCtx.Provider, activeCtx.AccountID, activeCtx.Region, mode, force)
+		provider := providers.GetProvider(cfg)
 		dp, ok := provider.(providers.DiskProvider)
 		if !ok {
 			return diskFetchMsg{requestKey: requestKey, err: fmt.Errorf("DiskProvider not implemented")}
@@ -776,7 +792,6 @@ func (v *DisksView) fetchDisksCmd(force bool) tea.Cmd {
 		if err != nil {
 			return diskFetchMsg{requestKey: requestKey, err: err}
 		}
-		v.diskCache[cacheKey] = cacheEntry{disks: rows, timestamp: time.Now()}
 		return diskFetchMsg{requestKey: requestKey, disks: rows}
 	}
 }

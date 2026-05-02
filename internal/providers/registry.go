@@ -19,12 +19,14 @@ type Capability string
 
 const (
 	CapabilityVMs       Capability = "vms"
+	CapabilityHosts     Capability = "hosts"
 	CapabilityDisks     Capability = "disks"
 	CapabilitySnapshots Capability = "snapshots"
 	CapabilityNetworks  Capability = "networks"
 	CapabilityFirewalls Capability = "firewalls"
 	CapabilityClusters  Capability = "clusters"
 	CapabilityDatabases Capability = "databases"
+	CapabilityStorage   Capability = "storage"
 	CapabilitySSH       Capability = "ssh"
 	CapabilityCostGuide Capability = "cost_guide"
 	CapabilityMetrics   Capability = "metrics"
@@ -51,6 +53,7 @@ type backendBindings struct {
 	Networks  NetworkProvider
 	Clusters  ClusterProvider
 	Databases DatabaseProvider
+	Storage   StorageProvider
 	Metrics   MetricsProvider
 	Billing   BillingProvider
 }
@@ -114,9 +117,17 @@ func (d databaseFuncs) FetchDatabases(ctx context.Context, cloudCtx core.CloudCo
 	return d.fetch(ctx, cloudCtx)
 }
 
+type storageFuncs struct {
+	fetch func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error)
+}
+
+func (s storageFuncs) FetchStorageBuckets(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+	return s.fetch(ctx, cloudCtx)
+}
+
 type clusterFuncs struct {
 	fetch func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Cluster, error)
-	k9s func(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudContext) (*exec.Cmd, error)
+	k9s   func(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudContext) (*exec.Cmd, error)
 }
 
 func (c clusterFuncs) FetchClusters(ctx context.Context, cloudCtx core.CloudContext) ([]core.Cluster, error) {
@@ -124,7 +135,9 @@ func (c clusterFuncs) FetchClusters(ctx context.Context, cloudCtx core.CloudCont
 }
 
 func (c clusterFuncs) GetK9sCmd(ctx context.Context, cluster core.Cluster, cloudCtx core.CloudContext) (*exec.Cmd, error) {
-	if c.k9s == nil { return nil, fmt.Errorf("k9s not supported") }
+	if c.k9s == nil {
+		return nil, fmt.Errorf("k9s not supported")
+	}
 	return c.k9s(ctx, cluster, cloudCtx)
 }
 
@@ -137,8 +150,8 @@ func (m metricsFuncs) FetchVMMetrics(ctx context.Context, vm core.VM, cloudCtx c
 }
 
 type firewallFuncs struct {
-	groups func(ctx context.Context, cloudCtx core.CloudContext) ([]core.SecurityGroup, error)
-	rules  func(ctx context.Context, groupID string, cloudCtx core.CloudContext) ([]core.FirewallRule, error)
+	groups  func(ctx context.Context, cloudCtx core.CloudContext) ([]core.SecurityGroup, error)
+	rules   func(ctx context.Context, groupID string, cloudCtx core.CloudContext) ([]core.FirewallRule, error)
 	execute func(ctx context.Context, action string, rule core.FirewallRule, cloudCtx core.CloudContext) (string, error)
 }
 
@@ -151,7 +164,9 @@ func (f firewallFuncs) FetchFirewallRules(ctx context.Context, groupID string, c
 }
 
 func (f firewallFuncs) ExecuteFirewallAction(ctx context.Context, action string, rule core.FirewallRule, cloudCtx core.CloudContext) (string, error) {
-	if f.execute == nil { return "", fmt.Errorf("firewall modification not supported") }
+	if f.execute == nil {
+		return "", fmt.Errorf("firewall modification not supported")
+	}
 	return f.execute(ctx, action, rule, cloudCtx)
 }
 
@@ -288,9 +303,27 @@ func NormalizeProviderName(name string) string {
 		return "Azure"
 	case "DIGITALOCEAN", "DIGITAL_OCEAN", "DO":
 		return "DigitalOcean"
+	case "MANUAL", "HOSTS", "HOST", "UNMANAGED":
+		return "Manual"
 	default:
 		return normalized
 	}
+}
+
+func init() {
+	RegisterProvider(RegisteredProvider{
+		Metadata: ProviderMetadata{
+			ID:              "Manual",
+			DisplayName:     "Manual",
+			Order:           90,
+			Aliases:         []string{"manual", "hosts", "host", "unmanaged"},
+			GlobalLeafLabel: "Hosts",
+			Capabilities: map[Capability]bool{
+				CapabilityHosts: true,
+				CapabilitySSH:   true,
+			},
+		},
+	})
 }
 
 func bindingsFor(providerName, backend string) (backendBindings, bool) {
@@ -341,6 +374,7 @@ func registerBuiltins() {
 				CapabilityNetworks:  true,
 				CapabilityClusters:  true,
 				CapabilityDatabases: true,
+				CapabilityStorage:   true,
 				CapabilitySSH:       true,
 				CapabilityCostGuide: true,
 				CapabilityMetrics:   true,
@@ -393,6 +427,11 @@ func registerBuiltins() {
 			Databases: databaseFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
 					return aws.FetchDatabasesCLI(cloudCtx.CredentialProfile, cloudCtx.Region)
+				},
+			},
+			Storage: storageFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+					return aws.FetchStorageBucketsCLI(ctx, cloudCtx.CredentialProfile)
 				},
 			},
 			Metrics: metricsFuncs{
@@ -460,6 +499,11 @@ func registerBuiltins() {
 					return aws.FetchDatabasesSDK(ctx, cloudCtx.CredentialProfile, cloudCtx.Region)
 				},
 			},
+			Storage: storageFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+					return aws.FetchStorageBucketsCLI(ctx, cloudCtx.CredentialProfile)
+				},
+			},
 			Metrics: metricsFuncs{
 				fetch: func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error) {
 					return aws.FetchVMMetricsSDK(ctx, cloudCtx.CredentialProfile, cloudCtx.Region, vm.ID, period)
@@ -494,6 +538,7 @@ func registerBuiltins() {
 				CapabilityNetworks:  true,
 				CapabilityClusters:  true,
 				CapabilityDatabases: true,
+				CapabilityStorage:   true,
 				CapabilitySSH:       true,
 				CapabilityCostGuide: true,
 				CapabilityMetrics:   true,
@@ -546,6 +591,11 @@ func registerBuiltins() {
 			Databases: databaseFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
 					return gcp.FetchDatabasesCLI(cloudCtx.AccountID)
+				},
+			},
+			Storage: storageFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+					return gcp.FetchStorageBucketsCLI(cloudCtx.AccountID)
 				},
 			},
 			Metrics: metricsFuncs{
@@ -614,6 +664,11 @@ func registerBuiltins() {
 					return gcp.FetchDatabasesSDKWithCLIAuthFallback(ctx, cloudCtx.AccountID)
 				},
 			},
+			Storage: storageFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+					return gcp.FetchStorageBucketsCLI(cloudCtx.AccountID)
+				},
+			},
 			Metrics: metricsFuncs{
 				fetch: func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error) {
 					return gcp.FetchVMMetricsSDK(ctx, cloudCtx.AccountID, vm.Zone, vm.ID, period)
@@ -649,6 +704,7 @@ func registerBuiltins() {
 				CapabilityNetworks:  true,
 				CapabilityClusters:  true,
 				CapabilityDatabases: true,
+				CapabilityStorage:   true,
 				CapabilitySSH:       true,
 				CapabilityCostGuide: true,
 				CapabilityMetrics:   true,
@@ -684,6 +740,7 @@ func registerBuiltins() {
 					nsgName := azureNameFromFirewallID(groupID)
 					return azure.FetchFirewallRulesSDK(ctx, cloudCtx.AccountID, resourceGroup, nsgName)
 				},
+				execute: azure.ExecuteFirewallActionSDK,
 			},
 			Networks: networkFuncs{
 				networks: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Network, error) {
@@ -702,6 +759,11 @@ func registerBuiltins() {
 			Databases: databaseFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
 					return azure.FetchDatabasesSDK(ctx, cloudCtx.AccountID)
+				},
+			},
+			Storage: storageFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+					return azure.FetchStorageAccountsCLI(ctx, cloudCtx.AccountID)
 				},
 			},
 			Metrics: metricsFuncs{
@@ -750,6 +812,7 @@ func registerBuiltins() {
 					nsgName := azureNameFromFirewallID(groupID)
 					return azure.FetchFirewallRulesSDK(ctx, cloudCtx.AccountID, resourceGroup, nsgName)
 				},
+				execute: azure.ExecuteFirewallActionSDK,
 			},
 			Networks: networkFuncs{
 				networks: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Network, error) {
@@ -757,6 +820,22 @@ func registerBuiltins() {
 				},
 				subnets: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Subnet, error) {
 					return azure.FetchSubnetsSDK(ctx, cloudCtx.AccountID)
+				},
+			},
+			Clusters: clusterFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Cluster, error) {
+					return azure.FetchClustersSDK(ctx, cloudCtx.AccountID)
+				},
+				k9s: azure.GetK9sCmd,
+			},
+			Databases: databaseFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
+					return azure.FetchDatabasesSDK(ctx, cloudCtx.AccountID)
+				},
+			},
+			Storage: storageFuncs{
+				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+					return azure.FetchStorageAccountsCLI(ctx, cloudCtx.AccountID)
 				},
 			},
 			Metrics: metricsFuncs{
@@ -824,4 +903,3 @@ func azureNameFromFirewallID(id string) string {
 	}
 	return parts[len(parts)-1]
 }
-

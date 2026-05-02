@@ -56,13 +56,14 @@ func FetchFirewallRulesSDK(ctx context.Context, subscriptionID, resourceGroup, n
 
 	pager := client.NewListPager(resourceGroup, nsgName, nil)
 	var rules []core.FirewallRule
+	nsgID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkSecurityGroups/%s", subscriptionID, resourceGroup, nsgName)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list security rules: %w", err)
 		}
 		for _, r := range page.Value {
-			rules = append(rules, azureSecurityRuleToCore(r, nsgName, "", false))
+			rules = append(rules, azureSecurityRuleToCore(r, nsgName, nsgID, false))
 		}
 	}
 	return rules, nil
@@ -88,6 +89,7 @@ func azureSecurityRuleToCore(r *armnetwork.SecurityRule, nsgName, nsgID string, 
 	}
 
 	return core.FirewallRule{
+		Name:         orPtr(r.Name),
 		ID:           orPtr(r.ID),
 		Direction:    direction,
 		Protocol:     protocol,
@@ -97,8 +99,10 @@ func azureSecurityRuleToCore(r *armnetwork.SecurityRule, nsgName, nsgID string, 
 		Action:       action,
 		Priority:     int(orPtrInt32(r.Properties.Priority)),
 		Description:  orPtr(r.Properties.Description),
+		ResourceID:   nsgID,
 		NetworkID:    nsgID,
 		ResourceName: nsgName,
+		Provider:     "Azure",
 	}
 }
 

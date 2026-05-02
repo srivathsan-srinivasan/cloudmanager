@@ -11,21 +11,23 @@ import (
 // MockProvider is a test implementation of all provider interfaces.
 // It uses function fields so tests can easily mock specific methods.
 type MockProvider struct {
-	FetchVMsFn                  func(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error)
-	ExecuteActionFn             func(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error)
-	GetSSHCmdFn                 func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error)
-	FetchDisksFn                func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error)
-	ExecuteDiskActionFn         func(ctx context.Context, action string, disk core.Disk, cloudCtx core.CloudContext) (string, error)
-	FetchSnapshotsFn            func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Snapshot, error)
-	ExecuteSnapshotActionFn     func(ctx context.Context, action string, snap core.Snapshot, cloudCtx core.CloudContext) (string, error)
-	FetchSecurityGroupsFn       func(ctx context.Context, cloudCtx core.CloudContext) ([]core.SecurityGroup, error)
-	FetchFirewallRulesFn        func(ctx context.Context, groupID string, cloudCtx core.CloudContext) ([]core.FirewallRule, error)
-	FetchNetworksFn             func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Network, error)
-	FetchSubnetsFn              func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Subnet, error)
-	FetchVMMetricsFn            func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error)
-	FetchAccountCostFn          func(ctx context.Context, cloudCtx core.CloudContext) (*core.AccountCost, error)
-	FetchResourceCostFn         func(ctx context.Context, resourceID string, cloudCtx core.CloudContext) (*core.ResourceCost, error)
-	FetchRecommendationsFn      func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Recommendation, error)
+	FetchVMsFn              func(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error)
+	ExecuteActionFn         func(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error)
+	GetSSHCmdFn             func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error)
+	FetchDisksFn            func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error)
+	ExecuteDiskActionFn     func(ctx context.Context, action string, disk core.Disk, cloudCtx core.CloudContext) (string, error)
+	FetchSnapshotsFn        func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Snapshot, error)
+	ExecuteSnapshotActionFn func(ctx context.Context, action string, snap core.Snapshot, cloudCtx core.CloudContext) (string, error)
+	FetchSecurityGroupsFn   func(ctx context.Context, cloudCtx core.CloudContext) ([]core.SecurityGroup, error)
+	FetchFirewallRulesFn    func(ctx context.Context, groupID string, cloudCtx core.CloudContext) ([]core.FirewallRule, error)
+	ExecuteFirewallActionFn func(ctx context.Context, action string, rule core.FirewallRule, cloudCtx core.CloudContext) (string, error)
+	FetchNetworksFn         func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Network, error)
+	FetchSubnetsFn          func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Subnet, error)
+	FetchVMMetricsFn        func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, period time.Duration) (*core.VMMetrics, error)
+	FetchAccountCostFn      func(ctx context.Context, cloudCtx core.CloudContext) (*core.AccountCost, error)
+	FetchResourceCostFn     func(ctx context.Context, resourceID string, cloudCtx core.CloudContext) (*core.ResourceCost, error)
+	FetchRecommendationsFn  func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Recommendation, error)
+	FetchStorageBucketsFn   func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error)
 }
 
 func (m *MockProvider) FetchVMs(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error) {
@@ -91,6 +93,13 @@ func (m *MockProvider) FetchFirewallRules(ctx context.Context, groupID string, c
 	return nil, nil
 }
 
+func (m *MockProvider) ExecuteFirewallAction(ctx context.Context, action string, rule core.FirewallRule, cloudCtx core.CloudContext) (string, error) {
+	if m.ExecuteFirewallActionFn != nil {
+		return m.ExecuteFirewallActionFn(ctx, action, rule, cloudCtx)
+	}
+	return "", nil
+}
+
 func (m *MockProvider) FetchNetworks(ctx context.Context, cloudCtx core.CloudContext) ([]core.Network, error) {
 	if m.FetchNetworksFn != nil {
 		return m.FetchNetworksFn(ctx, cloudCtx)
@@ -129,6 +138,13 @@ func (m *MockProvider) FetchResourceCost(ctx context.Context, resourceID string,
 func (m *MockProvider) FetchRecommendations(ctx context.Context, cloudCtx core.CloudContext) ([]core.Recommendation, error) {
 	if m.FetchRecommendationsFn != nil {
 		return m.FetchRecommendationsFn(ctx, cloudCtx)
+	}
+	return nil, nil
+}
+
+func (m *MockProvider) FetchStorageBuckets(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
+	if m.FetchStorageBucketsFn != nil {
+		return m.FetchStorageBucketsFn(ctx, cloudCtx)
 	}
 	return nil, nil
 }

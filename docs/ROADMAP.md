@@ -89,6 +89,43 @@
 
 These become v2 items after the core FinOps pipeline ships.
 
+## vNext: Lean Integrations, Not Tool Sprawl
+
+CloudManager should remain an operator cockpit, not a replacement for every
+inventory, query, security, or governance platform.
+
+### Local Index
+
+- Keep JSON cache for the current small/medium estate path.
+- Add SQLite + FTS when resource indexes become large enough that JSON load,
+  rewrite, or search latency becomes visible.
+- Store normalized indexed rows by provider, context, resource type, resource ID,
+  searchable text, tags, and last-seen timestamp.
+- Keep provider refresh explicit: startup stays fast unless the user enables
+  prefetch.
+
+### Pluggable Data Engines
+
+Optional integrations should feed CloudManager's Find Resources and dashboard,
+without bloating the default binary:
+
+- `steampipe`: query cloud resources through SQL and show results in a scoped
+  CloudManager search surface.
+- `cloudlist`: ingest lightweight asset-discovery output for broad IP/host/asset
+  visibility.
+- `cloudquery`: import/query an existing cloud asset inventory instead of
+  duplicating large-scale sync logic.
+- `prowler`: surface security posture findings as contextual hints, not as a
+  replacement for Prowler reports.
+
+Proposed UX:
+
+- `cloudmanager --steampipe`: open a Steampipe-backed query/search mode.
+- `:engine`: choose local index, Steampipe, Cloudlist, CloudQuery, or disabled.
+- `:find-*`: keep the same scoped Find Resources UX regardless of backend.
+
+Rule: external engines are adapters. CloudManager owns the operator workflow.
+
 ---
 
 ## The Full FinOps Pipeline

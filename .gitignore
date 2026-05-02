@@ -27,6 +27,15 @@ go.work.sum
 # env file
 .env
 
+# Logs
+*.log
+
+# OS metadata
+.DS_Store
+
+# Local tooling
+.codex-mcp/
+
 # Editor/IDE
 # .idea/
 # .vscode/

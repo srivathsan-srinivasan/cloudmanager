@@ -54,7 +54,30 @@ func (n *TreeNode) Description() string {
 	return fmt.Sprintf("%s  (%d items)", strings.Repeat("  ", n.Level), count)
 }
 
-func (n *TreeNode) FilterValue() string { return n.Label }
+func (n *TreeNode) FilterValue() string {
+	parts := []string{n.Label, n.ID}
+	if n.IsLeaf {
+		ctx := n.Context
+		parts = append(parts,
+			ctx.ContextName,
+			ctx.Provider,
+			ctx.AccountID,
+			ctx.AccountName,
+			ctx.Tenant,
+			ctx.DisplayName(),
+			ctx.Region,
+			ctx.CredentialProfile,
+			ctx.AuthMode,
+			ctx.CredentialScope,
+			ctx.AuthRef(),
+		)
+	} else {
+		for _, child := range n.Children {
+			parts = append(parts, child.FilterValue())
+		}
+	}
+	return strings.Join(parts, " ")
+}
 
 // BuildFlatList traverses the tree and returns the visible nodes as list.Items.
 func BuildFlatList(nodes []*TreeNode) []list.Item {
@@ -76,6 +99,17 @@ func BuildContextTree(contexts []core.CloudContext) []*TreeNode {
 		if !ok {
 			pNode = &TreeNode{ID: ctx.Provider, Label: ctx.Provider, Level: 0, Expanded: true}
 			providerNodes[ctx.Provider] = pNode
+		}
+
+		if isDirectGlobalLeaf(ctx) {
+			pNode.Children = append(pNode.Children, &TreeNode{
+				ID:      ctx.Provider + "-" + ctx.Region,
+				Label:   directGlobalLeafLabel(ctx),
+				Level:   1,
+				IsLeaf:  true,
+				Context: ctx,
+			})
+			continue
 		}
 
 		groupKey := ctx.AccountID
@@ -132,6 +166,26 @@ func BuildContextTree(contexts []core.CloudContext) []*TreeNode {
 		}
 	}
 	return rootNodes
+}
+
+func isDirectGlobalLeaf(ctx core.CloudContext) bool {
+	if ctx.Region != "global" {
+		return false
+	}
+	return ctx.Provider == "Manual"
+}
+
+func directGlobalLeafLabel(ctx core.CloudContext) string {
+	if meta, ok := providers.MetadataFor(ctx.Provider); ok && meta.GlobalLeafLabel != "" {
+		return meta.GlobalLeafLabel
+	}
+	if ctx.AccountName != "" {
+		return ctx.AccountName
+	}
+	if ctx.AccountID != "" {
+		return ctx.AccountID
+	}
+	return ctx.Region
 }
 
 func registeredProviderNamesMap() map[string]struct{} {

@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/api/compute/v1"
-
 	"cloudmanager/internal/core"
 )
 
 // FetchNetworksSDK fetches VPCs from GCP.
 func FetchNetworksSDK(ctx context.Context, projectID string) ([]core.Network, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +25,7 @@ func FetchNetworksSDK(ctx context.Context, projectID string) ([]core.Network, er
 		networks = append(networks, core.Network{
 			ID:          fmt.Sprintf("%d", n.Id),
 			Name:        n.Name,
-			State:       "READY", // GCP networks don't really have a status like EC2
+			State:       "READY",     // GCP networks don't really have a status like EC2
 			CIDRBlock:   "auto-mode", // GCP VPCs don't have a single CIDR
 			SubnetCount: len(n.Subnetworks),
 			Provider:    "GCP",
@@ -40,7 +38,7 @@ func FetchNetworksSDK(ctx context.Context, projectID string) ([]core.Network, er
 
 // FetchSubnetsSDK fetches Subnets from GCP using AggregatedList.
 func FetchSubnetsSDK(ctx context.Context, projectID string) ([]core.Subnet, error) {
-	service, err := compute.NewService(ctx)
+	service, err := newComputeService(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -81,4 +79,3 @@ func FetchSubnetsSDK(ctx context.Context, projectID string) ([]core.Subnet, erro
 
 	return subnets, nil
 }
-

@@ -57,7 +57,30 @@ func FetchFirewallRulesSDK(ctx context.Context, profile, region, groupID string)
 		return nil, fmt.Errorf("security group %s not found", groupID)
 	}
 
-	return awsSecurityGroupRules(resp.SecurityGroups[0]), nil
+	group := resp.SecurityGroups[0]
+	groupName := awssdk.ToString(group.GroupName)
+	networkID := awssdk.ToString(group.VpcId)
+
+	paginator := ec2.NewDescribeSecurityGroupRulesPaginator(client, &ec2.DescribeSecurityGroupRulesInput{
+		Filters: []ec2types.Filter{{
+			Name:   awssdk.String("group-id"),
+			Values: []string{groupID},
+		}},
+	})
+
+	var rules []core.FirewallRule
+	priority := 1
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to describe security group rules for %s: %w", groupID, err)
+		}
+		for _, sgRule := range page.SecurityGroupRules {
+			rules = append(rules, awsSecurityGroupRuleToCore(sgRule, groupID, groupName, networkID, priority))
+			priority++
+		}
+	}
+	return rules, nil
 }
 
 func awsSecurityGroupAttachmentCounts(ctx context.Context, client *ec2.Client) (map[string]int, error) {
@@ -118,6 +141,78 @@ func awsSecurityGroupRules(group ec2types.SecurityGroup) []core.FirewallRule {
 	priority = appendAWSPermissionRules(&rules, groupID, groupName, networkID, "Inbound", group.IpPermissions, priority)
 	appendAWSPermissionRules(&rules, groupID, groupName, networkID, "Outbound", group.IpPermissionsEgress, priority)
 	return rules
+}
+
+func awsSecurityGroupRuleToCore(rule ec2types.SecurityGroupRule, groupID, groupName, networkID string, priority int) core.FirewallRule {
+	direction := core.Inbound
+	source := groupName
+	destination := awsSecurityGroupRulePeer(rule)
+	if awssdk.ToBool(rule.IsEgress) {
+		direction = core.Outbound
+		source = groupName
+		destination = awsSecurityGroupRulePeer(rule)
+	} else {
+		source = awsSecurityGroupRulePeer(rule)
+		destination = groupName
+	}
+
+	return core.FirewallRule{
+		Name:         awssdk.ToString(rule.SecurityGroupRuleId),
+		ID:           awssdk.ToString(rule.SecurityGroupRuleId),
+		Direction:    direction,
+		Protocol:     awsSecurityGroupRuleProtocol(rule),
+		PortRange:    awsSecurityGroupRulePortRange(rule),
+		Source:       orDash(source),
+		Destination:  orDash(destination),
+		Action:       "Allow",
+		Priority:     priority,
+		Description:  orDash(awssdk.ToString(rule.Description)),
+		ResourceID:   groupID,
+		ResourceName: groupName,
+		NetworkID:    networkID,
+		Provider:     "AWS",
+	}
+}
+
+func awsSecurityGroupRulePeer(rule ec2types.SecurityGroupRule) string {
+	switch {
+	case strings.TrimSpace(awssdk.ToString(rule.CidrIpv4)) != "":
+		return awssdk.ToString(rule.CidrIpv4)
+	case strings.TrimSpace(awssdk.ToString(rule.CidrIpv6)) != "":
+		return awssdk.ToString(rule.CidrIpv6)
+	case strings.TrimSpace(awssdk.ToString(rule.PrefixListId)) != "":
+		return awssdk.ToString(rule.PrefixListId)
+	case rule.ReferencedGroupInfo != nil && strings.TrimSpace(awssdk.ToString(rule.ReferencedGroupInfo.GroupId)) != "":
+		return awssdk.ToString(rule.ReferencedGroupInfo.GroupId)
+	default:
+		return "-"
+	}
+}
+
+func awsSecurityGroupRuleProtocol(rule ec2types.SecurityGroupRule) string {
+	switch proto := awssdk.ToString(rule.IpProtocol); proto {
+	case "", "-1":
+		return "all"
+	default:
+		return strings.ToLower(proto)
+	}
+}
+
+func awsSecurityGroupRulePortRange(rule ec2types.SecurityGroupRule) string {
+	protocol := awsSecurityGroupRuleProtocol(rule)
+	if protocol == "all" {
+		return "All"
+	}
+	if rule.FromPort == nil || rule.ToPort == nil {
+		return "All"
+	}
+
+	from := awssdk.ToInt32(rule.FromPort)
+	to := awssdk.ToInt32(rule.ToPort)
+	if from == to {
+		return fmt.Sprintf("%d", from)
+	}
+	return fmt.Sprintf("%d-%d", from, to)
 }
 
 func appendAWSPermissionRules(dst *[]core.FirewallRule, groupID, groupName, networkID, direction string, permissions []ec2types.IpPermission, priority int) int {

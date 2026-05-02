@@ -46,6 +46,120 @@ func (v VM) GetID() string   { return v.ID }
 func (v VM) GetName() string { return v.Name }
 func (v VM) GetKind() string { return "VM" }
 
+// IsKubernetesNode returns true when provider metadata strongly identifies a VM
+// as a managed Kubernetes worker node.
+func (v VM) IsKubernetesNode() bool {
+	haystack := strings.ToLower(strings.Join([]string{
+		v.Name,
+		v.ID,
+		v.ResourceGroup,
+		v.Network,
+		v.Subnet,
+		v.SecurityGroups,
+		v.Labels,
+	}, " "))
+
+	strongMarkers := []string{
+		"kubernetes.io/cluster/",
+		"k8s.io/cluster-autoscaler/",
+		"eks:cluster-name",
+		"eks:nodegroup-name",
+		"aws:eks:cluster-name",
+		"aws:eks:nodegroup-name",
+		"karpenter.sh/",
+		"karpenter.k8s.aws/",
+		"goog-gke-node",
+		"goog-k8s-cluster-name",
+		"cloud.google.com/gke-nodepool",
+		"gke-nodepool",
+		"aks-managed-cluster-name",
+		"aks-nodepool",
+		"kubernetes.azure.com/cluster",
+		"orchestrator=kubernetes",
+	}
+	for _, marker := range strongMarkers {
+		if strings.Contains(haystack, marker) {
+			return true
+		}
+	}
+
+	name := strings.ToLower(strings.TrimSpace(v.Name))
+	return strings.HasPrefix(name, "gke-") || strings.HasPrefix(name, "aks-")
+}
+
+func (v VM) KubernetesNodeLifecycle() string {
+	haystack := strings.ToLower(strings.Join([]string{v.Name, v.Type, v.Labels}, " "))
+	switch {
+	case strings.Contains(haystack, "preemptible") || strings.Contains(haystack, "spot"):
+		return "spot"
+	case v.IsKubernetesNode():
+		return "static"
+	default:
+		return ""
+	}
+}
+
+func (v VM) KubernetesClusterName() string {
+	if value := labelValue(v.Labels, "eks:cluster-name", "aws:eks:cluster-name", "goog-k8s-cluster-name", "aks-managed-cluster-name"); value != "" {
+		return value
+	}
+	for _, token := range splitLabelTokens(v.Labels) {
+		key := strings.ToLower(strings.TrimSpace(token))
+		if idx := strings.Index(key, "="); idx >= 0 {
+			key = key[:idx]
+		}
+		for _, prefix := range []string{"kubernetes.io/cluster/", "k8s.io/cluster-autoscaler/"} {
+			if strings.HasPrefix(key, prefix) {
+				name := strings.TrimSpace(key[len(prefix):])
+				if name != "" {
+					return name
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func (v VM) KubernetesNodePoolName() string {
+	if value := labelValue(v.Labels, "eks:nodegroup-name", "aws:eks:nodegroup-name", "cloud.google.com/gke-nodepool", "gke-nodepool", "aks-nodepool", "karpenter.sh/nodepool"); value != "" {
+		return value
+	}
+	name := strings.ToLower(strings.TrimSpace(v.Name))
+	if strings.HasPrefix(name, "gke-") {
+		parts := strings.Split(name, "-")
+		if len(parts) >= 4 {
+			return parts[len(parts)-2]
+		}
+	}
+	return ""
+}
+
+func labelValue(labels string, keys ...string) string {
+	want := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		want[strings.ToLower(strings.TrimSpace(key))] = struct{}{}
+	}
+	for _, token := range splitLabelTokens(labels) {
+		key, value, ok := strings.Cut(token, "=")
+		if !ok {
+			key, value, ok = strings.Cut(token, ":")
+		}
+		if !ok {
+			continue
+		}
+		if _, found := want[strings.ToLower(strings.TrimSpace(key))]; found {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func splitLabelTokens(labels string) []string {
+	return strings.FieldsFunc(labels, func(r rune) bool {
+		return r == ',' || r == ';'
+	})
+}
+
 func (v VM) GetField(col string) string {
 	switch col {
 	case "Name":
