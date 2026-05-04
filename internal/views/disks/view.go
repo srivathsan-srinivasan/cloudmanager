@@ -19,6 +19,7 @@ import (
 	applog "cloudmanager/internal/logging"
 	"cloudmanager/internal/providers"
 	"cloudmanager/internal/ui"
+	"cloudmanager/internal/views/tagging"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 	paneSortConfig
 	paneConfirm
 	paneResize
+	paneTag
 )
 
 // --- Bubble Tea messages ---
@@ -96,6 +98,7 @@ type DisksView struct {
 	descView         viewport.Model
 	searchInput      textinput.Model
 	resizeInput      textinput.Model
+	tagInput         textinput.Model
 	activePane       int
 
 	diskData     []core.Disk
@@ -181,12 +184,18 @@ func New(cfg *config.AppConfig) *DisksView {
 	resizeInput.CharLimit = 10
 	resizeInput.Width = 20
 
+	tagInput := textinput.New()
+	tagInput.Placeholder = "comma separated tags..."
+	tagInput.Prompt = "tags> "
+	tagInput.CharLimit = 160
+	tagInput.Width = 42
+
 	diskTable, tableCols, _, canScrollLeft, canScrollRight := createDiskTable(*cfg, 80, 0)
 
 	return &DisksView{
 		disks: diskTable, actions: actionList,
 		columnConfigList: colList, sortList: sortList,
-		descView: vp, searchInput: searchInput, resizeInput: resizeInput,
+		descView: vp, searchInput: searchInput, resizeInput: resizeInput, tagInput: tagInput,
 		activePane: paneTable, tableCols: tableCols,
 		cfg: cfg, diskCache: make(map[string]cacheEntry),
 		sortColumn: "Name", sortAsc: true,
@@ -198,11 +207,11 @@ func New(cfg *config.AppConfig) *DisksView {
 func (v *DisksView) Title() string { return "Disks" }
 
 func (v *DisksView) ShortHelp() string {
-	return "\u2191\u2193: Navigate \u2022 \u2190\u2192: Pan \u2022 Enter: Actions \u2022 /: Search \u2022 S: Sort \u2022 C: Columns \u2022 r: Refresh"
+	return "\u2191\u2193: Navigate \u2022 \u2190\u2192: Pan \u2022 t: Tag \u2022 Enter: Actions \u2022 /: Search \u2022 S: Sort \u2022 C: Columns \u2022 r: Refresh"
 }
 
 func (v *DisksView) IsInputActive() bool {
-	return v.isSearching || v.activePane == paneResize || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
+	return v.isSearching || v.activePane == paneResize || v.activePane == paneTag || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
 }
 
 func (v *DisksView) SetSearchQuery(query string) {
@@ -273,8 +282,9 @@ func (v *DisksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		}
 		if msg.String() == "esc" {
 			switch v.activePane {
-			case paneActions, paneDescribe, paneColumnConfig, paneSortConfig, paneResize:
+			case paneActions, paneDescribe, paneColumnConfig, paneSortConfig, paneResize, paneTag:
 				v.activePane = paneTable
+				v.tagInput.Blur()
 				return v, nil
 			case paneConfirm:
 				v.activePane = paneActions
@@ -296,6 +306,8 @@ func (v *DisksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			_, cmd = v.handleTableKeys(msg)
 		case paneResize:
 			_, cmd = v.handleResizeKeys(msg)
+		case paneTag:
+			_, cmd = v.handleTagKeys(msg)
 		}
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -316,7 +328,7 @@ func (v *DisksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			if !msg.fromCache {
 				v.diskCache[v.activeCtx.CacheKey()] = cacheEntry{disks: msg.disks, timestamp: time.Now()}
 			}
-			v.diskData = msg.disks
+			v.diskData = config.ApplyResourceTagsToDisks(*v.cfg, v.activeCtx, msg.disks)
 			applog.Infof("component=disks event=fetch_completed provider=%s account=%s region=%s mode=%s count=%d", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), len(msg.disks))
 			sortDisks(v.diskData, v.sortColumn, v.sortAsc)
 			v.syncVisibleRows()
@@ -364,6 +376,9 @@ func (v *DisksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	case paneResize:
 		v.resizeInput, cmd = v.resizeInput.Update(msg)
+		cmds = append(cmds, cmd)
+	case paneTag:
+		v.tagInput, cmd = v.tagInput.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 
@@ -423,6 +438,20 @@ func (v *DisksView) Render() string {
 		overlay := resizeStyle.Render(resizeView)
 		bodyWithOverlay := lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", bodyWithOverlay), v.width, v.height)
+	case paneTag:
+		tagStyle := ui.OverlayStyle.Copy().Padding(1, 2).Width(60)
+		tagView := lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.NewStyle().Bold(true).Render("CloudManager Tags"),
+			"",
+			lipgloss.NewStyle().Render(fmt.Sprintf("Add local tags to %s:", v.pendingDisk.Name)),
+			"",
+			v.tagInput.View(),
+			"",
+			lipgloss.NewStyle().Foreground(ui.Subtle).Render("Enter: Save • Esc: Cancel"),
+		)
+		overlay := tagStyle.Render(tagView)
+		bodyWithOverlay := lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", bodyWithOverlay), v.width, v.height)
 	}
 
 	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", tableContent), v.width, v.height)
@@ -440,6 +469,16 @@ func (v *DisksView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		}
 		v.actions.Title = fmt.Sprintf("Actions: %s", disk.Name)
 		v.activePane = paneActions
+	case "t":
+		if !ok {
+			return v, nil
+		}
+		v.pendingDisk = disk
+		v.tagInput.SetValue("")
+		v.tagInput.Focus()
+		v.activePane = paneTag
+		v.statusMsg = fmt.Sprintf("Tag %s with CloudManager-only tags.", disk.Name)
+		return v, textinput.Blink
 	case "/":
 		v.isSearching = true
 		v.searchInput.Focus()
@@ -464,6 +503,34 @@ func (v *DisksView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.activePane = paneSortConfig
 	case "C":
 		v.activePane = paneColumnConfig
+	}
+	return v, nil
+}
+
+func (v *DisksView) handleTagKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		v.tagInput.Blur()
+		v.activePane = paneTable
+		v.statusMsg = "Tag canceled."
+		return v, nil
+	case "enter":
+		tags := tagging.SplitInput(v.tagInput.Value())
+		if err := tagging.Save(v.cfg, v.activeCtx, v.pendingDisk, tags); err != nil {
+			v.statusMsg = fmt.Sprintf("Tag save failed: %v", err)
+			return v, nil
+		}
+		v.diskData = config.ApplyResourceTagsToDisks(*v.cfg, v.activeCtx, v.diskData)
+		sortDisks(v.diskData, v.sortColumn, v.sortAsc)
+		v.syncVisibleRows()
+		v.tagInput.Blur()
+		v.activePane = paneTable
+		v.statusMsg = fmt.Sprintf("Tagged %s with %s.", v.pendingDisk.Name, strings.Join(tags, ","))
+		indexCtx := v.activeCtx
+		indexDisks := v.diskData
+		return v, tea.Batch(func() tea.Msg {
+			return ui.ResourceSummaryUpdateMsg{Ctx: indexCtx, Resource: "disks", Count: len(indexDisks), Disks: indexDisks}
+		})
 	}
 	return v, nil
 }

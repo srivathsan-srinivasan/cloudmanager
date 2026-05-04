@@ -53,11 +53,23 @@ type ResourceTag struct {
 	AccountID    string   `mapstructure:"account_id" json:"account_id"`
 	AccountName  string   `mapstructure:"account_name" json:"account_name"`
 	Region       string   `mapstructure:"region" json:"region"`
+	ResourceKind string   `mapstructure:"resource_kind" json:"resource_kind"`
 	ResourceID   string   `mapstructure:"resource_id" json:"resource_id"`
 	ResourceName string   `mapstructure:"resource_name" json:"resource_name"`
 	PrivateIP    string   `mapstructure:"private_ip" json:"private_ip"`
 	PublicIP     string   `mapstructure:"public_ip" json:"public_ip"`
 	Tags         []string `mapstructure:"tags" json:"tags"`
+}
+
+// ResourceTagTarget is the reusable identity CloudManager tags attach to.
+// It is intentionally provider-neutral so new resource views can opt in
+// without adding new config schema.
+type ResourceTagTarget struct {
+	Kind      string
+	ID        string
+	Name      string
+	PrivateIP string
+	PublicIP  string
 }
 
 const (
@@ -416,12 +428,64 @@ func SanitizeResourceTag(tag ResourceTag) ResourceTag {
 	tag.AccountID = strings.TrimSpace(tag.AccountID)
 	tag.AccountName = strings.TrimSpace(tag.AccountName)
 	tag.Region = strings.TrimSpace(tag.Region)
+	tag.ResourceKind = normalizeResourceKind(tag.ResourceKind)
 	tag.ResourceID = strings.TrimSpace(tag.ResourceID)
 	tag.ResourceName = strings.TrimSpace(tag.ResourceName)
 	tag.PrivateIP = strings.TrimSpace(tag.PrivateIP)
 	tag.PublicIP = strings.TrimSpace(tag.PublicIP)
 	tag.Tags = normalizeDisplayTagList(tag.Tags)
 	return tag
+}
+
+func ApplyResourceTagsToLabels(cfg AppConfig, ctx core.CloudContext, target ResourceTagTarget, labels string) string {
+	tags := CloudManagerTagsForResource(cfg, ctx, target)
+	if len(tags) == 0 {
+		return labels
+	}
+	return appendCloudManagerTags(labels, tags)
+}
+
+func CloudManagerTagsForResource(cfg AppConfig, ctx core.CloudContext, target ResourceTagTarget) []string {
+	target = sanitizeResourceTagTarget(target)
+	var tags []string
+	for _, raw := range cfg.ResourceTags {
+		tag := SanitizeResourceTag(raw)
+		if !resourceTagMatchesContext(tag, ctx) || !resourceTagMatchesTarget(tag, target) {
+			continue
+		}
+		tags = append(tags, tag.Tags...)
+	}
+	return normalizeDisplayTagList(tags)
+}
+
+func UpsertResourceTags(cfg AppConfig, ctx core.CloudContext, target ResourceTagTarget, tags []string) AppConfig {
+	tags = normalizeDisplayTagList(tags)
+	target = sanitizeResourceTagTarget(target)
+	if len(tags) == 0 || !target.hasIdentity() {
+		return cfg
+	}
+	next := SanitizeResourceTag(ResourceTag{
+		Provider:     ctx.Provider,
+		AccountID:    ctx.AccountID,
+		AccountName:  ctx.AccountName,
+		Region:       ctx.Region,
+		ResourceKind: target.Kind,
+		ResourceID:   target.ID,
+		ResourceName: target.Name,
+		PrivateIP:    target.PrivateIP,
+		PublicIP:     target.PublicIP,
+		Tags:         tags,
+	})
+	for i, existing := range cfg.ResourceTags {
+		existing = SanitizeResourceTag(existing)
+		if sameResourceTagTarget(existing, next) {
+			existing.Tags = normalizeDisplayTagList(append(existing.Tags, tags...))
+			cfg.ResourceTags[i] = existing
+			return cfg
+		}
+	}
+	cfg.ResourceTags = append(cfg.ResourceTags, next)
+	return cfg
 }
 
 func ApplyResourceTagsToVMs(cfg AppConfig, ctx core.CloudContext, vms []core.VM) []core.VM {
@@ -433,52 +497,88 @@ func ApplyResourceTagsToVMs(cfg AppConfig, ctx core.CloudContext, vms []core.VM)
 }
 
 func ApplyResourceTagsToVM(cfg AppConfig, ctx core.CloudContext, vm core.VM) core.VM {
-	tags := CloudManagerTagsForVM(cfg, ctx, vm)
-	if len(tags) == 0 {
-		return vm
-	}
-	vm.Labels = appendCloudManagerTags(vm.Labels, tags)
+	vm.Labels = ApplyResourceTagsToLabels(cfg, ctx, vmResourceTagTarget(vm), vm.Labels)
 	return vm
 }
 
 func UpsertVMResourceTags(cfg AppConfig, ctx core.CloudContext, vm core.VM, tags []string) AppConfig {
-	tags = normalizeDisplayTagList(tags)
-	if len(tags) == 0 {
-		return cfg
-	}
-	target := SanitizeResourceTag(ResourceTag{
-		Provider:     ctx.Provider,
-		AccountID:    ctx.AccountID,
-		AccountName:  ctx.AccountName,
-		Region:       ctx.Region,
-		ResourceID:   vm.ID,
-		ResourceName: vm.Name,
-		PrivateIP:    vm.PrivateIP,
-		PublicIP:     vm.PublicIP,
-		Tags:         tags,
-	})
-	for i, existing := range cfg.ResourceTags {
-		existing = SanitizeResourceTag(existing)
-		if sameResourceTagTarget(existing, target) {
-			existing.Tags = normalizeDisplayTagList(append(existing.Tags, tags...))
-			cfg.ResourceTags[i] = existing
-			return cfg
-		}
-	}
-	cfg.ResourceTags = append(cfg.ResourceTags, target)
-	return cfg
+	return UpsertResourceTags(cfg, ctx, vmResourceTagTarget(vm), tags)
 }
 
 func CloudManagerTagsForVM(cfg AppConfig, ctx core.CloudContext, vm core.VM) []string {
-	var tags []string
-	for _, raw := range cfg.ResourceTags {
-		tag := SanitizeResourceTag(raw)
-		if !resourceTagMatchesContext(tag, ctx) || !resourceTagMatchesVM(tag, vm) {
-			continue
-		}
-		tags = append(tags, tag.Tags...)
+	return CloudManagerTagsForResource(cfg, ctx, vmResourceTagTarget(vm))
+}
+
+func ApplyResourceTagsToDisks(cfg AppConfig, ctx core.CloudContext, disks []core.Disk) []core.Disk {
+	out := make([]core.Disk, len(disks))
+	for i, disk := range disks {
+		disk.Labels = ApplyResourceTagsToLabels(cfg, ctx, resourceTagTargetFromResource(disk), disk.Labels)
+		out[i] = disk
 	}
-	return normalizeDisplayTagList(tags)
+	return out
+}
+
+func ApplyResourceTagsToSnapshots(cfg AppConfig, ctx core.CloudContext, snapshots []core.Snapshot) []core.Snapshot {
+	out := make([]core.Snapshot, len(snapshots))
+	for i, snap := range snapshots {
+		snap.Labels = ApplyResourceTagsToLabels(cfg, ctx, resourceTagTargetFromResource(snap), snap.Labels)
+		out[i] = snap
+	}
+	return out
+}
+
+func ApplyResourceTagsToClusters(cfg AppConfig, ctx core.CloudContext, clusters []core.Cluster) []core.Cluster {
+	out := make([]core.Cluster, len(clusters))
+	for i, cluster := range clusters {
+		cluster.Labels = ApplyResourceTagsToLabels(cfg, ctx, resourceTagTargetFromResource(cluster), cluster.Labels)
+		out[i] = cluster
+	}
+	return out
+}
+
+func ApplyResourceTagsToDatabases(cfg AppConfig, ctx core.CloudContext, databases []core.Database) []core.Database {
+	out := make([]core.Database, len(databases))
+	for i, db := range databases {
+		db.Labels = ApplyResourceTagsToLabels(cfg, ctx, resourceTagTargetFromResource(db), db.Labels)
+		out[i] = db
+	}
+	return out
+}
+
+func ApplyResourceTagsToNetworks(cfg AppConfig, ctx core.CloudContext, networks []core.Network) []core.Network {
+	out := make([]core.Network, len(networks))
+	for i, network := range networks {
+		network.Labels = ApplyResourceTagsToLabels(cfg, ctx, resourceTagTargetFromResource(network), network.Labels)
+		out[i] = network
+	}
+	return out
+}
+
+func ApplyResourceTagsToSubnets(cfg AppConfig, ctx core.CloudContext, subnets []core.Subnet) []core.Subnet {
+	out := make([]core.Subnet, len(subnets))
+	for i, subnet := range subnets {
+		subnet.Labels = ApplyResourceTagsToLabels(cfg, ctx, resourceTagTargetFromResource(subnet), subnet.Labels)
+		out[i] = subnet
+	}
+	return out
+}
+
+func ApplyResourceTagsToSecurityGroups(cfg AppConfig, ctx core.CloudContext, groups []core.SecurityGroup) []core.SecurityGroup {
+	out := make([]core.SecurityGroup, len(groups))
+	for i, group := range groups {
+		group.Labels = ApplyResourceTagsToLabels(cfg, ctx, resourceTagTargetFromResource(group), group.Labels)
+		out[i] = group
+	}
+	return out
+}
+
+func ApplyResourceTagsToStorageBuckets(cfg AppConfig, ctx core.CloudContext, buckets []core.StorageBucket) []core.StorageBucket {
+	out := make([]core.StorageBucket, len(buckets))
+	for i, bucket := range buckets {
+		bucket.Labels = ApplyResourceTagsToLabels(cfg, ctx, resourceTagTargetFromResource(bucket), bucket.Labels)
+		out[i] = bucket
+	}
+	return out
 }
 
 func sameResourceTagTarget(left, right ResourceTag) bool {
@@ -486,6 +586,7 @@ func sameResourceTagTarget(left, right ResourceTag) bool {
 		strings.EqualFold(left.AccountID, right.AccountID) &&
 		strings.EqualFold(left.AccountName, right.AccountName) &&
 		strings.EqualFold(left.Region, right.Region) &&
+		matchOptional(left.ResourceKind, right.ResourceKind) &&
 		strings.EqualFold(left.ResourceID, right.ResourceID) &&
 		strings.EqualFold(left.ResourceName, right.ResourceName) &&
 		left.PrivateIP == right.PrivateIP &&
@@ -499,21 +600,93 @@ func resourceTagMatchesContext(tag ResourceTag, ctx core.CloudContext) bool {
 		matchOptional(tag.Region, ctx.Region)
 }
 
-func resourceTagMatchesVM(tag ResourceTag, vm core.VM) bool {
+func resourceTagMatchesTarget(tag ResourceTag, target ResourceTagTarget) bool {
+	if !matchOptional(tag.ResourceKind, target.Kind) {
+		return false
+	}
 	matched := false
 	if tag.ResourceID != "" {
-		matched = matched || strings.EqualFold(tag.ResourceID, vm.ID)
+		matched = matched || strings.EqualFold(tag.ResourceID, target.ID)
 	}
 	if tag.ResourceName != "" {
-		matched = matched || strings.EqualFold(tag.ResourceName, vm.Name)
+		matched = matched || strings.EqualFold(tag.ResourceName, target.Name)
 	}
 	if tag.PrivateIP != "" {
-		matched = matched || tag.PrivateIP == vm.PrivateIP
+		matched = matched || tag.PrivateIP == target.PrivateIP
 	}
 	if tag.PublicIP != "" {
-		matched = matched || tag.PublicIP == vm.PublicIP
+		matched = matched || tag.PublicIP == target.PublicIP
 	}
 	return matched
+}
+
+func ResourceTagTargetFromResource(resource core.Resource) ResourceTagTarget {
+	if resource == nil {
+		return ResourceTagTarget{}
+	}
+	return sanitizeResourceTagTarget(ResourceTagTarget{
+		Kind: resource.GetKind(),
+		ID:   resource.GetID(),
+		Name: resource.GetName(),
+	})
+}
+
+func vmResourceTagTarget(vm core.VM) ResourceTagTarget {
+	return sanitizeResourceTagTarget(ResourceTagTarget{
+		Kind:      vm.GetKind(),
+		ID:        vm.ID,
+		Name:      vm.Name,
+		PrivateIP: vm.PrivateIP,
+		PublicIP:  vm.PublicIP,
+	})
+}
+
+func resourceTagTargetFromResource(resource core.Resource) ResourceTagTarget {
+	return ResourceTagTargetFromResource(resource)
+}
+
+func sanitizeResourceTagTarget(target ResourceTagTarget) ResourceTagTarget {
+	target.Kind = normalizeResourceKind(target.Kind)
+	target.ID = strings.TrimSpace(target.ID)
+	target.Name = strings.TrimSpace(target.Name)
+	target.PrivateIP = strings.TrimSpace(target.PrivateIP)
+	target.PublicIP = strings.TrimSpace(target.PublicIP)
+	return target
+}
+
+func (target ResourceTagTarget) hasIdentity() bool {
+	return target.ID != "" || target.Name != "" || target.PrivateIP != "" || target.PublicIP != ""
+}
+
+func normalizeResourceKind(kind string) string {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return ""
+	}
+	key := strings.ToLower(strings.ReplaceAll(kind, "_", " "))
+	key = strings.Join(strings.Fields(key), " ")
+	switch key {
+	case "vm", "vms", "virtual machine", "virtual machines", "instance", "instances":
+		return "VM"
+	case "disk", "disks", "volume", "volumes":
+		return "Disk"
+	case "snapshot", "snapshots":
+		return "Snapshot"
+	case "cluster", "clusters", "k8s", "kubernetes":
+		return "Cluster"
+	case "database", "databases", "db", "dbs":
+		return "Database"
+	case "network", "networks", "vpc", "vnet":
+		return "Network"
+	case "subnet", "subnets":
+		return "Subnet"
+	case "security group", "security groups", "sg", "firewall", "firewalls":
+		return "Security Group"
+	case "storage", "bucket", "buckets", "storage bucket", "storage buckets":
+		return "Storage"
+	default:
+		return kind
+	}
 }
 
 func matchOptional(want, got string) bool {

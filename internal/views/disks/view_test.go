@@ -135,3 +135,31 @@ func TestSetSearchQueryFiltersDisks(t *testing.T) {
 		t.Fatalf("expected search handoff to filter to disk-2, got %+v", view.visibleDisks)
 	}
 }
+
+func TestTagSelectedDiskSavesCloudManagerTag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := config.AppConfig{DiskColumns: []string{"Name", "ID", "Labels"}}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.activeCtx = core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
+	view.diskData = []core.Disk{{Name: "data", ID: "vol-1"}}
+	view.refreshTable()
+	view.syncVisibleRows()
+
+	updated, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	view = updated.(*DisksView)
+	if cmd == nil || view.activePane != paneTag {
+		t.Fatalf("expected tag pane, pane=%d cmd nil=%t", view.activePane, cmd == nil)
+	}
+	view.tagInput.SetValue("VFWEB")
+	updated, _ = view.handleTagKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	view = updated.(*DisksView)
+
+	if len(cfg.ResourceTags) != 1 || cfg.ResourceTags[0].ResourceKind != "Disk" {
+		t.Fatalf("expected disk resource tag, got %+v", cfg.ResourceTags)
+	}
+	if !strings.Contains(view.diskData[0].Labels, "cm:VFWEB") {
+		t.Fatalf("expected disk labels to include CloudManager tag, got %q", view.diskData[0].Labels)
+	}
+}

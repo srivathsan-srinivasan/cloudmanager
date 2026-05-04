@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"cloudmanager/internal/config"
 	"cloudmanager/internal/core"
 	"cloudmanager/internal/iac"
+	"cloudmanager/internal/localdb"
 	applog "cloudmanager/internal/logging"
 	"cloudmanager/internal/providers"
 	"cloudmanager/internal/ui"
@@ -130,6 +132,14 @@ func (i accessItem) Description() string {
 
 func (i accessItem) FilterValue() string { return i.method.Label + " " + i.method.CopyText }
 
+type keyFileItem struct {
+	path string
+}
+
+func (i keyFileItem) Title() string       { return filepath.Base(i.path) }
+func (i keyFileItem) Description() string { return i.path }
+func (i keyFileItem) FilterValue() string { return i.path }
+
 type columnItem struct {
 	name     string
 	selected bool
@@ -157,11 +167,13 @@ type VMsView struct {
 	vms              table.Model
 	actions          list.Model
 	accessMethods    list.Model
+	keyFileList      list.Model
 	columnConfigList list.Model
 	sortList         list.Model
 	descView         viewport.Model
 	searchInput      textinput.Model
 	tagInput         textinput.Model
+	accessUserInput  textinput.Model
 	activePane       int
 
 	vmData       []core.VM
@@ -184,9 +196,15 @@ type VMsView struct {
 	statusMsg      string
 	copyableText   string
 
-	pendingAction actionItem
-	pendingVM     core.VM
-	pendingAccess []core.AccessMethod
+	pendingAction     actionItem
+	pendingVM         core.VM
+	pendingAccess     []core.AccessMethod
+	accessParent      []core.AccessMethod
+	accessMode        string
+	editingAccessUser bool
+	keyDropdownOpen   bool
+	selectedSSHKey    string
+	selectedSSHIPKind string
 
 	width, height int
 	showSidebar   bool
@@ -223,6 +241,12 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 	accessList.Title = "Access Methods"
 	accessList.SetShowStatusBar(false)
 	accessList.SetFilteringEnabled(false)
+	keyDelegate := list.NewDefaultDelegate()
+	keyDelegate.ShowDescription = true
+	keyList := list.New(nil, keyDelegate, 56, 10)
+	keyList.Title = "Select SSH key"
+	keyList.SetShowStatusBar(false)
+	keyList.SetFilteringEnabled(true)
 
 	// Column config
 	var colItems []list.Item
@@ -264,13 +288,18 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 	tagInput.Prompt = "tags> "
 	tagInput.CharLimit = 160
 	tagInput.Width = 48
+	accessUserInput := textinput.New()
+	accessUserInput.Placeholder = "ubuntu"
+	accessUserInput.Prompt = "user> "
+	accessUserInput.CharLimit = 64
+	accessUserInput.Width = 32
 
 	vmTable, tableCols, _, canScrollLeft, canScrollRight := createVMTable(*cfg, 80, 0)
 
 	return &VMsView{
-		vms: vmTable, actions: actionList, accessMethods: accessList,
+		vms: vmTable, actions: actionList, accessMethods: accessList, keyFileList: keyList,
 		columnConfigList: colList, sortList: sortList,
-		descView: vp, searchInput: searchInput, tagInput: tagInput,
+		descView: vp, searchInput: searchInput, tagInput: tagInput, accessUserInput: accessUserInput,
 		activePane: paneTable, tableCols: tableCols,
 		cfg: cfg, vmCache: make(map[string]cacheEntry),
 		costCache:    make(map[string]costCacheEntry),
@@ -342,6 +371,7 @@ func (v *VMsView) Resize(width, height int, showSidebar bool) {
 	v.sortList.SetSize(width-4, height-4)
 	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
 	v.accessMethods.SetSize(64, ui.ActionListHeight(len(v.accessMethods.Items()), height))
+	v.keyFileList.SetSize(56, ui.ActionListHeight(len(v.keyFileList.Items()), height))
 }
 
 func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
@@ -356,7 +386,19 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		// Intercept global keys
 		if msg.String() == "esc" {
 			switch v.activePane {
-			case paneActions, paneAccess, paneDescribe, paneColumnConfig, paneSortConfig, paneTag:
+			case paneAccess:
+				if v.accessMode == "keys" {
+					if v.keyDropdownOpen {
+						v.keyDropdownOpen = false
+					} else {
+						v.restoreAccessParent()
+					}
+					return v, nil
+				}
+				v.activePane = paneTable
+				v.refreshTable()
+				return v, nil
+			case paneActions, paneDescribe, paneColumnConfig, paneSortConfig, paneTag:
 				v.activePane = paneTable
 				v.tagInput.Blur()
 				if msg.String() == "esc" {
@@ -487,14 +529,13 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 	case accessResolvedMsg:
 		v.pendingVM = msg.vm
 		v.pendingAccess = msg.methods
+		v.accessParent = nil
+		v.accessMode = "methods"
+		v.editingAccessUser = false
+		v.accessUserInput.Blur()
 		v.accessMethods.Title = fmt.Sprintf("Access: %s", msg.vm.Name)
-		items := make([]list.Item, 0, len(msg.methods))
-		for _, method := range msg.methods {
-			items = append(items, accessItem{method: method})
-		}
-		v.accessMethods.SetItems(items)
-		v.accessMethods.Select(0)
-		v.accessMethods.SetSize(64, ui.ActionListHeight(len(items), v.height))
+		v.setAccessItems(msg.methods)
+		v.accessMethods.SetSize(64, ui.ActionListHeight(len(v.accessMethods.Items()), v.height))
 		v.loading = false
 		v.activePane = paneAccess
 		v.statusMsg = "Choose access method (Enter run, c copy, Esc close)."
@@ -556,7 +597,13 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		v.actions, cmd = v.actions.Update(msg)
 		cmds = append(cmds, cmd)
 	case paneAccess:
-		v.accessMethods, cmd = v.accessMethods.Update(msg)
+		if v.keyDropdownOpen {
+			v.keyFileList, cmd = v.keyFileList.Update(msg)
+		} else if v.editingAccessUser {
+			v.accessUserInput, cmd = v.accessUserInput.Update(msg)
+		} else {
+			v.accessMethods, cmd = v.accessMethods.Update(msg)
+		}
 		cmds = append(cmds, cmd)
 	case paneDescribe:
 		v.descView, cmd = v.descView.Update(msg)
@@ -603,7 +650,14 @@ func (v *VMsView) Render() string {
 		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 	case paneAccess:
-		overlay := ui.OverlayStyle.Render(v.accessMethods.View())
+		overlayContent := v.accessMethods.View()
+		if v.accessMode == "keys" {
+			panelWidth := privateKeyAccessPanelWidth(v.width)
+			overlay := ui.OverlayStyle.Copy().Width(panelWidth).Render(v.renderPrivateKeyAccess(panelWidth - 6))
+			body := lipgloss.Place(v.width, maxInt(6, v.height-4), lipgloss.Center, lipgloss.Top, overlay, lipgloss.WithWhitespaceChars(" "))
+			return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+		}
+		overlay := ui.OverlayStyle.Render(overlayContent)
 		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-70).Render(tableContent), overlay)
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 	case paneConfirm:
@@ -633,6 +687,58 @@ func (v *VMsView) Render() string {
 	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", tableContent), v.width, v.height)
 }
 
+func (v *VMsView) renderPrivateKeyAccess(width int) string {
+	if width < 32 {
+		width = 32
+	}
+	keyLabel := "Select key"
+	if strings.TrimSpace(v.selectedSSHKey) != "" {
+		keyLabel = filepath.Base(v.selectedSSHKey)
+	}
+	ipLabel := v.selectedSSHIPKind
+	if ipLabel == "" {
+		ipLabel = defaultSSHIPKind(v.pendingVM)
+	}
+	command := "Select a key to build command."
+	if method, ok := v.currentPrivateKeyMethod(); ok {
+		command = method.CopyText
+	}
+	v.accessUserInput.Width = width - 8
+	v.keyFileList.SetSize(width, ui.ActionListHeight(len(v.keyFileList.Items()), v.height-12))
+	lines := []string{
+		lipgloss.NewStyle().Foreground(ui.Highlight).Bold(true).Render("Private key SSH"),
+		v.accessUserInput.View(),
+		fmt.Sprintf("key> %s", ui.TruncateText(keyLabel, width-5)),
+		fmt.Sprintf("ip> %s", ui.TruncateText(ipLabel, width-4)),
+		"",
+		lipgloss.NewStyle().Foreground(ui.Subtle).Render(ui.TruncateText(command, width)),
+		"",
+		lipgloss.NewStyle().Foreground(ui.Subtle).Render(ui.TruncateText("k key • u user • p IP • b bootstrap • Enter run • c copy • Esc back", width)),
+	}
+	if v.keyDropdownOpen {
+		lines = append(lines, "", v.keyFileList.View())
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func privateKeyAccessPanelWidth(windowWidth int) int {
+	width := windowWidth - 8
+	if width > 76 {
+		width = 76
+	}
+	if width < 42 {
+		width = 42
+	}
+	return width
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // --- Key handlers ---
 
 func (v *VMsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
@@ -650,9 +756,10 @@ func (v *VMsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		if !ok {
 			return v, nil
 		}
-		v.showCopyableDetail(core.DescribeVM(vm))
-		v.statusMsg = "Viewing details (c copy, Esc close, Up/Down scroll)."
-		return v, statusCmd(v.statusMsg)
+		v.activePane = paneTable
+		v.loading = true
+		v.statusMsg = fmt.Sprintf("Describing %s...", vm.Name)
+		return v, executeActionCmd("Describe", vm, v.activeCtx, v.cfg)
 	case "f":
 		if !ok {
 			return v, nil
@@ -846,10 +953,96 @@ func (v *VMsView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 
 func (v *VMsView) handleAccessKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 	method, ok := v.selectedAccessMethod()
+	if v.keyDropdownOpen {
+		switch msg.String() {
+		case "enter":
+			if item, ok := v.keyFileList.SelectedItem().(keyFileItem); ok {
+				v.selectedSSHKey = item.path
+				v.keyDropdownOpen = false
+				v.statusMsg = fmt.Sprintf("Selected SSH key %s.", filepath.Base(item.path))
+				return v, statusCmd(v.statusMsg)
+			}
+			return v, nil
+		case "esc":
+			v.keyDropdownOpen = false
+			return v, nil
+		}
+		return v, nil
+	}
+	if v.editingAccessUser {
+		switch msg.String() {
+		case "enter":
+			v.editingAccessUser = false
+			v.accessUserInput.Blur()
+			v.statusMsg = "Username applied. Choose key/IP and press Enter."
+			return v, statusCmd(v.statusMsg)
+		case "esc":
+			v.editingAccessUser = false
+			v.accessUserInput.Blur()
+			return v, nil
+		}
+		return v, nil
+	}
+	if v.accessMode == "keys" {
+		switch msg.String() {
+		case "esc":
+			v.restoreAccessParent()
+			return v, nil
+		case "k":
+			v.openKeyDropdown()
+			return v, nil
+		case "u":
+			v.editingAccessUser = true
+			v.accessUserInput.Focus()
+			v.statusMsg = "Enter SSH username, then press Enter."
+			return v, textinput.Blink
+		case "p":
+			v.toggleSelectedSSHIPKind()
+			return v, nil
+		case "b":
+			command, ok := v.defaultKeyBootstrapCommand()
+			if !ok {
+				v.statusMsg = "Select key/IP first and ensure ~/.ssh/id_rsa.pub exists."
+				return v, statusCmd(v.statusMsg)
+			}
+			v.showCopyableDetail(command)
+			v.statusMsg = "Bootstrap command ready. Press c to copy, Esc to close."
+			return v, statusCmd(v.statusMsg)
+		case "c":
+			method, ok := v.currentPrivateKeyMethod()
+			if !ok {
+				v.statusMsg = "Select a key first."
+				return v, statusCmd(v.statusMsg)
+			}
+			v.showCopyableDetail(method.CopyText)
+			v.statusMsg = "Copying access command..."
+			return v, copyToClipboardCmd(method.CopyText)
+		case "enter":
+			method, ok := v.currentPrivateKeyMethod()
+			if !ok {
+				v.openKeyDropdown()
+				v.statusMsg = "Select a key first."
+				return v, statusCmd(v.statusMsg)
+			}
+			cmd, err := access.ExecCommand(context.Background(), method)
+			if err != nil {
+				v.statusMsg = fmt.Sprintf("Access method failed: %v", err)
+				return v, statusCmd(v.statusMsg)
+			}
+			v.rememberPrivateKeyAccess()
+			v.activePane = paneTable
+			v.statusMsg = fmt.Sprintf("Starting %s...", method.Label)
+			return v, tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return sshCompleteMsg{err: err}
+			})
+		}
+		return v, nil
+	}
 	switch msg.String() {
 	case "esc":
 		v.activePane = paneTable
 		return v, nil
+	case "u":
 	case "c":
 		if !ok || strings.TrimSpace(method.CopyText) == "" {
 			v.statusMsg = "Nothing to copy."
@@ -861,6 +1054,10 @@ func (v *VMsView) handleAccessKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 	case "enter":
 		if !ok {
 			return v, nil
+		}
+		if method.Kind == "private_key_picker" {
+			v.openPrivateKeyPicker()
+			return v, statusCmd(v.statusMsg)
 		}
 		if method.Kind == "remediation" || len(method.Command) == 0 {
 			v.showCopyableDetail(sshRemediationGuide(v.pendingVM, v.activeCtx))
@@ -1074,6 +1271,171 @@ func (v *VMsView) selectedAccessMethod() (core.AccessMethod, bool) {
 		return core.AccessMethod{}, false
 	}
 	return accessItem.method, true
+}
+
+func (v *VMsView) setAccessItems(methods []core.AccessMethod) {
+	v.pendingAccess = methods
+	items := make([]list.Item, 0, len(methods))
+	for _, method := range methods {
+		items = append(items, accessItem{method: method})
+	}
+	v.accessMethods.SetItems(items)
+	if len(items) > 0 {
+		v.accessMethods.Select(0)
+	}
+}
+
+func (v *VMsView) openPrivateKeyPicker() {
+	v.accessParent = append([]core.AccessMethod(nil), v.pendingAccess...)
+	v.accessMode = "keys"
+	v.editingAccessUser = false
+	v.keyDropdownOpen = false
+	v.accessUserInput.SetValue("ubuntu")
+	v.accessUserInput.Blur()
+	v.selectedSSHIPKind = defaultSSHIPKind(v.pendingVM)
+	v.selectedSSHKey = ""
+	v.refreshKeyFileItems()
+	v.statusMsg = "Private key SSH. Press k to select key, u for username, p for IP."
+}
+
+func (v *VMsView) refreshKeyFileItems() {
+	keys := access.SSHKeyFiles()
+	items := make([]list.Item, 0, len(keys))
+	for _, keyPath := range keys {
+		items = append(items, keyFileItem{path: keyPath})
+	}
+	v.keyFileList.SetItems(items)
+	if len(items) > 0 {
+		v.keyFileList.Select(0)
+	}
+	v.keyFileList.SetSize(56, ui.ActionListHeight(len(items), v.height))
+}
+
+func (v *VMsView) openKeyDropdown() {
+	v.refreshKeyFileItems()
+	v.keyDropdownOpen = true
+	if strings.TrimSpace(v.selectedSSHKey) != "" {
+		for i, item := range v.keyFileList.Items() {
+			if key, ok := item.(keyFileItem); ok && key.path == v.selectedSSHKey {
+				v.keyFileList.Select(i)
+				break
+			}
+		}
+	}
+	v.statusMsg = "Select SSH key."
+}
+
+func (v *VMsView) currentPrivateKeyMethod() (core.AccessMethod, bool) {
+	return access.PrivateKeySSHMethod(v.pendingVM, v.accessUserInput.Value(), v.selectedSSHKey, v.selectedSSHIPKind)
+}
+
+func (v *VMsView) rememberPrivateKeyAccess() {
+	ip := selectedIPForKind(v.pendingVM, v.selectedSSHIPKind)
+	if ip == "" {
+		return
+	}
+	db, err := localdb.Open(context.Background())
+	if err != nil {
+		applog.Warnf("component=vms event=access_profile_open_failed err=%v", err)
+		return
+	}
+	defer db.Close()
+	if err := localdb.UpsertAccessProfile(context.Background(), db, v.activeCtx, v.pendingVM, localdb.AccessProfile{
+		Username:        v.accessUserInput.Value(),
+		IPKind:          v.selectedSSHIPKind,
+		IP:              ip,
+		KeyPath:         v.selectedSSHKey,
+		DefaultKeyReady: false,
+	}); err != nil {
+		applog.Warnf("component=vms event=access_profile_save_failed vm=%s err=%v", v.pendingVM.ID, err)
+	}
+}
+
+func (v *VMsView) defaultKeyBootstrapCommand() (string, bool) {
+	method, ok := v.currentPrivateKeyMethod()
+	if !ok || len(method.Command) == 0 {
+		return "", false
+	}
+	pubPath := expandLocalPath("~/.ssh/id_rsa.pub")
+	pub, err := os.ReadFile(pubPath)
+	if err != nil {
+		return "", false
+	}
+	pubKey := strings.TrimSpace(string(pub))
+	if pubKey == "" {
+		return "", false
+	}
+	remote := fmt.Sprintf("mkdir -p ~/.ssh && chmod 700 ~/.ssh && grep -qxF %s ~/.ssh/authorized_keys 2>/dev/null || echo %s >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys", shellQuote(pubKey), shellQuote(pubKey))
+	args := append([]string{}, method.Command...)
+	args = append(args, remote)
+	return access.FormatCommand(args), true
+}
+
+func (v *VMsView) toggleSelectedSSHIPKind() {
+	switch v.selectedSSHIPKind {
+	case "public":
+		if hasUsableIP(v.pendingVM.PrivateIP) {
+			v.selectedSSHIPKind = "private"
+		}
+	case "private":
+		if hasUsableIP(v.pendingVM.PublicIP) {
+			v.selectedSSHIPKind = "public"
+		}
+	default:
+		v.selectedSSHIPKind = defaultSSHIPKind(v.pendingVM)
+	}
+}
+
+func defaultSSHIPKind(vm core.VM) string {
+	if hasUsableIP(vm.PublicIP) {
+		return "public"
+	}
+	return "private"
+}
+
+func hasUsableIP(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && value != "-"
+}
+
+func selectedIPForKind(vm core.VM, kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "private":
+		if hasUsableIP(vm.PrivateIP) {
+			return strings.TrimSpace(vm.PrivateIP)
+		}
+	default:
+		if hasUsableIP(vm.PublicIP) {
+			return strings.TrimSpace(vm.PublicIP)
+		}
+	}
+	if hasUsableIP(vm.PrivateIP) {
+		return strings.TrimSpace(vm.PrivateIP)
+	}
+	return ""
+}
+
+func expandLocalPath(path string) string {
+	path = os.ExpandEnv(strings.TrimSpace(path))
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	return path
+}
+
+func (v *VMsView) restoreAccessParent() {
+	v.accessMode = "methods"
+	v.editingAccessUser = false
+	v.keyDropdownOpen = false
+	v.accessUserInput.Blur()
+	v.selectedSSHKey = ""
+	v.selectedSSHIPKind = ""
+	v.accessMethods.Title = fmt.Sprintf("Access: %s", v.pendingVM.Name)
+	v.setAccessItems(v.accessParent)
+	v.accessMethods.SetSize(64, ui.ActionListHeight(len(v.accessMethods.Items()), v.height))
+	v.statusMsg = "Choose access method (Enter run, c copy, Esc close)."
 }
 
 func filterVMs(vms []core.VM, query string, filters []string, showKubernetesNodes bool) []core.VM {
@@ -1507,11 +1869,33 @@ func (v *VMsView) resolveAccessCmd(vm core.VM) tea.Cmd {
 		NativeMethod: v.providerNativeAccessMethod(vm),
 	}
 	return func() tea.Msg {
+		methods := access.Resolve(context.Background(), req)
+		if learned, ok := learnedAccessMethod(context.Background(), v.activeCtx, vm); ok {
+			methods = append([]core.AccessMethod{learned}, methods...)
+		}
 		return accessResolvedMsg{
 			vm:      vm,
-			methods: access.Resolve(context.Background(), req),
+			methods: methods,
 		}
 	}
+}
+
+func learnedAccessMethod(ctx context.Context, cloudCtx core.CloudContext, vm core.VM) (core.AccessMethod, bool) {
+	db, err := localdb.Open(ctx)
+	if err != nil {
+		applog.Warnf("component=vms event=access_profile_open_failed err=%v", err)
+		return core.AccessMethod{}, false
+	}
+	defer db.Close()
+	profile, ok, err := localdb.LookupAccessProfile(ctx, db, cloudCtx, vm)
+	if err != nil {
+		applog.Warnf("component=vms event=access_profile_lookup_failed vm=%s err=%v", vm.ID, err)
+		return core.AccessMethod{}, false
+	}
+	if !ok {
+		return core.AccessMethod{}, false
+	}
+	return localdb.LearnedAccessMethod(profile)
 }
 
 func (v *VMsView) providerNativeAccessMethod(vm core.VM) *core.AccessMethod {
@@ -1527,10 +1911,29 @@ func (v *VMsView) providerNativeAccessMethod(vm core.VM) *core.AccessMethod {
 		method.Reason = fmt.Sprintf("%s native access unavailable", v.activeCtx.Provider)
 		return &method
 	}
+	method.Label = providerNativeAccessLabel(v.activeCtx.Provider, cmd.Args)
 	method.Command = cmd.Args
 	method.CopyText = access.FormatCommand(cmd.Args)
 	method.Available = true
 	return &method
+}
+
+func providerNativeAccessLabel(provider string, args []string) string {
+	joined := strings.ToLower(strings.Join(args, " "))
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "aws":
+		if strings.Contains(joined, " ssm ") || strings.Contains(joined, "start-session") {
+			return "AWS SSM Session Manager"
+		}
+		if strings.Contains(joined, "ec2-instance-connect") {
+			return "AWS EC2 Instance Connect"
+		}
+	case "gcp":
+		return "GCP OS Login / gcloud SSH"
+	case "azure":
+		return "Azure native SSH"
+	}
+	return fmt.Sprintf("%s native access", provider)
 }
 
 func vmCostCacheKey(cloudCtx core.CloudContext, resourceID string) string {

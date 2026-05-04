@@ -133,3 +133,31 @@ func TestSetSearchQueryFiltersSnapshots(t *testing.T) {
 		t.Fatalf("expected search handoff to filter to snap-2, got %+v", view.visibleSnaps)
 	}
 }
+
+func TestTagSelectedSnapshotSavesCloudManagerTag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := config.AppConfig{SnapshotColumns: []string{"Name", "ID", "Labels"}}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.activeCtx = core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
+	view.snapData = []core.Snapshot{{Name: "backup", ID: "snap-1"}}
+	view.refreshTable()
+	view.syncVisibleRows()
+
+	updated, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	view = updated.(*SnapshotsView)
+	if cmd == nil || view.activePane != paneTag {
+		t.Fatalf("expected tag pane, pane=%d cmd nil=%t", view.activePane, cmd == nil)
+	}
+	view.tagInput.SetValue("VFWEB")
+	updated, _ = view.handleTagKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	view = updated.(*SnapshotsView)
+
+	if len(cfg.ResourceTags) != 1 || cfg.ResourceTags[0].ResourceKind != "Snapshot" {
+		t.Fatalf("expected snapshot resource tag, got %+v", cfg.ResourceTags)
+	}
+	if !strings.Contains(view.snapData[0].Labels, "cm:VFWEB") {
+		t.Fatalf("expected snapshot labels to include CloudManager tag, got %q", view.snapData[0].Labels)
+	}
+}

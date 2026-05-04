@@ -145,6 +145,9 @@ func TestAppFooterShowsBackendMode(t *testing.T) {
 	if !strings.Contains(rendered, "L:Logs") {
 		t.Fatalf("expected logs hint in footer, got:\n%s", rendered)
 	}
+	if !strings.Contains(rendered, "CPU:") || !strings.Contains(rendered, "Mem:") {
+		t.Fatalf("expected process usage in footer, got:\n%s", rendered)
+	}
 }
 
 func TestLogsViewFitsWindow(t *testing.T) {
@@ -211,6 +214,28 @@ func TestGlobalVMSearchMatchesCloudManagerTags(t *testing.T) {
 	}
 	if !strings.Contains(app.vmSearchRows[0].VM.Labels, "cm:VFWEB") {
 		t.Fatalf("expected indexed VM labels to include CloudManager tag, got %q", app.vmSearchRows[0].VM.Labels)
+	}
+}
+
+func TestFindResourcesMatchesCloudManagerTagsForNonVMResources(t *testing.T) {
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
+	app := NewApp(config.AppConfig{
+		ResourceTags: []config.ResourceTag{
+			{Provider: "AWS", AccountID: "1234", ResourceKind: "Disk", ResourceID: "vol-1", Tags: []string{"VFWEB"}},
+			{Provider: "AWS", AccountID: "1234", ResourceKind: "Storage", ResourceID: "bucket-1", Tags: []string{"ARCHIVE"}},
+		},
+	}, "1.0.0", "today")
+
+	app.indexDisks(ctx, []core.Disk{{Name: "data", ID: "vol-1"}})
+	app.indexStorage(ctx, []core.StorageBucket{{Name: "logs", ID: "bucket-1"}})
+
+	diskRows := app.findRecords(findScopeDisks, "VFWEB")
+	if len(diskRows) != 1 || diskRows[0].ID != "vol-1" {
+		t.Fatalf("expected disk tag search to find vol-1, got %+v", diskRows)
+	}
+	storageRows := app.findRecords(findScopeStorage, "ARCHIVE")
+	if len(storageRows) != 1 || storageRows[0].ID != "bucket-1" {
+		t.Fatalf("expected storage tag search to find bucket-1, got %+v", storageRows)
 	}
 }
 
@@ -965,6 +990,26 @@ func TestDashboardThemeUsesHeavyRule(t *testing.T) {
 	}
 }
 
+func TestDashboardCardsDoNotOverflowSmallWidths(t *testing.T) {
+	app := NewApp(config.AppConfig{
+		VMIndexCacheTTL: 24,
+		DashboardWidgets: []string{
+			"indexed_vms",
+			"running_vms",
+			"databases",
+			"kubernetes",
+			"storage",
+		},
+	}, "1.0.0", "today")
+
+	rendered := app.renderHomePanel(44, 30)
+	for _, line := range strings.Split(rendered, "\n") {
+		if lipgloss.Width(line) > 44 {
+			t.Fatalf("expected dashboard line width <= 44, got %d for %q\n%s", lipgloss.Width(line), line, rendered)
+		}
+	}
+}
+
 func TestDashboardAndGlobalSearchHideKubernetesNodes(t *testing.T) {
 	app := NewApp(config.AppConfig{HideKubernetesNodes: true, GlobalSearch: true, VMIndexCacheTTL: 24}, "1.0.0", "today")
 	app.showKubernetesNodes = false
@@ -1384,6 +1429,54 @@ func TestImportSelectedAzureSubscriptionsPreservesFriendlyNames(t *testing.T) {
 	}
 	if updated.cfg.CurrentContext != "eng" {
 		t.Fatalf("expected current context to remain eng, got %q", updated.cfg.CurrentContext)
+	}
+}
+
+func TestDiscoveryPickerDefaultsUnselectedAndImportsOnlySelected(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := config.AppConfig{
+		Backend: "cli",
+		CloudContexts: []config.ManagedCloudContext{
+			{ContextName: "existing", Provider: "GCP", AccountID: "project-old", AccountName: "project-old", Regions: []string{"global"}},
+		},
+	}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	app := NewApp(cfg, "1.0.0", "today")
+	contexts := []core.CloudContext{
+		{Provider: "GCP", ContextName: "project-old", AccountID: "project-old", AccountName: "project-old", Region: "global"},
+		{Provider: "GCP", ContextName: "project-new", AccountID: "project-new", AccountName: "project-new", Region: "global"},
+		{Provider: "Azure", ContextName: "eng", AccountID: "sub-1", AccountName: "Engineering", Tenant: "tenant-1", Region: "global"},
+	}
+	items := buildDiscoveryContextItems(cfg, contexts)
+	if len(items) != 3 {
+		t.Fatalf("expected 3 discovered items, got %d", len(items))
+	}
+	for _, raw := range items {
+		item := raw.(discoveryContextItem)
+		if item.selected {
+			t.Fatalf("expected discovered item to default unselected, got %+v", item)
+		}
+	}
+	app.showContextDiscovery = true
+	app.discoveryList.SetItems(items)
+	for i, raw := range app.discoveryList.Items() {
+		item := raw.(discoveryContextItem)
+		if item.ctx.AccountID == "project-new" {
+			item.selected = true
+			_ = app.discoveryList.SetItem(i, item)
+		}
+	}
+
+	updated, _ := app.importSelectedDiscoveredContexts()
+
+	if len(updated.cfg.CloudContexts) != 2 {
+		t.Fatalf("expected only selected new context to import, got %+v", updated.cfg.CloudContexts)
+	}
+	if updated.cfg.CloudContexts[1].AccountID != "project-new" {
+		t.Fatalf("expected project-new import, got %+v", updated.cfg.CloudContexts[1])
 	}
 }
 

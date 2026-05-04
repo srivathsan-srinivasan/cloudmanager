@@ -78,7 +78,7 @@ func entryMatchesVM(entry SSHConfigEntry, vm core.VM) bool {
 			continue
 		}
 		for _, field := range fields {
-			if sameToken(alias, field) || containsToken(alias, field) {
+			if sameToken(alias, field) {
 				return true
 			}
 		}
@@ -123,10 +123,4 @@ func sameToken(left, right string) bool {
 	left = strings.ToLower(strings.TrimSpace(left))
 	right = strings.ToLower(strings.TrimSpace(right))
 	return left != "" && right != "" && left == right
-}
-
-func containsToken(left, right string) bool {
-	left = strings.ToLower(strings.TrimSpace(left))
-	right = strings.ToLower(strings.TrimSpace(right))
-	return left != "" && right != "" && (strings.Contains(left, right) || strings.Contains(right, left))
 }

@@ -2,6 +2,8 @@ package vms
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -194,26 +196,37 @@ func TestDescribePaneRendersBorderlessCopyableText(t *testing.T) {
 	}
 }
 
-func TestDescribeKeyEmitsCopyHintStatus(t *testing.T) {
+func TestDescribeKeyStartsProviderDescribe(t *testing.T) {
 	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
 	view := New(&cfg)
 	view.width = 100
 	view.height = 30
+	view.activeCtx = core.CloudContext{Provider: "AWS", Region: "us-east-1"}
 	view.vmData = []core.VM{{Name: "alpha", ID: "i-123", State: "running"}}
 	view.refreshTable()
 	view.syncVisibleRows()
 
 	_, cmd := view.handleTableKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	if cmd == nil {
-		t.Fatal("expected describe key to emit a status update")
+		t.Fatal("expected describe key to start provider describe")
 	}
-	msg := cmd()
-	status, ok := msg.(ui.StatusUpdateMsg)
-	if !ok {
-		t.Fatalf("expected status update, got %T", msg)
+	if !view.loading {
+		t.Fatal("expected describe key to set loading")
 	}
-	if !strings.Contains(status.Msg, "c copy") {
-		t.Fatalf("expected copy hint in status, got %q", status.Msg)
+	if !strings.Contains(view.statusMsg, "Describing alpha") {
+		t.Fatalf("expected describing status, got %q", view.statusMsg)
+	}
+}
+
+func TestProviderNativeAccessLabelAWS(t *testing.T) {
+	ssm := providerNativeAccessLabel("AWS", []string{"aws", "--no-cli-pager", "ssm", "start-session", "--target", "i-123"})
+	if ssm != "AWS SSM Session Manager" {
+		t.Fatalf("expected SSM label, got %q", ssm)
+	}
+
+	eic := providerNativeAccessLabel("AWS", []string{"aws", "--no-cli-pager", "ec2-instance-connect", "ssh", "--instance-id", "i-123"})
+	if eic != "AWS EC2 Instance Connect" {
+		t.Fatalf("expected EC2 Instance Connect label, got %q", eic)
 	}
 }
 
@@ -249,6 +262,100 @@ func TestAccessResolvedOpensPickerAndSelectsCommand(t *testing.T) {
 	}
 	if !strings.Contains(next.Render(), "Direct SSH") {
 		t.Fatalf("expected rendered access picker, got:\n%s", next.Render())
+	}
+}
+
+func TestPrivateKeyAccessUsesKeyDropdownAndUsername(t *testing.T) {
+	home := t.TempDir()
+	keyDir := filepath.Join(home, "sshkeys")
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keyDir, "prod.pem"), []byte("test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("CLOUDMANAGER_SSH_KEY_DIRS", keyDir)
+
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(120, 30, false)
+	view.activePane = paneAccess
+	view.pendingVM = core.VM{Name: "alpha", PublicIP: "203.0.113.10", PrivateIP: "10.0.0.5"}
+	view.setAccessItems([]core.AccessMethod{{
+		ID:        "private-key-ssh",
+		Kind:      "private_key_picker",
+		Label:     "Private key SSH (1 keys)",
+		Available: true,
+	}})
+
+	_, cmd := view.handleAccessKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected status command when opening key picker")
+	}
+	if view.accessMode != "keys" {
+		t.Fatalf("expected key picker mode, got %q", view.accessMode)
+	}
+	if _, ok := view.currentPrivateKeyMethod(); ok {
+		t.Fatal("expected no runnable key command before selecting a key")
+	}
+	_, _ = view.handleAccessKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if !view.keyDropdownOpen {
+		t.Fatal("expected key dropdown to open")
+	}
+	_, _ = view.handleAccessKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	if view.keyDropdownOpen {
+		t.Fatal("expected key dropdown to close after selection")
+	}
+	if filepath.Base(view.selectedSSHKey) != "prod.pem" {
+		t.Fatalf("expected prod.pem selected, got %q", view.selectedSSHKey)
+	}
+	method, ok := view.currentPrivateKeyMethod()
+	if !ok || !strings.Contains(method.CopyText, "ubuntu@203.0.113.10") {
+		t.Fatalf("expected default ubuntu public IP command, got %+v", method)
+	}
+
+	_, _ = view.handleAccessKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	if !view.editingAccessUser {
+		t.Fatal("expected username edit mode")
+	}
+	view.accessUserInput.SetValue("ec2-user")
+	_, _ = view.handleAccessKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	method, ok = view.currentPrivateKeyMethod()
+	if !ok || !strings.Contains(method.CopyText, "ec2-user@203.0.113.10") {
+		t.Fatalf("expected edited username in command, got %+v", method)
+	}
+}
+
+func TestPrivateKeyAccessRenderDoesNotBleedVMTable(t *testing.T) {
+	home := t.TempDir()
+	keyDir := filepath.Join(home, "sshkeys")
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keyDir, "prod.pem"), []byte("test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("CLOUDMANAGER_SSH_KEY_DIRS", keyDir)
+
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(120, 30, false)
+	view.activePane = paneAccess
+	view.activeCtx = core.CloudContext{Provider: "AWS", AccountName: "main", Region: "ap-south-1"}
+	view.breadcrumbs = "AWS > main > ap-south-1"
+	view.vmData = []core.VM{{Name: "alpha", ID: "i-123", Type: "t3.large", State: "running", PublicIP: "203.0.113.10", PrivateIP: "10.0.0.5"}}
+	view.syncVisibleRows()
+	view.pendingVM = view.vmData[0]
+	view.openPrivateKeyPicker()
+
+	rendered := view.Render()
+	if strings.Contains(rendered, "Instance ID") || strings.Contains(rendered, "t3.large") {
+		t.Fatalf("expected private-key form to render without VM table bleed, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Private key SSH") || !strings.Contains(rendered, "key> Select key") {
+		t.Fatalf("expected private-key form content, got:\n%s", rendered)
 	}
 }
 

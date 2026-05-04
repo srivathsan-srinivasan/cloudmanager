@@ -18,6 +18,44 @@
 2. **SDK-only for new resources** — CLI maintained only for existing VM operations
 3. **Async enrichment** — metrics and cost never block the initial table render
 4. **FinOps is the differentiator** — not resource browsing
+5. **Small core, optional components** — CloudManager core stays fast; deeper services ship as installable components
+
+## Product Thesis
+
+CloudManager is the terminal control plane for fast, auditable cloud operations.
+
+It is not a replacement for cloud consoles, SDKs, Terraform, Steampipe,
+CloudQuery, Prowler, or Kubernetes-native tools. It is the operator runtime that
+brings frequently used cloud resources into one keyboard-first workflow.
+
+CloudManager is built for:
+
+- speed
+- firefighting
+- instantaneous access
+- traceability
+- local inventory
+- provider-aware actions
+- terminal-native auditability
+
+The target users are NOC engineers, SOC engineers, Red Teamers, DevOps
+engineers, SecOps engineers, and Platform engineers who need to move across
+cloud resources faster than a browser console allows.
+
+Core must stay focused:
+
+- contexts/profiles/auth
+- inventory and index
+- dashboard
+- scoped Find Resources
+- access resolver
+- CloudManager-local tags
+- audit/event log
+- provider capability registry
+- TUI shell
+
+Everything else should be a component unless it is essential to the core
+operator workflow.
 
 ---
 
@@ -97,12 +135,165 @@ inventory, query, security, or governance platform.
 ### Local Index
 
 - Keep JSON cache for the current small/medium estate path.
-- Add SQLite + FTS when resource indexes become large enough that JSON load,
-  rewrite, or search latency becomes visible.
+- Add SQLite first for access memory, then resource inventory, then FTS.
 - Store normalized indexed rows by provider, context, resource type, resource ID,
   searchable text, tags, and last-seen timestamp.
+- Keep JSON compatibility temporarily while SQLite becomes the source of truth.
 - Keep provider refresh explicit: startup stays fast unless the user enables
   prefetch.
+
+Proposed build order:
+
+1. SQLite access memory: remember successful VM access by provider/context/user/IP/key.
+2. SQLite resource inventory tables behind the existing JSON cache interface.
+3. JSON import/fallback for existing cache files during migration.
+4. Dashboard and `find-*` reads from SQLite.
+5. SQLite FTS for fast name/IP/tag/security-group/subnet searches.
+
+### Asset Inventory And Tags
+
+- Treat CloudManager as a local asset inventory for indexed cloud resources.
+- Support CloudManager-owned tags across clouds for cross-provider labels such as
+  `VFWEB`, `prod`, `customer-a`, or `incident-watch`.
+- Keep CloudManager tags local by default so Terraform/IaC and provider metadata
+  are not mutated accidentally.
+- Add explicit provider-tag sync later:
+  - `local only`
+  - `sync to provider tags/labels`
+  - `import provider tags into CloudManager`
+- Every tag mutation must show whether it is local-only or provider-mutating.
+
+### Refresh Semantics
+
+- Live resource views refresh when opened or when the user presses refresh.
+- Index/cache refresh happens through explicit `:index-*`, `:index-all`, settings
+  actions, or configured prefetch.
+- No automatic provider event stream exists yet; a resource modified elsewhere is
+  not reflected until the relevant view/index refresh runs.
+- Future: optional background refresh and provider event ingestion, disabled by
+  default for cost and startup-speed reasons.
+
+### Access Memory And Bootstrap
+
+- Remember successful SSH access in SQLite by provider/context/resource/user/IP/key.
+- Prefer learned SSH access before generic key selection on the next run.
+- Offer explicit authorized_keys bootstrap:
+  - use selected working key once
+  - append the default public key such as `~/.ssh/id_rsa.pub`
+  - then mark the VM as default-key-ready after confirmed success
+- Cloud-native paths stay provider-aware:
+  - AWS: SSM first, private key fallback
+  - GCP: metadata/OS Login path
+  - Azure: native SSH/run-command path plus private key fallback
+  - Other/manual: generic SSH/RDP with learned local access
+
+### IAM / Show My Access
+
+- Add `Show my access` as a provider-aware view for the active context.
+- AWS: STS caller identity plus IAM policy simulation / attached role summaries
+  where available.
+- Azure: effective role assignments at subscription/resource group/resource scope.
+- GCP: IAM policy bindings, project roles, OS Login/metadata SSH hints.
+- Surface this as operator guidance, not an authorization engine:
+  “you can describe VMs”, “you cannot modify firewall rules”, “SSM missing”.
+
+### Plugin Interfaces
+
+- Add a pluggable integration interface without bloating the core binary.
+- Candidate plugin types:
+  - MCP servers for tools/agents that need CloudManager inventory and actions.
+  - A2A/agent interfaces for incident workflows and triage assistants.
+  - Local command adapters for Steampipe, CloudQuery, Cloudlist, Prowler.
+  - Read-only inventory providers and action providers.
+- Plugins must declare capabilities, permissions, and mutation risk clearly.
+
+### Component System
+
+CloudManager should support optional installable components, similar in spirit
+to `gcloud components`, but scoped to CloudManager's terminal workflow.
+
+Example UX:
+
+```text
+cloudmanager component list
+cloudmanager component install pubsub
+cloudmanager component enable pubsub
+cloudmanager component disable pubsub
+cloudmanager component update
+```
+
+Example component manifest:
+
+```yaml
+name: pubsub
+version: 0.1.0
+kind: resource-component
+providers:
+  gcp:
+    resources:
+      - pubsub_topics
+      - pubsub_subscriptions
+capabilities:
+  - list
+  - find
+  - describe
+  - dashboard
+  - actions
+commands:
+  - find-pubsub
+  - index-pubsub
+views:
+  - Pub/Sub
+```
+
+Component rules:
+
+- Components must not receive raw long-lived credentials by default.
+- Components receive active provider/context/account/region and a scoped
+  runtime credential handle when available.
+- Components must clearly declare read-only vs mutating actions.
+- Dangerous actions must use CloudManager confirmation and audit paths.
+- Components should emit normalized resources into CloudManager's inventory
+  model so dashboard, tags, and Find Resources work consistently.
+- Components should be installable locally first; signed/trusted component
+  distribution can come later.
+
+Practical build order:
+
+1. Add `components` config section.
+2. Add local component registry and manifest parser.
+3. Add component list/enable/disable UI.
+4. Add read-only component execution contract.
+5. Let component resources feed SQLite/index/search.
+6. Add dashboard widgets from component manifests.
+7. Add action execution with explicit mutation risk.
+8. Add signed/trusted component installation.
+
+Candidate first-party components:
+
+- `pubsub`: GCP Pub/Sub topics/subscriptions and equivalent queue surfaces.
+- `queues`: SQS, Pub/Sub subscriptions, Azure Service Bus queues.
+- `dns`: Route53, Cloud DNS, Azure DNS.
+- `waf`: AWS WAF, Cloud Armor, Azure WAF.
+- `secrets`: Secrets Manager, Secret Manager, Key Vault references.
+- `iam-access`: "Show my access" and effective permission summaries.
+- `lb-health`: load balancers, target groups, backend health.
+- `incident-pack`: fast triage views for common outage paths.
+
+Rule: a component adds a capability; CloudManager owns the operator experience.
+
+### Incident-Response Services
+
+- Expand beyond compute where fast operator access matters:
+  - load balancers and target health
+  - DNS records and zones
+  - NAT gateways, VPNs, routes, peering
+  - IAM users/roles/service accounts
+  - secrets/key vault references
+  - queues, functions, container services, logs
+  - object storage access and public exposure
+- Keep the UI scope-first: `find-lbs`, `find-dns`, `find-iam`,
+  `find-secrets`, not one noisy global dump.
 
 ### Pluggable Data Engines
 

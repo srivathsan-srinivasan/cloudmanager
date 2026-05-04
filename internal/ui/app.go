@@ -23,6 +23,7 @@ import (
 	"cloudmanager/internal/iac"
 	"cloudmanager/internal/logging"
 	"cloudmanager/internal/providers"
+	"cloudmanager/internal/sysusage"
 )
 
 const (
@@ -108,6 +109,11 @@ type providerLoginCompleteMsg struct {
 }
 
 type azureSubscriptionLoadMsg struct {
+	contexts []core.CloudContext
+	warnings []string
+}
+
+type contextDiscoveryLoadMsg struct {
 	contexts []core.CloudContext
 	warnings []string
 }
@@ -370,6 +376,30 @@ func (i azureSubscriptionItem) FilterValue() string {
 	return strings.Join([]string{i.ctx.ContextName, i.ctx.AccountName, i.ctx.AccountID, i.ctx.Tenant}, " ")
 }
 
+type discoveryContextItem struct {
+	ctx      core.CloudContext
+	selected bool
+	existing bool
+}
+
+func (i discoveryContextItem) Title() string {
+	marker := "[ ]"
+	if i.selected {
+		marker = "[x]"
+	}
+	existing := ""
+	if i.existing {
+		existing = "  saved"
+	}
+	return fmt.Sprintf("%s %s  %s%s", marker, i.ctx.Provider, i.ctx.DisplayName(), existing)
+}
+func (i discoveryContextItem) Description() string {
+	return fmt.Sprintf("context=%s account=%s tenant=%s region=%s auth=%s", orFallback(i.ctx.ContextName, "-"), orFallback(i.ctx.AccountID, "-"), orFallback(i.ctx.Tenant, "-"), orFallback(i.ctx.Region, "-"), orFallback(i.ctx.AuthRef(), "-"))
+}
+func (i discoveryContextItem) FilterValue() string {
+	return strings.Join([]string{i.ctx.Provider, i.ctx.ContextName, i.ctx.AccountName, i.ctx.AccountID, i.ctx.Tenant, i.ctx.Region, i.ctx.AuthRef()}, " ")
+}
+
 type providerLoginItem struct {
 	provider    string
 	title       string
@@ -404,6 +434,7 @@ type App struct {
 	credentialList list.Model
 	loginList      list.Model
 	azureSubList   list.Model
+	discoveryList  list.Model
 	findScopeList  list.Model
 	rootNodes      []*TreeNode
 	allContexts    []core.CloudContext
@@ -422,6 +453,7 @@ type App struct {
 	showCredentials         bool
 	showProviderLogin       bool
 	showAzureSubscriptions  bool
+	showContextDiscovery    bool
 	showFindPicker          bool
 	showHostForm            bool
 	editCredential          bool
@@ -511,6 +543,11 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 	azureSubList.SetShowStatusBar(false)
 	azureSubList.SetFilteringEnabled(true)
 
+	discoveryList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	discoveryList.Title = "Discovered Contexts (Space:Select Enter:Import a:All /:Filter Esc:Back)"
+	discoveryList.SetShowStatusBar(false)
+	discoveryList.SetFilteringEnabled(true)
+
 	findScopeList := list.New(buildFindScopeItems(), list.NewDefaultDelegate(), 0, 0)
 	findScopeList.Title = "Find"
 	findScopeList.SetShowStatusBar(false)
@@ -542,6 +579,7 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 		credentialList:        credentialList,
 		loginList:             loginList,
 		azureSubList:          azureSubList,
+		discoveryList:         discoveryList,
 		findScopeList:         findScopeList,
 		resourceViews:         make(map[string]registeredView),
 		activeTab:             "1",
@@ -657,6 +695,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if a.showAzureSubscriptions {
 			return a.handleAzureSubscriptionKeys(msg)
+		}
+		if a.showContextDiscovery {
+			return a.handleContextDiscoveryKeys(msg)
 		}
 		if a.showCredentials {
 			return a.handleCredentialKeys(msg)
@@ -807,6 +848,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			if !isInputActive && a.focus == focusSidebar {
 				a.showConfig = true
+				a.showContextDiscovery = false
 				a.statusMsg = "Loading GCP projects..."
 				cmds = append(cmds, fetchAllGCPProjectsCmd())
 				return a, tea.Batch(cmds...)
@@ -854,6 +896,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.credentialList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
 		a.loginList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
 		a.azureSubList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
+		a.discoveryList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
 		a.findScopeList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
 		a.resizeGlobalSearch()
 		a.resizeViews()
@@ -941,6 +984,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.subnetIndex = msg.cache.Subnets
 			a.firewallIndex = msg.cache.Firewalls
 			a.storageIndex = msg.cache.Storage
+			a.applyCloudManagerTagsToResourceIndexes()
 			a.diskSummaryIndex = msg.cache.DiskSummaries
 			a.snapshotSummaryIndex = msg.cache.SnapshotSummaries
 			a.networkSummaryIndex = msg.cache.NetworkSummaries
@@ -1026,7 +1070,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.statusMsg = fmt.Sprintf("%s login complete. Discovering contexts...", msg.provider)
 		}
-		cmds = append(cmds, fetchContextsCmd(true))
+		cmds = append(cmds, fetchDiscoveredContextsCmd())
 
 	case azureSubscriptionLoadMsg:
 		if len(msg.warnings) > 0 && len(msg.contexts) == 0 {
@@ -1034,6 +1078,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		a.showAzureSubscriptions = true
+		a.showContextDiscovery = false
 		a.showCredentials = false
 		a.showSettings = false
 		a.azureSubList.SetItems(buildAzureSubscriptionItems(a.cfg, msg.contexts))
@@ -1042,6 +1087,26 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.statusMsg = "No Azure subscriptions found. Run Azure login first."
 		} else {
 			a.statusMsg = fmt.Sprintf("Found %d Azure subscriptions. Space selects, Enter imports.", len(msg.contexts))
+		}
+
+	case contextDiscoveryLoadMsg:
+		a.showContextDiscovery = true
+		a.showCredentials = false
+		a.showSettings = false
+		a.showAzureSubscriptions = false
+		a.discoveryList.SetItems(buildDiscoveryContextItems(a.cfg, msg.contexts))
+		a.discoveryList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
+		a.parserWarnings = msg.warnings
+		if len(msg.contexts) == 0 {
+			if len(msg.warnings) > 0 {
+				a.statusMsg = fmt.Sprintf("No discoverable contexts. %s", strings.Join(msg.warnings, " | "))
+			} else {
+				a.statusMsg = "No discoverable contexts found."
+			}
+		} else if len(msg.warnings) > 0 {
+			a.statusMsg = fmt.Sprintf("Found %d contexts. Filter, Space-select, Enter imports. Warnings: %s", len(msg.contexts), strings.Join(msg.warnings, " | "))
+		} else {
+			a.statusMsg = fmt.Sprintf("Found %d contexts. Filter, Space-select, Enter imports.", len(msg.contexts))
 		}
 
 	case StatusUpdateMsg:
@@ -1152,6 +1217,9 @@ func (a App) View() string {
 	if a.showAzureSubscriptions {
 		return a.renderAzureSubscriptionView()
 	}
+	if a.showContextDiscovery {
+		return a.renderContextDiscoveryView()
+	}
 	if a.showCredentials {
 		return a.renderCredentialsView()
 	}
@@ -1211,7 +1279,7 @@ func (a App) View() string {
 
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, sidebarView, mainView)
 	mainShell := a.renderShellPane(panes, a.focus == focusMain)
-	footerText := fmt.Sprintf("\u2191\u2193 \u2022 Enter \u2022 H:Home \u2022 K:K8s nodes \u2022 g:Search \u2022 ,:Settings \u2022 Tab \u2022 Esc \u2022 L:Logs \u2022 B:Mode | Mode:%s | %s | v%s", a.backendMode(), a.statusMsg, a.Version)
+	footerText := fmt.Sprintf("\u2191\u2193 \u2022 Enter \u2022 H:Home \u2022 K:K8s nodes \u2022 g:Search \u2022 ,:Settings \u2022 Tab \u2022 Esc \u2022 L:Logs \u2022 B:Mode | Mode:%s | %s | %s | v%s", a.backendMode(), sysusage.FooterText(), a.statusMsg, a.Version)
 	footer := renderFooter(a.width, footerText)
 	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainShell, footer), a.width, a.height)
 }
@@ -1608,14 +1676,21 @@ func (a App) activateDashboardWidget() (App, tea.Cmd) {
 }
 
 func dashboardCardWidth(width int) int {
+	contentWidth := width - 4
+	if contentWidth < 12 {
+		contentWidth = 12
+	}
+	base := 21
 	switch {
 	case width >= 132:
-		return 25
+		base = 25
 	case width >= 96:
-		return 23
-	default:
-		return 21
+		base = 23
 	}
+	if base > contentWidth {
+		return contentWidth
+	}
+	return base
 }
 
 func dashboardCardsPerRow(width, cardWidth int) int {
@@ -1623,7 +1698,11 @@ func dashboardCardsPerRow(width, cardWidth int) int {
 	if contentWidth > 132 {
 		contentWidth = 132
 	}
-	perRow := contentWidth / cardWidth
+	cardOuterWidth := cardWidth + 1
+	if cardOuterWidth <= 0 {
+		cardOuterWidth = 1
+	}
+	perRow := contentWidth / cardOuterWidth
 	if perRow < 1 {
 		return 1
 	}
@@ -1993,6 +2072,12 @@ func (a App) renderFindScopeView() string {
 
 func (a App) renderAzureSubscriptionView() string {
 	mainView := a.renderShellPane(a.azureSubList.View(), true)
+	footer := renderFooter(a.width, fmt.Sprintf("Space:Select • a:All • Enter:Import selected • /:Filter • Esc:Back | %s", a.statusMsg))
+	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
+}
+
+func (a App) renderContextDiscoveryView() string {
+	mainView := a.renderShellPane(a.discoveryList.View(), true)
 	footer := renderFooter(a.width, fmt.Sprintf("Space:Select • a:All • Enter:Import selected • /:Filter • Esc:Back | %s", a.statusMsg))
 	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
 }
@@ -2473,7 +2558,7 @@ func (a App) handleCommand(query string) (App, tea.Cmd) {
 		return a, textinput.Blink
 	case "discover", "discover-contexts", "scan-contexts":
 		a.statusMsg = "Discovering cloud contexts..."
-		return a, fetchContextsCmd(true)
+		return a, fetchDiscoveredContextsCmd()
 	case "refresh-index", "reindex", "index":
 		cmds := a.startVMIndexRefresh()
 		if len(cmds) == 0 {
@@ -2649,6 +2734,7 @@ func (a App) openFind(scope findScope, query string) (App, tea.Cmd) {
 	}
 	a.showGlobalSearch = true
 	a.showFindPicker = false
+	a.showContextDiscovery = false
 	a.findScope = scope
 	if a.findScope == "" {
 		a.findScope = findScopeVMs
@@ -2672,6 +2758,7 @@ func (a *App) openHome() {
 	a.showCredentials = false
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
+	a.showContextDiscovery = false
 	a.showHostForm = false
 	a.showLogs = false
 	a.showConfig = false
@@ -2713,6 +2800,7 @@ func (a *App) openSettings() {
 	a.showSettings = true
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
+	a.showContextDiscovery = false
 	a.showHostForm = false
 	a.settingsList.SetItems(buildSettingsItems(a.cfg))
 	a.settingsList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
@@ -2726,6 +2814,7 @@ func (a *App) openFindScopePicker() {
 	a.showCredentials = false
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
+	a.showContextDiscovery = false
 	a.showHostForm = false
 	a.findScopeList.SetItems(buildFindScopeItems())
 	a.findScopeList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
@@ -2736,6 +2825,7 @@ func (a *App) openCredentials() {
 	a.showCredentials = true
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
+	a.showContextDiscovery = false
 	a.showHostForm = false
 	a.editCredential = false
 	a.confirmCredentialDelete = false
@@ -2751,6 +2841,7 @@ func (a *App) openHostForm() {
 	a.showCredentials = false
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
+	a.showContextDiscovery = false
 	a.hostInputFocus = 0
 	values := []string{"", "", "root", "ssh", "", "", ""}
 	placeholders := []string{
@@ -2781,6 +2872,7 @@ func (a *App) openProviderLogin() {
 	a.showSettings = false
 	a.showCredentials = false
 	a.showAzureSubscriptions = false
+	a.showContextDiscovery = false
 	a.loginList.SetItems(buildProviderLoginItems())
 	a.loginList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
 	a.statusMsg = "Choose provider login. The native CLI will take over until it exits."
@@ -3066,7 +3158,7 @@ func (a App) handleCredentialKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.useSelectedCredential()
 	case "r":
 		a.statusMsg = "Discovering provider contexts..."
-		return a, fetchContextsCmd(true)
+		return a, fetchDiscoveredContextsCmd()
 	case "z", "Z":
 		a.statusMsg = "Loading Azure subscriptions..."
 		return a, fetchAzureSubscriptionsCmd()
@@ -3181,6 +3273,59 @@ func (a App) handleAzureSubscriptionKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	a.azureSubList, cmd = a.azureSubList.Update(msg)
+	return a, cmd
+}
+
+func (a App) handleContextDiscoveryKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		a.showContextDiscovery = false
+		a.openCredentials()
+		a.statusMsg = "Context discovery import canceled."
+		return a, nil
+	case " ":
+		idx := a.discoveryList.Index()
+		item, ok := a.selectedDiscoveryContextItem()
+		if !ok {
+			a.statusMsg = "No discovered context selected."
+			return a, nil
+		}
+		item.selected = !item.selected
+		cmd := a.discoveryList.SetItem(idx, item)
+		return a, cmd
+	case "a", "A":
+		items := a.discoveryList.Items()
+		if len(items) == 0 {
+			a.statusMsg = "No discovered contexts to select."
+			return a, nil
+		}
+		allSelected := true
+		for _, raw := range items {
+			item, ok := raw.(discoveryContextItem)
+			if !ok || !item.selected {
+				allSelected = false
+				break
+			}
+		}
+		for i, raw := range items {
+			item, ok := raw.(discoveryContextItem)
+			if !ok {
+				continue
+			}
+			item.selected = !allSelected
+			_ = a.discoveryList.SetItem(i, item)
+		}
+		if allSelected {
+			a.statusMsg = "Cleared discovered context selection."
+		} else {
+			a.statusMsg = "Selected all discovered contexts."
+		}
+		return a, nil
+	case "enter":
+		return a.importSelectedDiscoveredContexts()
+	}
+	var cmd tea.Cmd
+	a.discoveryList, cmd = a.discoveryList.Update(msg)
 	return a, cmd
 }
 
@@ -3567,6 +3712,50 @@ func (a App) selectedAzureSubscriptionItem() (azureSubscriptionItem, bool) {
 	return item, ok
 }
 
+func (a App) selectedDiscoveryContextItem() (discoveryContextItem, bool) {
+	selected := a.discoveryList.SelectedItem()
+	if selected == nil {
+		return discoveryContextItem{}, false
+	}
+	item, ok := selected.(discoveryContextItem)
+	return item, ok
+}
+
+func (a App) importSelectedDiscoveredContexts() (App, tea.Cmd) {
+	var selected []core.CloudContext
+	for _, raw := range a.discoveryList.Items() {
+		item, ok := raw.(discoveryContextItem)
+		if !ok || !item.selected {
+			continue
+		}
+		selected = append(selected, item.ctx)
+	}
+	if len(selected) == 0 {
+		a.statusMsg = "Select one or more discovered contexts first."
+		return a, nil
+	}
+	if path, err := config.BackupConfig(); err != nil {
+		a.statusMsg = fmt.Sprintf("Backup failed; discovery import canceled: %v", err)
+		return a, nil
+	} else if path != "" {
+		a.statusMsg = fmt.Sprintf("Backed up config to %s", path)
+	}
+	added, updated := upsertDiscoveredContexts(&a.cfg, selected)
+	if strings.TrimSpace(a.cfg.CurrentContext) == "" && len(selected) > 0 {
+		first := managedContextFromCloudContext(selected[0])
+		a.cfg.CurrentContext = first.ContextName
+	}
+	if err := config.Save(a.cfg); err != nil {
+		a.statusMsg = fmt.Sprintf("Discovery import failed: %v", err)
+		return a, nil
+	}
+	a.showContextDiscovery = false
+	a.openCredentials()
+	a.credentialList.SetItems(buildCredentialItems(a.cfg))
+	a.statusMsg = fmt.Sprintf("Imported discovered contexts: %d added, %d updated.", added, updated)
+	return a, fetchContextsCmd(false)
+}
+
 func (a App) importSelectedAzureSubscriptions() (App, tea.Cmd) {
 	var selected []core.CloudContext
 	for _, raw := range a.azureSubList.Items() {
@@ -3632,6 +3821,48 @@ func upsertAzureContexts(cfg *config.AppConfig, contexts []core.CloudContext) (a
 	return added, updated
 }
 
+func upsertDiscoveredContexts(cfg *config.AppConfig, contexts []core.CloudContext) (added, updated int) {
+	for _, ctx := range contexts {
+		managed := managedContextFromCloudContext(ctx)
+		if managed.Provider == "" || (managed.AccountID == "" && managed.AccountName == "") {
+			continue
+		}
+		if idx := findManagedContextForDiscovered(cfg.CloudContexts, managed); idx >= 0 {
+			existing := config.SanitizeManagedCloudContext(cfg.CloudContexts[idx])
+			if existing.ContextName != "" {
+				managed.ContextName = existing.ContextName
+			}
+			if existing.AuthMode != "" {
+				managed.AuthMode = existing.AuthMode
+			}
+			if existing.CredentialPersistence != "" {
+				managed.CredentialPersistence = existing.CredentialPersistence
+			}
+			managed.Regions = mergeRegions(existing.Regions, managed.Regions)
+			cfg.CloudContexts[idx] = config.SanitizeManagedCloudContext(managed)
+			updated++
+			continue
+		}
+		cfg.CloudContexts = append(cfg.CloudContexts, managed)
+		added++
+	}
+	return added, updated
+}
+
+func managedContextFromCloudContext(ctx core.CloudContext) config.ManagedCloudContext {
+	return config.SanitizeManagedCloudContext(config.ManagedCloudContext{
+		ContextName:           ctx.ContextName,
+		Provider:              ctx.Provider,
+		AccountID:             ctx.AccountID,
+		AccountName:           ctx.AccountName,
+		Tenant:                ctx.Tenant,
+		AuthMode:              config.AuthModeNativeCLI,
+		CredentialPersistence: config.CredentialPersistenceNativeCLI,
+		CredentialProfile:     ctx.CredentialProfile,
+		Regions:               []string{orFallback(ctx.Region, "global")},
+	})
+}
+
 func azureManagedContextFromCloudContext(ctx core.CloudContext) config.ManagedCloudContext {
 	return config.SanitizeManagedCloudContext(config.ManagedCloudContext{
 		ContextName:           ctx.ContextName,
@@ -3654,6 +3885,39 @@ func findManagedContextByProviderAccount(contexts []config.ManagedCloudContext, 
 		}
 	}
 	return -1
+}
+
+func findManagedContextForDiscovered(contexts []config.ManagedCloudContext, target config.ManagedCloudContext) int {
+	target = config.SanitizeManagedCloudContext(target)
+	for i, ctx := range contexts {
+		ctx = config.SanitizeManagedCloudContext(ctx)
+		if !strings.EqualFold(ctx.Provider, target.Provider) {
+			continue
+		}
+		if target.AccountID != "" && strings.EqualFold(ctx.AccountID, target.AccountID) {
+			if target.ContextName == "" || ctx.ContextName == "" || strings.EqualFold(ctx.ContextName, target.ContextName) || strings.EqualFold(ctx.CredentialProfile, target.CredentialProfile) {
+				return i
+			}
+		}
+		if target.ContextName != "" && strings.EqualFold(ctx.ContextName, target.ContextName) {
+			return i
+		}
+	}
+	return -1
+}
+
+func mergeRegions(left, right []string) []string {
+	seen := map[string]bool{}
+	var merged []string
+	for _, value := range append(append([]string{}, left...), right...) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		merged = append(merged, value)
+	}
+	return merged
 }
 
 func splitCSV(value string) []string {
@@ -3708,6 +3972,48 @@ func buildAzureSubscriptionItems(cfg config.AppConfig, contexts []core.CloudCont
 		right := items[j].(azureSubscriptionItem)
 		if left.existing != right.existing {
 			return !left.existing
+		}
+		return strings.ToLower(left.ctx.DisplayName()) < strings.ToLower(right.ctx.DisplayName())
+	})
+	return items
+}
+
+func buildDiscoveryContextItems(cfg config.AppConfig, contexts []core.CloudContext) []list.Item {
+	items := make([]list.Item, 0, len(contexts))
+	seen := make(map[string]bool, len(contexts))
+	for _, ctx := range contexts {
+		managed := managedContextFromCloudContext(ctx)
+		if managed.Provider == "" {
+			continue
+		}
+		key := strings.ToLower(strings.Join([]string{
+			managed.Provider,
+			managed.ContextName,
+			managed.AccountID,
+			managed.AccountName,
+			managed.Tenant,
+			managed.CredentialProfile,
+			strings.Join(managed.Regions, ","),
+		}, "|"))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		existing := findManagedContextForDiscovered(cfg.CloudContexts, managed) >= 0
+		items = append(items, discoveryContextItem{
+			ctx:      ctx,
+			selected: false,
+			existing: existing,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left := items[i].(discoveryContextItem)
+		right := items[j].(discoveryContextItem)
+		if left.existing != right.existing {
+			return !left.existing
+		}
+		if left.ctx.Provider != right.ctx.Provider {
+			return left.ctx.Provider < right.ctx.Provider
 		}
 		return strings.ToLower(left.ctx.DisplayName()) < strings.ToLower(right.ctx.DisplayName())
 	})
@@ -3941,6 +4247,7 @@ func (a *App) indexClusters(ctx core.CloudContext, clusters []core.Cluster) {
 	if a.clusterIndex == nil {
 		a.clusterIndex = make(map[string]clusterIndexRecord)
 	}
+	clusters = config.ApplyResourceTagsToClusters(a.cfg, ctx, clusters)
 	clusters = iac.ApplyTerraformToClusters(a.cfg.TerraformStatePaths, ctx, clusters)
 	now := time.Now()
 	for _, cluster := range clusters {
@@ -3953,6 +4260,7 @@ func (a *App) indexDatabases(ctx core.CloudContext, databases []core.Database) {
 	if a.databaseIndex == nil {
 		a.databaseIndex = make(map[string]databaseIndexRecord)
 	}
+	databases = config.ApplyResourceTagsToDatabases(a.cfg, ctx, databases)
 	databases = iac.ApplyTerraformToDatabases(a.cfg.TerraformStatePaths, ctx, databases)
 	now := time.Now()
 	for _, db := range databases {
@@ -4014,6 +4322,7 @@ func (a *App) indexDisks(ctx core.CloudContext, disks []core.Disk) {
 	if a.diskIndex == nil {
 		a.diskIndex = make(map[string]diskIndexRecord)
 	}
+	disks = config.ApplyResourceTagsToDisks(a.cfg, ctx, disks)
 	now := time.Now()
 	for _, disk := range disks {
 		key := fmt.Sprintf("%s|%s", ctx.CacheKey(), orFallback(disk.ID, disk.Name))
@@ -4025,6 +4334,7 @@ func (a *App) indexSnapshots(ctx core.CloudContext, snapshots []core.Snapshot) {
 	if a.snapshotIndex == nil {
 		a.snapshotIndex = make(map[string]snapshotIndexRecord)
 	}
+	snapshots = config.ApplyResourceTagsToSnapshots(a.cfg, ctx, snapshots)
 	now := time.Now()
 	for _, snap := range snapshots {
 		key := fmt.Sprintf("%s|%s", ctx.CacheKey(), orFallback(snap.ID, snap.Name))
@@ -4036,6 +4346,7 @@ func (a *App) indexNetworks(ctx core.CloudContext, networks []core.Network) {
 	if a.networkIndex == nil {
 		a.networkIndex = make(map[string]networkIndexRecord)
 	}
+	networks = config.ApplyResourceTagsToNetworks(a.cfg, ctx, networks)
 	now := time.Now()
 	for _, network := range networks {
 		key := fmt.Sprintf("%s|%s", ctx.CacheKey(), orFallback(network.ID, network.Name))
@@ -4047,6 +4358,7 @@ func (a *App) indexSubnets(ctx core.CloudContext, subnets []core.Subnet) {
 	if a.subnetIndex == nil {
 		a.subnetIndex = make(map[string]subnetIndexRecord)
 	}
+	subnets = config.ApplyResourceTagsToSubnets(a.cfg, ctx, subnets)
 	now := time.Now()
 	for _, subnet := range subnets {
 		key := fmt.Sprintf("%s|%s", ctx.CacheKey(), orFallback(subnet.ID, subnet.Name))
@@ -4058,6 +4370,7 @@ func (a *App) indexFirewalls(ctx core.CloudContext, groups []core.SecurityGroup)
 	if a.firewallIndex == nil {
 		a.firewallIndex = make(map[string]firewallIndexRecord)
 	}
+	groups = config.ApplyResourceTagsToSecurityGroups(a.cfg, ctx, groups)
 	now := time.Now()
 	for _, group := range groups {
 		key := fmt.Sprintf("%s|%s", ctx.CacheKey(), orFallback(group.ID, group.Name))
@@ -4069,10 +4382,46 @@ func (a *App) indexStorage(ctx core.CloudContext, buckets []core.StorageBucket) 
 	if a.storageIndex == nil {
 		a.storageIndex = make(map[string]storageIndexRecord)
 	}
+	buckets = config.ApplyResourceTagsToStorageBuckets(a.cfg, ctx, buckets)
 	now := time.Now()
 	for _, bucket := range buckets {
 		key := fmt.Sprintf("%s|%s", ctx.CacheKey(), orFallback(bucket.ID, bucket.Name))
 		a.storageIndex[key] = storageIndexRecord{Bucket: bucket, Context: ctx, SeenAt: now}
+	}
+}
+
+func (a *App) applyCloudManagerTagsToResourceIndexes() {
+	for key, rec := range a.clusterIndex {
+		rec.Cluster = config.ApplyResourceTagsToClusters(a.cfg, rec.Context, []core.Cluster{rec.Cluster})[0]
+		a.clusterIndex[key] = rec
+	}
+	for key, rec := range a.databaseIndex {
+		rec.Database = config.ApplyResourceTagsToDatabases(a.cfg, rec.Context, []core.Database{rec.Database})[0]
+		a.databaseIndex[key] = rec
+	}
+	for key, rec := range a.diskIndex {
+		rec.Disk = config.ApplyResourceTagsToDisks(a.cfg, rec.Context, []core.Disk{rec.Disk})[0]
+		a.diskIndex[key] = rec
+	}
+	for key, rec := range a.snapshotIndex {
+		rec.Snapshot = config.ApplyResourceTagsToSnapshots(a.cfg, rec.Context, []core.Snapshot{rec.Snapshot})[0]
+		a.snapshotIndex[key] = rec
+	}
+	for key, rec := range a.networkIndex {
+		rec.Network = config.ApplyResourceTagsToNetworks(a.cfg, rec.Context, []core.Network{rec.Network})[0]
+		a.networkIndex[key] = rec
+	}
+	for key, rec := range a.subnetIndex {
+		rec.Subnet = config.ApplyResourceTagsToSubnets(a.cfg, rec.Context, []core.Subnet{rec.Subnet})[0]
+		a.subnetIndex[key] = rec
+	}
+	for key, rec := range a.firewallIndex {
+		rec.Group = config.ApplyResourceTagsToSecurityGroups(a.cfg, rec.Context, []core.SecurityGroup{rec.Group})[0]
+		a.firewallIndex[key] = rec
+	}
+	for key, rec := range a.storageIndex {
+		rec.Bucket = config.ApplyResourceTagsToStorageBuckets(a.cfg, rec.Context, []core.StorageBucket{rec.Bucket})[0]
+		a.storageIndex[key] = rec
 	}
 }
 
@@ -4875,6 +5224,20 @@ func fetchAzureSubscriptionsCmd() tea.Cmd {
 	}
 }
 
+func fetchDiscoveredContextsCmd() tea.Cmd {
+	return func() tea.Msg {
+		var contexts []core.CloudContext
+		var warnings []string
+		for _, registered := range providers.RegisteredProviders() {
+			providerName := registered.Metadata.DisplayName
+			ctxs, providerWarnings := providers.DiscoverContexts(providerName)
+			contexts = append(contexts, ctxs...)
+			warnings = append(warnings, providerWarnings...)
+		}
+		return contextDiscoveryLoadMsg{contexts: contexts, warnings: warnings}
+	}
+}
+
 func fetchContextsCmd(discover bool) tea.Cmd {
 	return func() tea.Msg {
 		logging.Infof("component=ui event=contexts_load_start")
@@ -4900,16 +5263,10 @@ func fetchContextsCmd(discover bool) tea.Cmd {
 		}
 
 		if discover {
-			if updatedCfg, changed := config.MergeDiscoveredContexts(cfg, discovered); changed {
-				if err := config.Save(updatedCfg); err != nil {
-					warnings = append(warnings, fmt.Sprintf("Cloud contexts discovered but failed to persist: %v", err))
-					allCtx = config.ManagedContexts(updatedCfg)
-				} else {
-					allCtx = config.ManagedContexts(updatedCfg)
-					warnings = append(warnings, fmt.Sprintf("Imported %d cloud context groups into %s", len(updatedCfg.CloudContexts), config.GetConfigPath()))
-				}
-			} else if len(allCtx) == 0 {
+			if len(allCtx) == 0 {
 				allCtx = append(allCtx, discovered...)
+			} else if len(discovered) > 0 {
+				warnings = append(warnings, "Discovered provider contexts were not imported automatically. Run :discover to choose what to onboard.")
 			}
 		}
 

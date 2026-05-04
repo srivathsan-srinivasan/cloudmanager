@@ -1,5 +1,135 @@
 # LOG
 
+## 2026-05-04
+
+### Update 4
+
+- Reframed README around CloudManager as a fast, auditable terminal control plane for cloud operations.
+- Added the product thesis: speed, firefighting, instantaneous access, traceability, provider-aware actions, and small-core extensibility.
+- Added README sections for Core vs Components and community contribution areas.
+- Added roadmap component-system direction: `cloudmanager component list/install/enable/disable/update`, component manifest shape, security rules, and practical build order.
+- Validation: documentation-only change; no tests run.
+
+### Update 3
+
+- Added a shared `internal/views/tagging` helper for CloudManager-local tag parsing and saving.
+- Added `t: Tag` overlays to Disks, Snapshots, and Storage.
+- Tag saves now write generic `resource_tags` entries with kind-specific targets and immediately refresh the local rows plus resource indexes.
+- Added regression tests for disk, snapshot, storage tagging, and shared tag input parsing.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/views/tagging ./internal/views/disks ./internal/views/snapshots ./internal/views/storage` and `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update 2
+
+- CloudManager-local tags are now modeled as reusable resource tags, scoped by provider/account/region plus `resource_kind`.
+- Existing VM tagging now uses the generic tag path; old VM tag config remains compatible.
+- Resource indexes now overlay CloudManager tags for clusters, databases, disks, snapshots, networks, subnets, security groups, storage, and VMs, so Find Resources can match tags beyond VMs.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui` and `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
+- Footer process memory now reports CloudManager RSS from the OS as `Mem:234MB` style, not Go heap allocation.
+- Footer CPU now uses recent process CPU deltas and renders as `CPU:0.3%` style.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/sysusage ./internal/ui`, `GOCACHE=/tmp/go-build-cache go test ./internal/views/vms`, and `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### User Request Handled
+
+- Start the proposed SQLite build order, add process usage visibility, and capture roadmap direction for inventory tags, IAM access visibility, plugins/agents, and incident-response services.
+
+### Key Code And UI Changes
+
+1. Added `internal/localdb` with a SQLite-backed `access_profiles` table.
+2. VM Access now looks up learned SSH profiles and shows learned SSH before generic access methods.
+3. Private-key SSH launch records the working provider/context/resource/user/IP/key tuple into SQLite.
+4. Added copyable authorized_keys bootstrap command from the private-key panel via `b`; it is explicit and does not mutate a remote host automatically.
+5. Footer now shows CloudManager process usage as `CPU:x.x% Mem:yMB`.
+6. Roadmap now covers SQLite resource inventory, CloudManager/provider tags, refresh semantics, IAM `Show my access`, plugin/MCP/A2A interfaces, and incident-response service expansion.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/localdb ./internal/sysusage ./internal/views/vms ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. SQLite currently stores access memory only; resource index tables are next in the proposed build order.
+2. The bootstrap command is copyable/manual; marking `default_key_ready` should happen after a confirmed bootstrap execution flow.
+3. Footer memory is now process RSS; it is actual resident process memory, not total machine memory percentage.
+
+## 2026-05-04 (Access Picker)
+
+### User Request Handled
+
+- Fix VM Access picker pollution where unrelated SSH config aliases such as GitHub entries appeared for AWS instances, and make private-key SSH use a dedicated key dropdown instead of dumping every key in the action list.
+- Fix private-key SSH panel layout so it no longer renders beside or over the VM table.
+
+### Key Code And UI Changes
+
+1. SSH config fallback matching now requires exact VM name, instance ID, public IP, private IP, or HostName matches; loose substring matching was removed.
+2. The top-level Access picker now shows one `Private key SSH` option when keys exist, not every key file.
+3. Selecting `Private key SSH` opens a compact form with `user> ubuntu`, selected key, selected IP mode, and command preview.
+4. Press `k` in the private-key form to open a Bubble Tea key-file dropdown; key files are no longer rendered as access actions.
+5. Press `u` to edit the SSH username, `p` to toggle public/private IP, and `Enter` to execute/copy commands like `ssh -i <key> <user>@<ip>`.
+6. Key discovery reads `~/.ssh` and `~/sshkeys` by default, plus `CLOUDMANAGER_SSH_KEY_DIRS` when set, and ignores public keys/non-identity files.
+7. AWS native access labels now render as `AWS SSM Session Manager` or `AWS EC2 Instance Connect` instead of generic `AWS native access`.
+8. Private-key SSH now renders as a centered fixed-width panel with truncated fields and command preview, preventing VM table bleed on wide terminals.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/access ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The private-key picker defaults to `ubuntu`; a later key manager can persist per-instance username/key mappings.
+
+## 2026-05-04 (Earlier)
+
+### User Request Handled
+
+- Make AWS VM describe show real EC2 detail instead of only the cached table row.
+
+### Key Code And UI Changes
+
+1. AWS `Describe` now formats detailed instance data for both CLI and SDK backends.
+2. Describe output includes identity, AMI, lifecycle, launch time / last start, uptime, SSH key pair, IAM profile, VPC/subnet IDs, VPC/subnet CIDRs, IPs/DNS, security groups, network interfaces, root device, volumes, virtualization, source/dest check, and tags.
+3. The VM `d` shortcut now calls the provider describe path, matching the action menu, instead of rendering `core.DescribeVM` from cached list data.
+4. AWS CLI describe enriches the instance with `describe-vpcs` and `describe-subnets` CIDR lookups when available.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/aws ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. AWS describe now does extra VPC/subnet API calls; failures are shown as warnings while preserving the main instance details.
+
+## 2026-05-03
+
+### User Request Handled
+
+- Smooth first-time context onboarding, avoid GCP project pollution during discovery, add fake Terraform state for ingestion testing, fix small-terminal dashboard card overlap, and make Storage table columns use available terminal width.
+
+### Key Code And UI Changes
+
+1. `:discover` and Profiles / Contexts `r` now open a selectable discovered-context import list instead of auto-importing everything.
+2. Discovered contexts default to unchecked; users explicitly select with `Space`, can toggle all with `a`, filter with `/`, and import with `Enter`.
+3. Startup discovery no longer persists discovered contexts automatically; it only displays discovered contexts when no managed contexts exist.
+4. Added `examples/terraform/fake-cloudmanager.tfstate` with fake AWS, GCP, and Azure resources matching the current Terraform ingestion matcher.
+5. Tightened dashboard card width and row calculation so cards wrap cleanly on narrow terminals.
+6. Storage tables now use resource-table expanded visible column widths and storage-specific minimum widths, so wider terminals show full values such as `Cloud Storage bucket`.
+7. Updated README with selective discovery and fake tfstate usage.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/iac`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/storage ./internal/ui`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. The discovery picker still lists all visible projects/subscriptions; it avoids persistence pollution, but provider/project filters could make very large lists faster to triage.
+
 ## 2026-05-02 (Update 12)
 
 ### User Request Handled

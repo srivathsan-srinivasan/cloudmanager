@@ -139,16 +139,121 @@ func directSSHMethods(req Request) []core.AccessMethod {
 	if target == "" {
 		return nil
 	}
+	var methods []core.AccessMethod
+	keyCount := len(discoverSSHKeyFiles())
+	if keyCount > 0 {
+		methods = append(methods, core.AccessMethod{
+			ID:        "private-key-ssh",
+			Kind:      "private_key_picker",
+			Label:     fmt.Sprintf("Private key SSH (%d keys)", keyCount),
+			Priority:  35,
+			CopyText:  "Choose key, username, and public/private IP.",
+			Available: true,
+		})
+	}
 	args := []string{"ssh", target}
-	return []core.AccessMethod{{
+	methods = append(methods, core.AccessMethod{
 		ID:        "direct-ssh",
 		Kind:      "ssh",
 		Label:     "Direct SSH with default identity",
-		Priority:  40,
+		Priority:  60,
 		Command:   args,
 		CopyText:  FormatCommand(args),
 		Available: true,
-	}}
+	})
+	return methods
+}
+
+func PrivateKeySSHMethods(vm core.VM, username string) []core.AccessMethod {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		username = "ubuntu"
+	}
+	targets := sshTargets(vm, username)
+	if len(targets) == 0 {
+		return nil
+	}
+	var methods []core.AccessMethod
+	for _, keyPath := range discoverSSHKeyFiles() {
+		for _, target := range targets {
+			args := []string{"ssh", "-i", keyPath, target.target}
+			methods = append(methods, core.AccessMethod{
+				ID:        "direct-ssh-key-" + filepath.Base(keyPath) + "-" + target.kind,
+				Kind:      "ssh",
+				Label:     fmt.Sprintf("%s via %s IP", filepath.Base(keyPath), target.kind),
+				Priority:  35,
+				Command:   args,
+				CopyText:  FormatCommand(args),
+				Available: true,
+			})
+		}
+	}
+	return methods
+}
+
+func SSHKeyFiles() []string {
+	return discoverSSHKeyFiles()
+}
+
+func PrivateKeySSHMethod(vm core.VM, username, keyPath, ipKind string) (core.AccessMethod, bool) {
+	keyPath = strings.TrimSpace(keyPath)
+	if keyPath == "" {
+		return core.AccessMethod{}, false
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		username = "ubuntu"
+	}
+	var ip string
+	switch strings.ToLower(strings.TrimSpace(ipKind)) {
+	case "private":
+		ip = strings.TrimSpace(vm.PrivateIP)
+	default:
+		ip = strings.TrimSpace(vm.PublicIP)
+		ipKind = "public"
+	}
+	if ip == "" || ip == "-" {
+		return core.AccessMethod{}, false
+	}
+	target := ip
+	if username != "" {
+		target = username + "@" + ip
+	}
+	args := []string{"ssh", "-i", keyPath, target}
+	return core.AccessMethod{
+		ID:        "direct-ssh-key-" + filepath.Base(keyPath) + "-" + ipKind,
+		Kind:      "ssh",
+		Label:     fmt.Sprintf("%s via %s IP", filepath.Base(keyPath), ipKind),
+		Priority:  35,
+		Command:   args,
+		CopyText:  FormatCommand(args),
+		Available: true,
+	}, true
+}
+
+type sshTarget struct {
+	kind   string
+	target string
+}
+
+func sshTargets(vm core.VM, username string) []sshTarget {
+	var targets []sshTarget
+	seen := map[string]bool{}
+	add := func(kind, ip string) {
+		ip = strings.TrimSpace(ip)
+		if ip == "" || ip == "-" || seen[ip] {
+			return
+		}
+		seen[ip] = true
+		target := ip
+		if username != "" {
+			target = username + "@" + ip
+		}
+		targets = append(targets, sshTarget{kind: kind, target: target})
+	}
+	add("public", vm.PublicIP)
+	add("private", vm.PrivateIP)
+	return targets
 }
 
 func remediationMethod(req Request) core.AccessMethod {
@@ -203,6 +308,58 @@ func defaultSSHConfigPath() string {
 		return expandPath(path)
 	}
 	return expandPath("~/.ssh/config")
+}
+
+func discoverSSHKeyFiles() []string {
+	var dirs []string
+	if configured := strings.TrimSpace(os.Getenv("CLOUDMANAGER_SSH_KEY_DIRS")); configured != "" {
+		dirs = filepath.SplitList(configured)
+	} else {
+		dirs = []string{"~/.ssh", "~/sshkeys"}
+	}
+
+	seen := map[string]bool{}
+	var keys []string
+	for _, dir := range dirs {
+		dir = expandPath(dir)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if !looksLikePrivateKey(name) {
+				continue
+			}
+			path := filepath.Join(dir, name)
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
+			keys = append(keys, path)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func looksLikePrivateKey(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" || strings.HasSuffix(lower, ".pub") {
+		return false
+	}
+	switch lower {
+	case "config", "known_hosts", "known_hosts.old", "authorized_keys":
+		return false
+	}
+	return lower == "id_rsa" ||
+		lower == "id_ecdsa" ||
+		lower == "id_ed25519" ||
+		strings.HasSuffix(lower, ".pem") ||
+		strings.HasSuffix(lower, ".key")
 }
 
 func expandPath(path string) string {

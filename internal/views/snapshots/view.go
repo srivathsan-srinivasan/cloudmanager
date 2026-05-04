@@ -18,6 +18,7 @@ import (
 	applog "cloudmanager/internal/logging"
 	"cloudmanager/internal/providers"
 	"cloudmanager/internal/ui"
+	"cloudmanager/internal/views/tagging"
 )
 
 const (
@@ -28,6 +29,7 @@ const (
 	paneSortConfig
 	paneConfirm
 	paneCreateDisk
+	paneTag
 )
 
 // --- Bubble Tea messages ---
@@ -94,6 +96,7 @@ type SnapshotsView struct {
 	descView         viewport.Model
 	searchInput      textinput.Model
 	createDiskInput  textinput.Model
+	tagInput         textinput.Model
 	activePane       int
 
 	snapData     []core.Snapshot
@@ -178,12 +181,18 @@ func New(cfg *config.AppConfig) *SnapshotsView {
 	createDiskInput.CharLimit = 64
 	createDiskInput.Width = 30
 
+	tagInput := textinput.New()
+	tagInput.Placeholder = "comma separated tags..."
+	tagInput.Prompt = "tags> "
+	tagInput.CharLimit = 160
+	tagInput.Width = 42
+
 	snapTable, tableCols, _, canScrollLeft, canScrollRight := createSnapTable(*cfg, 80, 0)
 
 	return &SnapshotsView{
 		snaps: snapTable, actions: actionList,
 		columnConfigList: colList, sortList: sortList,
-		descView: vp, searchInput: searchInput, createDiskInput: createDiskInput,
+		descView: vp, searchInput: searchInput, createDiskInput: createDiskInput, tagInput: tagInput,
 		activePane: paneTable, tableCols: tableCols,
 		cfg: cfg, snapCache: make(map[string]cacheEntry),
 		sortColumn: "Name", sortAsc: true,
@@ -195,11 +204,11 @@ func New(cfg *config.AppConfig) *SnapshotsView {
 func (v *SnapshotsView) Title() string { return "Snapshots" }
 
 func (v *SnapshotsView) ShortHelp() string {
-	return "\u2191\u2193: Navigate \u2022 \u2190\u2192: Pan \u2022 Enter: Actions \u2022 /: Search \u2022 S: Sort \u2022 C: Columns \u2022 r: Refresh"
+	return "\u2191\u2193: Navigate \u2022 \u2190\u2192: Pan \u2022 t: Tag \u2022 Enter: Actions \u2022 /: Search \u2022 S: Sort \u2022 C: Columns \u2022 r: Refresh"
 }
 
 func (v *SnapshotsView) IsInputActive() bool {
-	return v.isSearching || v.activePane == paneCreateDisk || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
+	return v.isSearching || v.activePane == paneCreateDisk || v.activePane == paneTag || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
 }
 
 func (v *SnapshotsView) SetSearchQuery(query string) {
@@ -266,8 +275,9 @@ func (v *SnapshotsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		}
 		if msg.String() == "esc" {
 			switch v.activePane {
-			case paneActions, paneDescribe, paneColumnConfig, paneSortConfig, paneCreateDisk:
+			case paneActions, paneDescribe, paneColumnConfig, paneSortConfig, paneCreateDisk, paneTag:
 				v.activePane = paneTable
+				v.tagInput.Blur()
 				return v, nil
 			case paneConfirm:
 				v.activePane = paneActions
@@ -289,6 +299,8 @@ func (v *SnapshotsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			_, cmd = v.handleTableKeys(msg)
 		case paneCreateDisk:
 			_, cmd = v.handleCreateDiskKeys(msg)
+		case paneTag:
+			_, cmd = v.handleTagKeys(msg)
 		}
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -309,7 +321,7 @@ func (v *SnapshotsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			if !msg.fromCache {
 				v.snapCache[v.activeCtx.CacheKey()] = cacheEntry{snaps: msg.snaps, timestamp: time.Now()}
 			}
-			v.snapData = msg.snaps
+			v.snapData = config.ApplyResourceTagsToSnapshots(*v.cfg, v.activeCtx, msg.snaps)
 			applog.Infof("component=snapshots event=fetch_completed provider=%s account=%s region=%s mode=%s count=%d", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), len(msg.snaps))
 			sortSnaps(v.snapData, v.sortColumn, v.sortAsc)
 			v.syncVisibleRows()
@@ -357,6 +369,9 @@ func (v *SnapshotsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	case paneCreateDisk:
 		v.createDiskInput, cmd = v.createDiskInput.Update(msg)
+		cmds = append(cmds, cmd)
+	case paneTag:
+		v.tagInput, cmd = v.tagInput.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 
@@ -416,6 +431,20 @@ func (v *SnapshotsView) Render() string {
 		overlay := createStyle.Render(createView)
 		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
 			lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
+	case paneTag:
+		tagStyle := ui.OverlayStyle.Copy().Padding(1, 2).Width(60)
+		tagView := lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.NewStyle().Bold(true).Render("CloudManager Tags"),
+			"",
+			lipgloss.NewStyle().Render(fmt.Sprintf("Add local tags to %s:", v.pendingSnap.Name)),
+			"",
+			v.tagInput.View(),
+			"",
+			lipgloss.NewStyle().Foreground(ui.Subtle).Render("Enter: Save • Esc: Cancel"),
+		)
+		overlay := tagStyle.Render(tagView)
+		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
+			lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
 	}
 
 	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", tableContent), v.width, v.height)
@@ -424,11 +453,23 @@ func (v *SnapshotsView) Render() string {
 // --- Key handlers ---
 
 func (v *SnapshotsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	snap, ok := v.selectedSnapshot()
 	switch msg.String() {
 	case "enter":
-		if v.snaps.SelectedRow() != nil {
-			v.activePane = paneActions
+		if !ok {
+			return v, nil
 		}
+		v.activePane = paneActions
+	case "t":
+		if !ok {
+			return v, nil
+		}
+		v.pendingSnap = snap
+		v.tagInput.SetValue("")
+		v.tagInput.Focus()
+		v.activePane = paneTag
+		v.statusMsg = fmt.Sprintf("Tag %s with CloudManager-only tags.", snap.Name)
+		return v, textinput.Blink
 	case "/":
 		v.isSearching = true
 		v.searchInput.Focus()
@@ -453,6 +494,34 @@ func (v *SnapshotsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.activePane = paneSortConfig
 	case "C":
 		v.activePane = paneColumnConfig
+	}
+	return v, nil
+}
+
+func (v *SnapshotsView) handleTagKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		v.tagInput.Blur()
+		v.activePane = paneTable
+		v.statusMsg = "Tag canceled."
+		return v, nil
+	case "enter":
+		tags := tagging.SplitInput(v.tagInput.Value())
+		if err := tagging.Save(v.cfg, v.activeCtx, v.pendingSnap, tags); err != nil {
+			v.statusMsg = fmt.Sprintf("Tag save failed: %v", err)
+			return v, nil
+		}
+		v.snapData = config.ApplyResourceTagsToSnapshots(*v.cfg, v.activeCtx, v.snapData)
+		sortSnaps(v.snapData, v.sortColumn, v.sortAsc)
+		v.syncVisibleRows()
+		v.tagInput.Blur()
+		v.activePane = paneTable
+		v.statusMsg = fmt.Sprintf("Tagged %s with %s.", v.pendingSnap.Name, strings.Join(tags, ","))
+		indexCtx := v.activeCtx
+		indexSnaps := v.snapData
+		return v, func() tea.Msg {
+			return ui.ResourceSummaryUpdateMsg{Ctx: indexCtx, Resource: "snapshots", Count: len(indexSnaps), Snapshots: indexSnaps}
+		}
 	}
 	return v, nil
 }

@@ -325,3 +325,25 @@ func TestUpsertVMResourceTagsMergesForSameResource(t *testing.T) {
 		}
 	}
 }
+
+func TestResourceTagsAreKindScopedAndReusable(t *testing.T) {
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
+	cfg := AppConfig{}
+	cfg = UpsertResourceTags(cfg, ctx, ResourceTagTarget{Kind: "disk", ID: "shared-id", Name: "data"}, []string{"VFWEB"})
+	cfg = UpsertResourceTags(cfg, ctx, ResourceTagTarget{Kind: "storage", ID: "bucket-1", Name: "logs"}, []string{"archive"})
+
+	vm := ApplyResourceTagsToVM(cfg, ctx, core.VM{Name: "web", ID: "shared-id", Labels: "env=prod"})
+	if vm.Labels != "env=prod" {
+		t.Fatalf("disk tag should not apply to VM with same ID, got %q", vm.Labels)
+	}
+
+	disks := ApplyResourceTagsToDisks(cfg, ctx, []core.Disk{{Name: "data", ID: "shared-id", Labels: "tier=ssd"}})
+	if len(disks) != 1 || disks[0].Labels != "tier=ssd,cm:VFWEB" {
+		t.Fatalf("expected disk CloudManager tag overlay, got %+v", disks)
+	}
+
+	buckets := ApplyResourceTagsToStorageBuckets(cfg, ctx, []core.StorageBucket{{Name: "logs", ID: "bucket-1"}})
+	if len(buckets) != 1 || buckets[0].Labels != "cm:archive" {
+		t.Fatalf("expected storage CloudManager tag overlay, got %+v", buckets)
+	}
+}
