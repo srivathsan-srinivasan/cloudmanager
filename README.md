@@ -88,11 +88,33 @@ terminal workflow, active context, audit path, and provider-aware guardrails.
 Ensure you have [Go](https://golang.org/doc/install) (1.20+) installed.
 
 ```bash
+go install github.com/srivathsan-srinivasan/cloudmanager@release/v1.0.0
+```
+
+`go get` is no longer the right way to install Go binaries on modern Go. Use
+`go install ...@version`. After the next tagged release, this becomes:
+
+```bash
+go install github.com/srivathsan-srinivasan/cloudmanager@latest
+```
+
+From source:
+
+```bash
 git clone https://github.com/srivathsan-srinivasan/cloudmanager.git
 cd cloudmanager
-go build -o cloudmanager
-sudo mv cloudmanager /usr/local/bin/
+go build -o cloudmanager .
 ```
+
+Homebrew tap:
+
+```bash
+brew tap srivathsan-srinivasan/cloudmanager https://github.com/srivathsan-srinivasan/cloudmanager
+brew install cloudmanager
+```
+
+Until the first immutable Homebrew release formula is cut, the tap formula tracks
+the `release/v1.0.0` branch.
 
 ### Prerequisites
 CloudManager wraps the native CLI tools for the respective cloud providers. Ensure you have the following installed and authenticated if you intend to manage resources in those clouds:
@@ -133,8 +155,8 @@ Azure import opens a subscription picker. New subscriptions are selected by defa
 ```bash
 cloudmanager profile add eng \
   --provider azure \
-  --tenant firecompass.com \
-  --subscription-id 34e5c3ad-42a8-420f-9999-474a02d91149 \
+  --tenant example.com \
+  --subscription-id 00000000-0000-0000-0000-000000000000 \
   --subscription-name "Azure Sponsorship - Engineering"
 
 cloudmanager profile list
@@ -188,7 +210,7 @@ Upon first run, a default configuration file will be created at `~/.cloudmanager
     {
       "context_name": "prod-admin",
       "provider": "AWS",
-      "account_id": "123456789012",
+      "account_id": "000000000000",
       "account_name": "prod",
       "auth_mode": "native-cli",
       "credential_persistence": "native-cli",
@@ -198,9 +220,9 @@ Upon first run, a default configuration file will be created at `~/.cloudmanager
     {
       "context_name": "eng",
       "provider": "Azure",
-      "account_id": "34e5c3ad-42a8-420f-9999-474a02d91149",
+      "account_id": "00000000-0000-0000-0000-000000000000",
       "account_name": "Azure Sponsorship - Engineering",
-      "tenant": "firecompass.com",
+      "tenant": "example.com",
       "auth_mode": "native-cli",
       "credential_persistence": "native-cli",
       "regions": ["global"]

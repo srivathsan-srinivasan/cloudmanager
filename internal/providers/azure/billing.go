@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/costmanagement/armcostmanagement"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/costmanagement/armcostmanagement"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 // FetchAccountCostSDK fetches Azure cost management data.
@@ -26,7 +26,7 @@ func FetchAccountCostSDK(ctx context.Context, subscriptionID string) (*core.Acco
 	scope := fmt.Sprintf("/subscriptions/%s", subscriptionID)
 
 	res, err := client.Usage(ctx, scope, armcostmanagement.QueryDefinition{
-		Type: to.Ptr(armcostmanagement.ExportTypeActualCost),
+		Type:      to.Ptr(armcostmanagement.ExportTypeActualCost),
 		Timeframe: to.Ptr(armcostmanagement.TimeframeTypeMonthToDate),
 		Dataset: &armcostmanagement.QueryDataset{
 			Granularity: to.Ptr(armcostmanagement.GranularityTypeDaily),
@@ -67,11 +67,11 @@ func FetchAccountCostSDK(ctx context.Context, subscriptionID string) (*core.Acco
 	}
 
 	return &core.AccountCost{
-		Provider:          "Azure",
-		AccountID:         subscriptionID,
-		CurrentMonthCost:  currentCost,
-		TopServices:       services,
-		LastUpdated:       time.Now(),
+		Provider:         "Azure",
+		AccountID:        subscriptionID,
+		CurrentMonthCost: currentCost,
+		TopServices:      services,
+		LastUpdated:      time.Now(),
 	}, nil
 }
 
@@ -88,17 +88,17 @@ func FetchVMCostSDK(ctx context.Context, subscriptionID, vmResourceID string) (*
 	}
 
 	scope := fmt.Sprintf("/subscriptions/%s", subscriptionID)
-	
+
 	res, err := client.Usage(ctx, scope, armcostmanagement.QueryDefinition{
-		Type: to.Ptr(armcostmanagement.ExportTypeActualCost),
+		Type:      to.Ptr(armcostmanagement.ExportTypeActualCost),
 		Timeframe: to.Ptr(armcostmanagement.TimeframeTypeMonthToDate),
 		Dataset: &armcostmanagement.QueryDataset{
 			Granularity: to.Ptr(armcostmanagement.GranularityTypeDaily),
 			Filter: &armcostmanagement.QueryFilter{
 				Dimensions: &armcostmanagement.QueryComparisonExpression{
-					Name: to.Ptr("ResourceId"),
+					Name:     to.Ptr("ResourceId"),
 					Operator: to.Ptr(armcostmanagement.QueryOperatorTypeIn),
-					Values: []*string{to.Ptr(vmResourceID)},
+					Values:   []*string{to.Ptr(vmResourceID)},
 				},
 			},
 		},
@@ -126,10 +126,10 @@ func FetchVMCostSDK(ctx context.Context, subscriptionID, vmResourceID string) (*
 	}
 
 	return &core.ResourceCost{
-		ResourceID:        vmResourceID,
-		Provider:          "Azure",
-		CurrentMonthCost:  currentCost,
-		Currency:          "USD",
-		LastUpdated:       time.Now(),
+		ResourceID:       vmResourceID,
+		Provider:         "Azure",
+		CurrentMonthCost: currentCost,
+		Currency:         "USD",
+		LastUpdated:      time.Now(),
 	}, nil
 }

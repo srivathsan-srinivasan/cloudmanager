@@ -2,7 +2,9 @@ package digitalocean
 
 import (
 	"context"
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
-func FetchDatabasesCLI(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) { return nil, nil }
+func FetchDatabasesCLI(ctx context.Context, cloudCtx core.CloudContext) ([]core.Database, error) {
+	return nil, nil
+}

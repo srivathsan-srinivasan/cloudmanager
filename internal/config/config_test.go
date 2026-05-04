@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func TestManagedContextsExpandsRegions(t *testing.T) {
@@ -165,7 +165,7 @@ func TestResolveManagedContextAndCurrentContext(t *testing.T) {
 	cfg := AppConfig{
 		CurrentContext: "eng",
 		CloudContexts: []ManagedCloudContext{
-			{ContextName: "eng", Provider: "Azure", AccountID: "sub-1", AccountName: "Engineering", Tenant: "firecompass.com", Regions: []string{"global"}},
+			{ContextName: "eng", Provider: "Azure", AccountID: "sub-1", AccountName: "Engineering", Tenant: "example.com", Regions: []string{"global"}},
 		},
 	}
 
@@ -173,7 +173,7 @@ func TestResolveManagedContextAndCurrentContext(t *testing.T) {
 	if !ok || idx != 0 {
 		t.Fatalf("expected to resolve eng managed context, ok=%t idx=%d", ok, idx)
 	}
-	if managed.Tenant != "firecompass.com" {
+	if managed.Tenant != "example.com" {
 		t.Fatalf("expected tenant on managed context, got %+v", managed)
 	}
 	current, ok := CurrentCloudContext(cfg)

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 type Request struct {

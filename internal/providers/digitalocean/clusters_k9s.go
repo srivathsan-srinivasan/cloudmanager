@@ -1,9 +1,9 @@
 package digitalocean
 
 import (
-	"cloudmanager/internal/core"
 	"context"
 	"fmt"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 	"os/exec"
 )
 

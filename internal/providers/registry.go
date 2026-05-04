@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"cloudmanager/internal/core"
-	"cloudmanager/internal/providers/aws"
-	"cloudmanager/internal/providers/azure"
-	"cloudmanager/internal/providers/digitalocean"
-	"cloudmanager/internal/providers/gcp"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers/aws"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers/azure"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers/digitalocean"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers/gcp"
 )
 
 type Capability string

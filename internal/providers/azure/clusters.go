@@ -7,7 +7,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func FetchClustersCLI(subscription string) ([]core.Cluster, error) {

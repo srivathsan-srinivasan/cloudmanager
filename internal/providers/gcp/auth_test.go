@@ -17,13 +17,13 @@ func TestGCPAccessTokenFromCLITrimsOutput(t *testing.T) {
 
 	t.Setenv("GO_WANT_GCLOUD_HELPER_PROCESS", "0")
 	t.Setenv("GCLOUD_HELPER_MODE", "token")
-	t.Setenv("GCLOUD_HELPER_STDOUT", "ya29.test-token\n")
+	t.Setenv("GCLOUD_HELPER_STDOUT", "fake-access-token\n")
 
 	token, err := gcpAccessTokenFromCLI(context.Background())
 	if err != nil {
 		t.Fatalf("expected token fallback to succeed, got error: %v", err)
 	}
-	if token != "ya29.test-token" {
+	if token != "fake-access-token" {
 		t.Fatalf("expected trimmed token, got %q", token)
 	}
 }

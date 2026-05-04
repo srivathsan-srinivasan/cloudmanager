@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func TestParseSSHConfigAndMatchVM(t *testing.T) {

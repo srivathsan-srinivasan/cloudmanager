@@ -14,7 +14,7 @@ type Recommendation struct {
 	Detail            string
 	EstimatedSavings  float64 // Monthly USD
 	CurrentConfig     string  // e.g., "t3.large"
-	RecommendedConfig string // e.g., "t3.micro"
+	RecommendedConfig string  // e.g., "t3.micro"
 	Source            string  // "AWS Compute Optimizer", "GCP Recommender", "Azure Advisor"
 	LastUpdated       time.Time
 }

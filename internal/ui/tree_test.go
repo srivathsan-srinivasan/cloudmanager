@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func TestBuildContextTree(t *testing.T) {

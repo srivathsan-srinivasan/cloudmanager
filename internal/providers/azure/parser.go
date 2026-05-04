@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 // LoadContexts lists Azure subscriptions using the az CLI.

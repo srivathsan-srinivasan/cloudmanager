@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 type awsBucketList struct {

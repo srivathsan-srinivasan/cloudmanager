@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 // FetchNetworksSDK fetches VPCs from GCP.

@@ -3,8 +3,8 @@ package hosts
 import (
 	"strings"
 
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func FromConfig(cfg config.AppConfig) []core.ManualHost {

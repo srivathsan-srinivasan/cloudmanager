@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/recommender/apiv1/recommenderpb"
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/iterator"
 )

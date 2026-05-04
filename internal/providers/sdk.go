@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"time"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 // SDKProvider uses native Go SDKs for cloud operations.

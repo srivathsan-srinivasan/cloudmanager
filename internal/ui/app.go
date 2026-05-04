@@ -17,13 +17,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
-	hostinventory "cloudmanager/internal/hosts"
-	"cloudmanager/internal/iac"
-	"cloudmanager/internal/logging"
-	"cloudmanager/internal/providers"
-	"cloudmanager/internal/sysusage"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	hostinventory "github.com/srivathsan-srinivasan/cloudmanager/internal/hosts"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/iac"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/sysusage"
 )
 
 const (

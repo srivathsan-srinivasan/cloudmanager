@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func SplitInput(value string) []string {

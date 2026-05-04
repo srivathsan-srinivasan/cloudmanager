@@ -58,7 +58,7 @@ func TestDisk_GetField(t *testing.T) {
 
 func TestDisk_Interfaces(t *testing.T) {
 	d := Disk{Name: "test", ID: "123"}
-	
+
 	if d.GetID() != "123" {
 		t.Errorf("Expected GetID() to return '123', got '%s'", d.GetID())
 	}

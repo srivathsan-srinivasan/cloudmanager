@@ -52,7 +52,7 @@ func TestSnapshot_GetField(t *testing.T) {
 
 func TestSnapshot_Interfaces(t *testing.T) {
 	s := Snapshot{Name: "test", ID: "123"}
-	
+
 	if s.GetID() != "123" {
 		t.Errorf("Expected GetID() to return '123', got '%s'", s.GetID())
 	}

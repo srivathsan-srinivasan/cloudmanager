@@ -10,11 +10,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"cloudmanager/internal/access"
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
-	hostinventory "cloudmanager/internal/hosts"
-	"cloudmanager/internal/ui"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/access"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	hostinventory "github.com/srivathsan-srinivasan/cloudmanager/internal/hosts"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
 )
 
 type sshCompleteMsg struct{ err error }

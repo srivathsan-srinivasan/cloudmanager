@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func TestStorageTableUsesResponsiveVisibleColumns(t *testing.T) {

@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
-	"cloudmanager/internal/providers"
-	"cloudmanager/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
 )
 
 func TestSelectedVMUsesVisibleRows(t *testing.T) {

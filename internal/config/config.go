@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"cloudmanager/internal/core"
 	"github.com/spf13/viper"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 // ThemeConfig defines color overrides for the TUI.

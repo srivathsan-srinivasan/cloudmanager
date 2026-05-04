@@ -8,7 +8,7 @@ import (
 type Subnet struct {
 	Name, ID, State, CIDRBlock string
 	AvailabilityZone           string
-	NetworkID, NetworkName      string
+	NetworkID, NetworkName     string
 	AvailableIPs               int
 	MapPublicIPOnLaunch        bool
 	Provider, Region           string

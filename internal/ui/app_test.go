@@ -10,9 +10,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
-	"cloudmanager/internal/providers"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
 )
 
 type mockView struct {
@@ -1331,11 +1331,11 @@ func TestCredentialDeleteRequiresConfirmation(t *testing.T) {
 }
 
 func TestManagedContextLoginCommandUsesSelectedProfile(t *testing.T) {
-	azure, err := managedContextLoginCommand(config.ManagedCloudContext{Provider: "Azure", Tenant: "firecompass.com"})
+	azure, err := managedContextLoginCommand(config.ManagedCloudContext{Provider: "Azure", Tenant: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(azure, " "); got != "az login --use-device-code --tenant firecompass.com" {
+	if got := strings.Join(azure, " "); got != "az login --use-device-code --tenant example.com" {
 		t.Fatalf("unexpected Azure login command: %q", got)
 	}
 

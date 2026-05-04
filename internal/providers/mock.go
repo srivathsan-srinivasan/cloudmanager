@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"time"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 // MockProvider is a test implementation of all provider interfaces.

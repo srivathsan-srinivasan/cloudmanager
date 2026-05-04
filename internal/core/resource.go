@@ -5,7 +5,7 @@ package core
 type Resource interface {
 	GetID() string
 	GetName() string
-	GetKind() string       // e.g. "VM", "Network", "Disk"
+	GetKind() string // e.g. "VM", "Network", "Disk"
 	GetField(col string) string
 }
 

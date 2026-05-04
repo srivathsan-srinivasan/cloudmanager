@@ -11,8 +11,8 @@ import (
 
 	"google.golang.org/api/compute/v1"
 
-	"cloudmanager/internal/core"
-	"cloudmanager/internal/logging"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
 )
 
 type gcpDiskCLI struct {

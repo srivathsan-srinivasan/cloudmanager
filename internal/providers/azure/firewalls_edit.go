@@ -9,8 +9,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v6"
 
-	"cloudmanager/internal/core"
-	applog "cloudmanager/internal/logging"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
 )
 
 func ExecuteFirewallActionSDK(ctx context.Context, action string, rule core.FirewallRule, cloudCtx core.CloudContext) (string, error) {
@@ -20,7 +20,7 @@ func ExecuteFirewallActionSDK(ctx context.Context, action string, rule core.Fire
 		parts := strings.Split(rule.ID, "/")
 		ruleName = parts[len(parts)-1]
 	}
-	
+
 	sgID := rule.ResourceID
 	if sgID == "" || ruleName == "" {
 		return "", fmt.Errorf("missing Security Group ID or Rule Name")
@@ -55,13 +55,13 @@ func ExecuteFirewallActionSDK(ctx context.Context, action string, rule core.Fire
 				Priority: to.Ptr(int32(1000)),
 			},
 		}
-		
+
 		if rule.Direction == "Inbound" {
 			ruleObj.Properties.Direction = to.Ptr(armnetwork.SecurityRuleDirectionInbound)
 		} else {
 			ruleObj.Properties.Direction = to.Ptr(armnetwork.SecurityRuleDirectionOutbound)
 		}
-		
+
 		proto := strings.ToLower(rule.Protocol)
 		if proto == "tcp" {
 			ruleObj.Properties.Protocol = to.Ptr(armnetwork.SecurityRuleProtocolTCP)

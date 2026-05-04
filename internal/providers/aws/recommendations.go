@@ -9,7 +9,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/computeoptimizer"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 // FetchRecommendationsSDK fetches EC2 instance recommendations from AWS Compute Optimizer.
@@ -46,7 +46,7 @@ func FetchRecommendationsSDK(ctx context.Context, profile, region string) ([]cor
 
 		instanceID := instanceIDFromARN(awssdk.ToString(rec.InstanceArn))
 		currentType := awssdk.ToString(rec.CurrentInstanceType)
-		
+
 		recommendedConfig := "-"
 		estimatedSavings := 0.0
 		summary := fmt.Sprintf("%s: current %s", finding, currentType)
@@ -55,7 +55,7 @@ func FetchRecommendationsSDK(ctx context.Context, profile, region string) ([]cor
 			opt := rec.RecommendationOptions[0]
 			recommendedConfig = awssdk.ToString(opt.InstanceType)
 			summary = fmt.Sprintf("%s: %s -> %s", finding, currentType, recommendedConfig)
-			
+
 			if opt.SavingsOpportunity != nil {
 				estimatedSavings = opt.SavingsOpportunity.EstimatedMonthlySavings.Value
 			}

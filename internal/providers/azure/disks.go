@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v6"
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 // FetchDisksSDK fetches Managed Disks using the Azure SDK.
@@ -138,7 +138,7 @@ func ExecuteDiskActionSDK(ctx context.Context, action string, disk core.Disk, cl
 		if len(parts) == 2 && parts[0] == "Resize" {
 			sizeGB := int32(150) // Need parsing
 			fmt.Sscanf(parts[1], "%d", &sizeGB)
-			
+
 			poller, err := client.BeginUpdate(ctx, disk.ResourceGroup, disk.Name, armcompute.DiskUpdate{
 				Properties: &armcompute.DiskUpdateProperties{
 					DiskSizeGB: &sizeGB,

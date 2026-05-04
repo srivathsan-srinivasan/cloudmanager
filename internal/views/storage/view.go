@@ -10,11 +10,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
-	"cloudmanager/internal/providers"
-	"cloudmanager/internal/ui"
-	"cloudmanager/internal/views/tagging"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/tagging"
 )
 
 const (

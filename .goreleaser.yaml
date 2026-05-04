@@ -44,8 +44,8 @@ snapshot:
 # Release configuration
 release:
   github:
-    owner: doctor-strange
-    name: CLOUDMANAGER
+    owner: srivathsan-srinivasan
+    name: cloudmanager
   draft: false
   prerelease: auto
   mode: replace

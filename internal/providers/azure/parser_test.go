@@ -10,8 +10,8 @@ func TestAzureContextNameSanitizesSubscriptionName(t *testing.T) {
 }
 
 func TestAzureContextNameFallsBackToSubscriptionID(t *testing.T) {
-	got := azureContextName(" ", "83ea0471")
-	if got != "83ea0471" {
+	got := azureContextName(" ", "sub-fallback")
+	if got != "sub-fallback" {
 		t.Fatalf("expected subscription id fallback, got %q", got)
 	}
 }

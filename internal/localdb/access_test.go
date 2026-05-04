@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func TestAccessProfileRoundTrip(t *testing.T) {

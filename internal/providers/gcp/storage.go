@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 type gcpBucketCLI struct {

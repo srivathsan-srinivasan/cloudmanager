@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
 func TestGetSSHCmdCLIUsesProjectAndZone(t *testing.T) {

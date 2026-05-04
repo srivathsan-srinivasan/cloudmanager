@@ -1,5 +1,34 @@
 # LOG
 
+## 2026-05-05
+
+### User Request Handled
+
+- Check for accidentally committed sensitive values and prepare CloudManager for Go/Homebrew installation.
+
+### Key Code And Packaging Changes
+
+1. Changed the Go module path from local `cloudmanager` to `github.com/srivathsan-srinivasan/cloudmanager` so `go install` works from GitHub.
+2. Added `Formula/cloudmanager.rb` for Homebrew tap installation.
+3. Updated README install instructions for modern Go install and Homebrew tap usage.
+4. Updated GoReleaser GitHub owner/repo and release workflow Go setup.
+5. Replaced realistic-looking README/test Azure tenant/subscription examples with clearly fake values.
+
+### Validation Performed
+
+- Strict secret-pattern scan for private keys, AWS/GitHub/GCP token shapes, old tenant/domain examples, and realistic Azure IDs.
+- `ruby -c Formula/cloudmanager.rb`
+- `brew style Formula/cloudmanager.rb`
+- `GOCACHE=/tmp/go-build-cache GOBIN=/private/tmp/cloudmanager-install-test go install .`
+- `/private/tmp/cloudmanager-install-test/cloudmanager --version`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+- `git diff --check`
+
+### Remaining Risks Or Follow-Up
+
+1. Homebrew `brew audit` could not fully validate the formula by path because this Homebrew version disables path audit; audit by name will work after the formula is tapped/published.
+2. `go install github.com/srivathsan-srinivasan/cloudmanager@latest` should be advertised after the next tag includes the GitHub module path. Until then, use `@release/v1.0.0`.
+
 ## 2026-05-04
 
 ### Update 4

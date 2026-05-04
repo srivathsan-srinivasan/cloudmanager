@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
 )
 
 func TestAddAndUseAzureProfile(t *testing.T) {
@@ -13,8 +13,8 @@ func TestAddAndUseAzureProfile(t *testing.T) {
 	addProfile(cfg, []string{
 		"eng",
 		"--provider", "azure",
-		"--tenant", "firecompass.com",
-		"--subscription-id", "34e5c3ad-42a8-420f-9999-474a02d91149",
+		"--tenant", "example.com",
+		"--subscription-id", "00000000-0000-0000-0000-000000000000",
 		"--subscription-name", "Azure Sponsorship - Engineering",
 	})
 
@@ -23,7 +23,7 @@ func TestAddAndUseAzureProfile(t *testing.T) {
 		t.Fatalf("expected one profile, got %+v", loaded.CloudContexts)
 	}
 	ctx := loaded.CloudContexts[0]
-	if ctx.ContextName != "eng" || ctx.Provider != "Azure" || ctx.AccountID != "34e5c3ad-42a8-420f-9999-474a02d91149" {
+	if ctx.ContextName != "eng" || ctx.Provider != "Azure" || ctx.AccountID != "00000000-0000-0000-0000-000000000000" {
 		t.Fatalf("unexpected saved profile: %+v", ctx)
 	}
 	if loaded.CurrentContext != "eng" {

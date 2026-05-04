@@ -44,12 +44,12 @@ func ActionListHeight(numItems, maxAvailableHeight int) int {
 	// A list item with a description is typically 2 lines, plus 1 line spacing = 3 lines per item.
 	// The list itself has a header (2 lines) and footer (2 lines) = 4 lines overhead.
 	idealHeight := (numItems * 3) + 6
-	
+
 	maxAllowed := maxAvailableHeight - 10
 	if maxAllowed < 10 {
 		maxAllowed = 10
 	}
-	
+
 	if idealHeight > maxAllowed {
 		return maxAllowed
 	}

@@ -18,15 +18,15 @@ import (
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 
-	"cloudmanager/internal/access"
-	"cloudmanager/internal/config"
-	"cloudmanager/internal/core"
-	"cloudmanager/internal/iac"
-	"cloudmanager/internal/localdb"
-	applog "cloudmanager/internal/logging"
-	"cloudmanager/internal/providers"
-	"cloudmanager/internal/ui"
-	"cloudmanager/internal/views/firewalls"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/access"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/iac"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/localdb"
+	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/firewalls"
 )
 
 const (

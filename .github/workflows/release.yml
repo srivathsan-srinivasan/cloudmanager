@@ -20,7 +20,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
 
       # TODO(packaging): Add Homebrew tap publishing configuration
       # Example: brew tap via GoReleaser using a dedicated PAT

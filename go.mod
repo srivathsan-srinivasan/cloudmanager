@@ -1,4 +1,4 @@
-module cloudmanager
+module github.com/srivathsan-srinivasan/cloudmanager
 
 go 1.25.5
 
