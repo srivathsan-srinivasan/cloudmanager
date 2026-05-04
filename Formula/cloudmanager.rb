@@ -2,8 +2,8 @@ class Cloudmanager < Formula
   desc "Fast terminal control plane for cloud operations"
   homepage "https://github.com/srivathsan-srinivasan/cloudmanager"
   url "https://github.com/srivathsan-srinivasan/cloudmanager.git",
-      branch: "release/v1.0.0"
-  version "1.0.0"
+      tag: "v1.0.1"
+  version "1.0.1"
   license "MIT"
   head "https://github.com/srivathsan-srinivasan/cloudmanager.git",
        branch: "release/v1.0.0"

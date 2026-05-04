@@ -27,7 +27,7 @@
 ### Remaining Risks Or Follow-Up
 
 1. Homebrew `brew audit` could not fully validate the formula by path because this Homebrew version disables path audit; audit by name will work after the formula is tapped/published.
-2. `go install github.com/srivathsan-srinivasan/cloudmanager@latest` should be advertised after the next tag includes the GitHub module path. Until then, use `@release/v1.0.0`.
+2. Cut and push `v1.0.1` after this commit so `go install ...@latest` and the Homebrew formula resolve an immutable tag with the GitHub module path.
 
 ## 2026-05-04
 

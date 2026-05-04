@@ -88,14 +88,14 @@ terminal workflow, active context, audit path, and provider-aware guardrails.
 Ensure you have [Go](https://golang.org/doc/install) (1.20+) installed.
 
 ```bash
-go install github.com/srivathsan-srinivasan/cloudmanager@release/v1.0.0
+go install github.com/srivathsan-srinivasan/cloudmanager@latest
 ```
 
 `go get` is no longer the right way to install Go binaries on modern Go. Use
-`go install ...@version`. After the next tagged release, this becomes:
+`go install ...@version`. To pin this release:
 
 ```bash
-go install github.com/srivathsan-srinivasan/cloudmanager@latest
+go install github.com/srivathsan-srinivasan/cloudmanager@v1.0.1
 ```
 
 From source:
@@ -112,9 +112,6 @@ Homebrew tap:
 brew tap srivathsan-srinivasan/cloudmanager https://github.com/srivathsan-srinivasan/cloudmanager
 brew install cloudmanager
 ```
-
-Until the first immutable Homebrew release formula is cut, the tap formula tracks
-the `release/v1.0.0` branch.
 
 ### Prerequisites
 CloudManager wraps the native CLI tools for the respective cloud providers. Ensure you have the following installed and authenticated if you intend to manage resources in those clouds:
