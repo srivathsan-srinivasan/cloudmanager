@@ -1,10 +1,12 @@
 package gcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
 )
 
 type gcpBucketCLI struct {
@@ -62,6 +64,67 @@ func FetchStorageBucketsCLI(project string) ([]core.StorageBucket, error) {
 		})
 	}
 	return buckets, nil
+}
+
+func FetchStorageBucketsCLIWithSDKFallback(ctx context.Context, project string) ([]core.StorageBucket, error) {
+	buckets, err := FetchStorageBucketsCLI(project)
+	if err == nil {
+		return buckets, nil
+	}
+	logging.Warnf("component=gcp resource=storage mode=cli fallback=sdk project=%s err=%v", project, err)
+	sdkBuckets, sdkErr := FetchStorageBucketsSDK(ctx, project)
+	if sdkErr != nil {
+		return nil, fmt.Errorf("%w. SDK fallback also failed: %v", err, sdkErr)
+	}
+	return sdkBuckets, nil
+}
+
+func FetchStorageBucketsSDK(ctx context.Context, project string) ([]core.StorageBucket, error) {
+	service, err := newStorageService(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out, err := service.Buckets.List(project).Context(ctx).Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list gcp storage buckets: %w", err)
+	}
+	buckets := make([]core.StorageBucket, 0, len(out.Items))
+	for _, bucket := range out.Items {
+		encrypted := "default"
+		if bucket.Encryption != nil && bucket.Encryption.DefaultKmsKeyName != "" {
+			encrypted = "kms"
+		}
+		versioning := "off"
+		if bucket.Versioning != nil && bucket.Versioning.Enabled {
+			versioning = "on"
+		}
+		access := "unknown"
+		if bucket.IamConfiguration != nil && bucket.IamConfiguration.PublicAccessPrevention != "" {
+			access = bucket.IamConfiguration.PublicAccessPrevention
+		}
+		buckets = append(buckets, core.StorageBucket{
+			Name:         bucket.Name,
+			ID:           bucketID(bucket.Id, bucket.Name),
+			ProviderType: "Cloud Storage bucket",
+			Region:       bucket.Location,
+			StorageClass: bucket.StorageClass,
+			Access:       access,
+			Encrypted:    encrypted,
+			Versioning:   versioning,
+			CreatedAt:    bucket.TimeCreated,
+			Labels:       joinLabelMap(bucket.Labels),
+		})
+	}
+	return buckets, nil
+}
+
+func FetchStorageBucketsSDKWithCLIAuthFallback(ctx context.Context, project string) ([]core.StorageBucket, error) {
+	buckets, err := FetchStorageBucketsSDK(ctx, project)
+	if err == nil {
+		return buckets, nil
+	}
+	logging.Warnf("component=gcp resource=storage mode=sdk fallback=cli project=%s err=%v", project, err)
+	return FetchStorageBucketsCLI(project)
 }
 
 func bucketID(id, name string) string {

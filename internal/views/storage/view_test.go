@@ -85,3 +85,47 @@ func TestTagSelectedStorageSavesCloudManagerTag(t *testing.T) {
 		t.Fatalf("expected storage labels to include CloudManager tag, got %q", view.bucketData[0].Labels)
 	}
 }
+
+func TestStorageEnterOpensActionsAndDescribe(t *testing.T) {
+	cfg := config.AppConfig{StorageColumns: []string{"Name", "ID", "Provider Type"}}
+	view := New(&cfg)
+	view.width = 120
+	view.height = 30
+	view.activeCtx = core.CloudContext{Provider: "GCP", AccountID: "project-a", AccountName: "project-a", Region: "global"}
+	view.bucketData = []core.StorageBucket{{Name: "logs", ID: "bucket-1", ProviderType: "Cloud Storage bucket"}}
+	view.refreshTable()
+
+	updated, _ := view.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	view = updated.(*StorageView)
+	if view.activePane != paneActions {
+		t.Fatalf("expected actions pane, got %d", view.activePane)
+	}
+
+	updated, _ = view.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	view = updated.(*StorageView)
+	if view.activePane != paneDescribe {
+		t.Fatalf("expected describe pane, got %d", view.activePane)
+	}
+	if !strings.Contains(view.copyableText, "gs://logs") || !strings.Contains(view.copyableText, "Console:") {
+		t.Fatalf("expected storage details with URI and console URL, got %q", view.copyableText)
+	}
+}
+
+func TestStorageArrowKeysMoveSelection(t *testing.T) {
+	cfg := config.AppConfig{StorageColumns: []string{"Name", "ID", "Provider Type"}}
+	view := New(&cfg)
+	view.width = 120
+	view.height = 30
+	view.bucketData = []core.StorageBucket{
+		{Name: "logs", ID: "bucket-1", ProviderType: "Cloud Storage bucket"},
+		{Name: "archive", ID: "bucket-2", ProviderType: "Cloud Storage bucket"},
+	}
+	view.refreshTable()
+
+	updated, _ := view.Update(tea.KeyMsg{Type: tea.KeyDown})
+	view = updated.(*StorageView)
+	selected, ok := view.selectedBucket()
+	if !ok || selected.Name != "archive" {
+		t.Fatalf("expected arrow down to select archive, ok=%t selected=%+v cursor=%d", ok, selected, view.table.Cursor())
+	}
+}

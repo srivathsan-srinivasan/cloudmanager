@@ -14,6 +14,7 @@ import (
 	"google.golang.org/api/container/v1"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sqladmin/v1beta4"
+	storageapi "google.golang.org/api/storage/v1"
 )
 
 var gcpExecCommandContext = exec.CommandContext
@@ -28,6 +29,10 @@ func newContainerService(ctx context.Context) (*container.Service, error) {
 
 func newSQLAdminService(ctx context.Context) (*sqladmin.Service, error) {
 	return gcpServiceWithCLIAuthFallback(ctx, sqladmin.NewService)
+}
+
+func newStorageService(ctx context.Context) (*storageapi.Service, error) {
+	return gcpServiceWithCLIAuthFallback(ctx, storageapi.NewService)
 }
 
 func newRecommenderClient(ctx context.Context) (*recommender.Client, error) {

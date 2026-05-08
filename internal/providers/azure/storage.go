@@ -24,6 +24,17 @@ type azureStorageAccountCLI struct {
 	} `json:"encryption"`
 }
 
+type azureBlobContainerCLI struct {
+	Name       string            `json:"name"`
+	ID         string            `json:"id"`
+	Metadata   map[string]string `json:"metadata"`
+	Properties struct {
+		PublicAccess string `json:"publicAccess"`
+		LastModified string `json:"lastModified"`
+		LeaseState   string `json:"leaseState"`
+	} `json:"properties"`
+}
+
 func FetchStorageAccountsCLI(ctx context.Context, subscriptionID string) ([]core.StorageBucket, error) {
 	cmd := exec.CommandContext(ctx, "az", "storage", "account", "list", "--subscription", subscriptionID, "--output", "json")
 	output, err := cmd.CombinedOutput()
@@ -59,8 +70,53 @@ func FetchStorageAccountsCLI(ctx context.Context, subscriptionID string) ([]core
 			ResourceGroup: account.ResourceGroup,
 			Labels:        joinStringMap(account.Tags),
 		})
+		containers, err := fetchBlobContainersCLI(ctx, subscriptionID, account)
+		if err == nil {
+			buckets = append(buckets, containers...)
+		}
 	}
 	return buckets, nil
+}
+
+func fetchBlobContainersCLI(ctx context.Context, subscriptionID string, account azureStorageAccountCLI) ([]core.StorageBucket, error) {
+	cmd := exec.CommandContext(ctx, "az", "storage", "container", "list",
+		"--account-name", account.Name,
+		"--auth-mode", "login",
+		"--subscription", subscriptionID,
+		"--output", "json",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("az storage container list failed for %s: %w: %s", account.Name, err, strings.TrimSpace(string(output)))
+	}
+	var data []azureBlobContainerCLI
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse azure blob containers for %s: %w", account.Name, err)
+	}
+	containers := make([]core.StorageBucket, 0, len(data))
+	for _, container := range data {
+		access := container.Properties.PublicAccess
+		if access == "" {
+			access = "private"
+		}
+		id := container.ID
+		if id == "" {
+			id = fmt.Sprintf("%s/blobServices/default/containers/%s", strings.TrimRight(account.ID, "/"), container.Name)
+		}
+		containers = append(containers, core.StorageBucket{
+			Name:          fmt.Sprintf("%s/%s", account.Name, container.Name),
+			ID:            id,
+			ProviderType:  "Blob container",
+			Region:        account.Location,
+			Access:        access,
+			Encrypted:     account.Encryption.KeySource,
+			Versioning:    "account-level",
+			CreatedAt:     container.Properties.LastModified,
+			ResourceGroup: account.ResourceGroup,
+			Labels:        joinStringMap(container.Metadata),
+		})
+	}
+	return containers, nil
 }
 
 func joinStringMap(values map[string]string) string {

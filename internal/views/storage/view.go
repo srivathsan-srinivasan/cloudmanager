@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/clipboard"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
@@ -19,6 +22,8 @@ import (
 
 const (
 	paneTable = iota
+	paneActions
+	paneDescribe
 	paneTag
 )
 
@@ -28,38 +33,71 @@ type storageFetchMsg struct {
 	err        error
 }
 
+type clipboardCompleteMsg struct {
+	err error
+}
+
+type actionItem struct {
+	title string
+	desc  string
+}
+
+func (i actionItem) Title() string       { return i.title }
+func (i actionItem) Description() string { return i.desc }
+func (i actionItem) FilterValue() string { return i.title }
+
 type StorageView struct {
-	table       table.Model
-	activeCtx   core.CloudContext
-	bucketData  []core.StorageBucket
-	visibleRows []core.StorageBucket
-	tableCols   []table.Column
-	tagInput    textinput.Model
-	cfg         *config.AppConfig
-	width       int
-	height      int
-	loading     bool
-	statusMsg   string
-	searchQuery string
-	requestKey  string
-	activePane  int
-	pending     core.StorageBucket
+	table        table.Model
+	actions      list.Model
+	descView     viewport.Model
+	activeCtx    core.CloudContext
+	bucketData   []core.StorageBucket
+	visibleRows  []core.StorageBucket
+	tableCols    []table.Column
+	tagInput     textinput.Model
+	cfg          *config.AppConfig
+	width        int
+	height       int
+	loading      bool
+	statusMsg    string
+	searchQuery  string
+	requestKey   string
+	activePane   int
+	pending      core.StorageBucket
+	copyableText string
 }
 
 func New(cfg *config.AppConfig) *StorageView {
+	items := make([]list.Item, 0, len(core.StorageActions()))
+	for _, action := range core.StorageActions() {
+		items = append(items, actionItem{title: action.Title, desc: action.Description})
+	}
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = true
+	actions := list.New(items, delegate, 42, 10)
+	actions.Title = "Storage Actions"
+	actions.SetShowStatusBar(false)
+	actions.SetFilteringEnabled(false)
+
+	descView := viewport.New(80, 20)
+	descView.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(ui.Highlight).PaddingRight(2)
+
 	tagInput := textinput.New()
 	tagInput.Placeholder = "comma separated tags..."
 	tagInput.Prompt = "tags> "
 	tagInput.CharLimit = 160
 	tagInput.Width = 42
-	return &StorageView{cfg: cfg, tagInput: tagInput}
+	return &StorageView{cfg: cfg, actions: actions, descView: descView, tagInput: tagInput}
 }
 
 func (v *StorageView) Title() string { return "Storage" }
 func (v *StorageView) ShortHelp() string {
-	return "↑↓: Navigate • t: Tag • / from Find • r: Refresh"
+	return "↑↓: Navigate • Enter: Actions • t: Tag • / from Find • r: Refresh"
 }
-func (v *StorageView) IsInputActive() bool { return v.activePane == paneTag }
+func (v *StorageView) IsInputActive() bool {
+	return v.activePane == paneActions || v.activePane == paneDescribe || v.activePane == paneTag
+}
 
 func (v *StorageView) SetSearchQuery(query string) {
 	v.searchQuery = strings.TrimSpace(query)
@@ -72,6 +110,7 @@ func (v *StorageView) Init(ctx core.CloudContext, width, height int, showSidebar
 	v.height = height
 	v.requestKey = ctx.CacheKey()
 	v.activePane = paneTable
+	v.copyableText = ""
 	v.loading = true
 	v.statusMsg = fmt.Sprintf("Fetching storage for %s...", ctx.DisplayName())
 	v.refreshTable()
@@ -81,6 +120,9 @@ func (v *StorageView) Init(ctx core.CloudContext, width, height int, showSidebar
 func (v *StorageView) Resize(width, height int, showSidebar bool) {
 	v.width = width
 	v.height = height
+	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
+	v.descView.Width = width - 4
+	v.descView.Height = height - 4
 	v.refreshTable()
 }
 
@@ -88,25 +130,43 @@ func (v *StorageView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "esc" {
+			switch v.activePane {
+			case paneActions, paneDescribe, paneTag:
+				v.activePane = paneTable
+				v.tagInput.Blur()
+				return v, nil
+			}
+		}
 		if v.activePane == paneTag {
 			return v.handleTagKeys(msg)
+		}
+		if v.activePane == paneActions {
+			return v.handleActionKeys(msg)
+		}
+		if v.activePane == paneDescribe {
+			if msg.String() == "c" {
+				return v.copyText(v.copyableText)
+			}
+			v.descView, cmd = v.descView.Update(msg)
+			return v, cmd
 		}
 		if msg.String() == "r" {
 			v.loading = true
 			v.statusMsg = "Refreshing storage..."
 			return v, v.fetchCmd()
 		}
-		if msg.String() == "t" {
+		if msg.String() == "enter" {
 			bucket, ok := v.selectedBucket()
 			if !ok {
 				return v, nil
 			}
-			v.pending = bucket
-			v.tagInput.SetValue("")
-			v.tagInput.Focus()
-			v.activePane = paneTag
-			v.statusMsg = fmt.Sprintf("Tag %s with CloudManager-only tags.", bucket.Name)
-			return v, textinput.Blink
+			v.actions.Title = fmt.Sprintf("Actions: %s", bucket.Name)
+			v.activePane = paneActions
+			return v, nil
+		}
+		if msg.String() == "t" {
+			return v.openTag()
 		}
 		v.table, cmd = v.table.Update(msg)
 		return v, cmd
@@ -129,6 +189,12 @@ func (v *StorageView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			}
 		}
 		v.refreshTable()
+	case clipboardCompleteMsg:
+		if msg.err != nil {
+			v.statusMsg = fmt.Sprintf("Copy failed: %v", msg.err)
+		} else {
+			v.statusMsg = "Copied to clipboard."
+		}
 	}
 	return v, cmd
 }
@@ -139,6 +205,14 @@ func (v *StorageView) Render() string {
 		content = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("Loading storage...")
 	}
 	header := ui.BreadcrumbStyle.Render(fmt.Sprintf("%s › %s › Storage", v.activeCtx.Provider, v.activeCtx.DisplayName()))
+	if v.activePane == paneDescribe {
+		return ui.ClampToWindow(v.descView.View(), v.width, v.height)
+	}
+	if v.activePane == paneActions {
+		overlay := ui.OverlayStyle.Render(v.actions.View())
+		bodyWithOverlay := lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
+		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", bodyWithOverlay), v.width, v.height)
+	}
 	if v.activePane == paneTag {
 		tagStyle := ui.OverlayStyle.Copy().Padding(1, 2).Width(60)
 		tagView := lipgloss.JoinVertical(lipgloss.Left,
@@ -161,6 +235,7 @@ func (v *StorageView) refreshTable() {
 	if v.width == 0 {
 		return
 	}
+	cursor := v.table.Cursor()
 	columnNames := v.cfg.StorageColumns
 	if len(columnNames) == 0 {
 		columnNames = core.DefaultStorageColumns
@@ -186,6 +261,16 @@ func (v *StorageView) refreshTable() {
 	tbl.SetRows(rows)
 	tbl.SetHeight(ui.TableHeight(v.height))
 	tbl.SetWidth(ui.TableViewportWidth(v.width))
+	if len(rows) > 0 {
+		if cursor >= len(rows) {
+			cursor = len(rows) - 1
+		}
+		if cursor < 0 {
+			cursor = 0
+		}
+		tbl.SetCursor(cursor)
+	}
+	tbl.Focus()
 	v.table = tbl
 	v.tableCols = visibleCols
 }
@@ -196,6 +281,37 @@ func (v *StorageView) selectedBucket() (core.StorageBucket, bool) {
 		return core.StorageBucket{}, false
 	}
 	return v.visibleRows[cursor], true
+}
+
+func (v *StorageView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	if msg.String() != "enter" {
+		var cmd tea.Cmd
+		v.actions, cmd = v.actions.Update(msg)
+		return v, cmd
+	}
+	bucket, ok := v.selectedBucket()
+	if !ok || v.actions.SelectedItem() == nil {
+		return v, nil
+	}
+	action := v.actions.SelectedItem().(actionItem).title
+	switch action {
+	case "Describe":
+		return v.showDetails(core.DescribeStorageBucket(v.activeCtx, bucket)), nil
+	case "Copy URI":
+		return v.copyText(core.StorageURI(v.activeCtx, bucket))
+	case "Copy ID":
+		return v.copyText(bucket.GetID())
+	case "Copy Console URL":
+		consoleURL := core.StorageConsoleURL(v.activeCtx, bucket)
+		if strings.TrimSpace(consoleURL) == "" {
+			v.statusMsg = "No console URL available for this storage resource."
+			return v, nil
+		}
+		return v.copyText(consoleURL)
+	case "Tag":
+		return v.openTag()
+	}
+	return v, nil
 }
 
 func (v *StorageView) handleTagKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
@@ -225,6 +341,40 @@ func (v *StorageView) handleTagKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 	var cmd tea.Cmd
 	v.tagInput, cmd = v.tagInput.Update(msg)
 	return v, cmd
+}
+
+func (v *StorageView) openTag() (ui.View, tea.Cmd) {
+	bucket, ok := v.selectedBucket()
+	if !ok {
+		return v, nil
+	}
+	v.pending = bucket
+	v.tagInput.SetValue("")
+	v.tagInput.Focus()
+	v.activePane = paneTag
+	v.statusMsg = fmt.Sprintf("Tag %s with CloudManager-only tags.", bucket.Name)
+	return v, textinput.Blink
+}
+
+func (v *StorageView) showDetails(content string) ui.View {
+	v.copyableText = content
+	v.descView.SetContent(content)
+	v.descView.GotoTop()
+	v.activePane = paneDescribe
+	v.statusMsg = "Viewing details (c copy, Esc close)."
+	return v
+}
+
+func (v *StorageView) copyText(text string) (ui.View, tea.Cmd) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		v.statusMsg = "Nothing to copy."
+		return v, nil
+	}
+	v.statusMsg = "Copying to clipboard..."
+	return v, func() tea.Msg {
+		return clipboardCompleteMsg{err: clipboard.Write(text)}
+	}
 }
 
 func storageColumnWidth(name string) int {

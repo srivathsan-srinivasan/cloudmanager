@@ -2,6 +2,29 @@
 
 ## 2026-05-05
 
+### Update
+
+- Fixed Storage navigation after action-menu changes by focusing the rebuilt storage table and preserving cursor position across refreshes.
+- Applied the same table focus/cursor preservation to Databases, which used the same thin table pattern.
+- Added regression tests proving arrow-down moves selection in Storage and Databases.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/views/storage ./internal/views/databases` and `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
+- Fixed Storage discovery gaps: GCP SDK mode now uses the Google Cloud Storage API with active `gcloud` token fallback, and GCP CLI mode falls back to the SDK path if `gcloud storage buckets list` fails.
+- Azure Storage now includes blob container rows in addition to storage account rows by calling `az storage container list --auth-mode login` per storage account.
+- Remaining Azure caveat: blob containers require Azure data-plane permission on the account/container; if the user only has management-plane read, account rows can appear while containers are skipped.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/providers/gcp ./internal/providers/azure ./internal/providers` and `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
+- Added Database action menu with Describe, Copy ID, Copy Console URL, and CloudManager tag actions.
+- Added Storage action menu with Describe, Copy URI, Copy ID, Copy Console URL, and CloudManager tag actions.
+- Added shared clipboard helper for copy actions from non-VM resource views.
+- Database view now tracks filtered visible rows before actions, so action selection follows the row the user actually sees.
+- Storage remains bucket/account level; object browsing inside buckets is still a follow-up.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/core ./internal/views/databases ./internal/views/storage` and `GOCACHE=/tmp/go-build-cache go test ./...`.
+
 ### User Request Handled
 
 - Check for accidentally committed sensitive values and prepare CloudManager for Go/Homebrew installation.
@@ -27,7 +50,7 @@
 ### Remaining Risks Or Follow-Up
 
 1. Homebrew `brew audit` could not fully validate the formula by path because this Homebrew version disables path audit; audit by name will work after the formula is tapped/published.
-2. Cut and push `v1.0.1` after this commit so `go install ...@latest` and the Homebrew formula resolve an immutable tag with the GitHub module path.
+2. `v1.0.1` was cut and pushed; `brew install cloudmanager` from the tap completed, but `brew test` hit local Homebrew Ruby/Bundler issues unrelated to the formula.
 
 ## 2026-05-04
 

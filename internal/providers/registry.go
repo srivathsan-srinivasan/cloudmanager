@@ -595,7 +595,7 @@ func registerBuiltins() {
 			},
 			Storage: storageFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
-					return gcp.FetchStorageBucketsCLI(cloudCtx.AccountID)
+					return gcp.FetchStorageBucketsSDKWithCLIAuthFallback(ctx, cloudCtx.AccountID)
 				},
 			},
 			Metrics: metricsFuncs{
@@ -666,7 +666,7 @@ func registerBuiltins() {
 			},
 			Storage: storageFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.StorageBucket, error) {
-					return gcp.FetchStorageBucketsCLI(cloudCtx.AccountID)
+					return gcp.FetchStorageBucketsCLIWithSDKFallback(ctx, cloudCtx.AccountID)
 				},
 			},
 			Metrics: metricsFuncs{
