@@ -33,8 +33,7 @@ func Resolve(ctx context.Context, req Request) []core.AccessMethod {
 	methods = append(methods, sshConfigMethods(req)...)
 	methods = append(methods, directSSHMethods(req)...)
 	methods = append(methods, remediationMethod(req))
-	sortAccessMethods(methods)
-	return methods
+	return PruneFallbacks(methods)
 }
 
 func sortAccessMethods(methods []core.AccessMethod) {
@@ -44,6 +43,52 @@ func sortAccessMethods(methods []core.AccessMethod) {
 		}
 		return methods[i].Priority < methods[j].Priority
 	})
+}
+
+func PruneFallbacks(methods []core.AccessMethod) []core.AccessMethod {
+	showFallbacks := accessFallbacksEnabled()
+	hasLearned := false
+	hasUsable := false
+	for _, method := range methods {
+		if method.Kind == "learned_ssh" {
+			hasLearned = true
+		}
+		if usableAccessMethod(method) {
+			hasUsable = true
+		}
+	}
+
+	out := make([]core.AccessMethod, 0, len(methods))
+	for _, method := range methods {
+		if method.Kind == "remediation" && hasUsable {
+			continue
+		}
+		if !showFallbacks && method.ID == "direct-ssh" {
+			continue
+		}
+		if hasLearned && !showFallbacks && (method.Kind == "ssh_config" || method.Kind == "private_key_picker") {
+			continue
+		}
+		out = append(out, method)
+	}
+	sortAccessMethods(out)
+	return out
+}
+
+func usableAccessMethod(method core.AccessMethod) bool {
+	if !method.Available || method.Kind == "remediation" {
+		return false
+	}
+	return len(method.Command) > 0 || method.Kind == "private_key_picker" || method.Kind == "native" || method.Kind == "learned_ssh"
+}
+
+func accessFallbacksEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CLOUDMANAGER_SHOW_ACCESS_FALLBACKS"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func manualHostMethods(req Request) []core.AccessMethod {

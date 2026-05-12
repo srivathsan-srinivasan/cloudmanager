@@ -68,6 +68,7 @@ func SnapshotActions() []Action {
 		{"Create Disk", "Create a new disk from this snapshot", false},
 		{"Delete", "Permanently delete the snapshot", true},
 		{"Describe", "Show full resource details", false},
+		{"Open Console", "Open this snapshot in the provider console", false},
 	}
 }
 

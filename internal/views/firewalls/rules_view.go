@@ -17,6 +17,7 @@ import (
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/publicip"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
 )
 
@@ -32,6 +33,12 @@ type ruleActionCompleteMsg struct {
 	err        error
 }
 
+type myIPResolvedMsg struct {
+	requestKey string
+	cidr       string
+	err        error
+}
+
 type ruleEditField struct {
 	prompt      string
 	placeholder string
@@ -40,6 +47,7 @@ type ruleEditField struct {
 }
 
 var getFirewallProvider = providers.GetProvider
+var resolvePublicIPCIDR = publicip.ResolveCIDR
 
 type RulesView struct {
 	rules       table.Model
@@ -71,6 +79,9 @@ type RulesView struct {
 	editInputs []textinput.Model
 	focusIndex int
 	formError  string
+
+	copyableText string
+	detailURL    string
 }
 
 func NewRules(cfg *config.AppConfig, group core.SecurityGroup) *RulesView {
@@ -113,7 +124,7 @@ func NewRules(cfg *config.AppConfig, group core.SecurityGroup) *RulesView {
 func (v *RulesView) Title() string { return "Firewall Rules" }
 
 func (v *RulesView) ShortHelp() string {
-	return "\u2191\u2193: Nav \u2022 \u2190\u2192: Pan \u2022 a: Add \u2022 e: Edit Rule \u2022 d: Describe \u2022 ctrl+d: Delete \u2022 x: Toggle \u2022 Enter: Menu \u2022 /: Search"
+	return "\u2191\u2193: Nav \u2022 \u2190\u2192: Pan \u2022 a:Add \u2022 i:My IP \u2022 e:Edit \u2022 d:Describe \u2022 ctrl+d:Delete \u2022 Enter:Menu \u2022 /:Search"
 }
 
 func (v *RulesView) IsInputActive() bool {
@@ -131,6 +142,8 @@ func (v *RulesView) Init(ctx core.CloudContext, width, height int, showSidebar b
 	v.searchInput.Blur()
 	v.ruleData = nil
 	v.visibleRules = nil
+	v.copyableText = ""
+	v.detailURL = ""
 	v.columnOffset = 0
 	v.requestKey = fmt.Sprintf("%s:%s", ctx.CacheKey(), v.group.ID)
 	v.breadcrumbs = fmt.Sprintf("%s \u203A %s", v.group.Name, v.group.ID)
@@ -215,7 +228,7 @@ func (v *RulesView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 				v.formError = msg.err.Error()
 				v.activePane = paneAddRule
 			default:
-				v.descView.SetContent(msg.err.Error())
+				v.showRuleMessage(msg.err.Error(), "")
 				v.activePane = paneDescribe
 			}
 		} else {
@@ -224,6 +237,26 @@ func (v *RulesView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			v.activePane = paneTable
 			cmds = append(cmds, v.fetchRulesCmd())
 		}
+
+	case myIPResolvedMsg:
+		if msg.requestKey != v.requestKey {
+			return v, nil
+		}
+		if msg.err != nil {
+			v.loading = false
+			v.showRuleMessage(msg.err.Error(), "")
+			v.activePane = paneDescribe
+			v.refreshTable()
+		} else {
+			v.pendingRule = firewallRuleWithMyIP(v.pendingRule, v.group, msg.cidr)
+			v.pendingAction = actionItem{title: "Add", desc: "Add my IP firewall rule"}
+			cmds = append(cmds, v.executeRuleActionCmd())
+		}
+
+	case clipboardCompleteMsg:
+		// Keep the current detail view intact; copy failures are surfaced elsewhere.
+	case ui.BrowserOpenMsg:
+		// Keep the current detail view intact.
 
 	case tea.WindowSizeMsg:
 		v.Resize(msg.Width, msg.Height, v.showSidebar)
@@ -378,11 +411,16 @@ func (v *RulesView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.setupAddForm()
 		v.refreshTable()
 		return v, textinput.Blink
+	case "i":
+		if !ok {
+			return v, nil
+		}
+		return v.startAddMyIP(rule)
 	case "d":
 		if !ok {
 			return v, nil
 		}
-		v.descView.SetContent(core.DescribeFirewallRule(rule))
+		v.showRuleMessage(core.DescribeFirewallRule(rule), core.FirewallRuleConsoleURL(v.activeCtx, rule))
 		v.activePane = paneDescribe
 		v.refreshTable()
 	case "e":
@@ -468,9 +506,17 @@ func (v *RulesView) handleSearchKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 }
 
 func (v *RulesView) handleDescribeKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
-	if msg.String() == "esc" {
+	switch msg.String() {
+	case "esc":
 		v.activePane = paneTable
 		v.refreshTable()
+	case "c", "C":
+		if strings.TrimSpace(v.copyableText) == "" {
+			return v, nil
+		}
+		return v, copyTextCmd(v.copyableText)
+	case "o", "O":
+		return v.openConsole(v.detailURL)
 	}
 	return v, nil
 }
@@ -491,10 +537,17 @@ func (v *RulesView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		}
 
 		if item.title == "Describe" {
-			v.descView.SetContent(core.DescribeFirewallRule(rule))
+			v.showRuleMessage(core.DescribeFirewallRule(rule), core.FirewallRuleConsoleURL(v.activeCtx, rule))
 			v.activePane = paneDescribe
 			v.refreshTable()
 			return v, nil
+		}
+		if item.title == "Open Console" {
+			return v.openConsole(core.FirewallRuleConsoleURL(v.activeCtx, rule))
+		}
+
+		if item.title == "Add My IP" {
+			return v.startAddMyIP(rule)
 		}
 
 		if item.title == "Edit" {
@@ -515,6 +568,22 @@ func (v *RulesView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.refreshTable()
 	}
 	return v, nil
+}
+
+func (v *RulesView) startAddMyIP(rule core.FirewallRule) (ui.View, tea.Cmd) {
+	if v.blockFirewallMutationIfNeeded("Add My IP", rule) {
+		return v, nil
+	}
+	v.pendingAction = actionItem{title: "Add My IP", desc: "Resolve public IP and add allow rule"}
+	v.pendingRule = addMyIPTemplateRule(rule, v.group, v.activeCtx.Provider)
+	v.loading = true
+	v.activePane = paneTable
+	v.refreshTable()
+	requestKey := v.requestKey
+	return v, func() tea.Msg {
+		cidr, err := resolvePublicIPCIDR(context.Background())
+		return myIPResolvedMsg{requestKey: requestKey, cidr: cidr, err: err}
+	}
 }
 
 func (v *RulesView) handleConfirmKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
@@ -872,7 +941,7 @@ func (v *RulesView) blockFirewallMutationIfNeeded(action string, rule core.Firew
 			target = v.group.Name
 		}
 		applog.Warnf("component=firewall_rules event=action_blocked provider=%s account=%s region=%s mode=%s action=%s target=%s err=%s", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(strings.TrimSpace(v.cfg.Backend)), action, target, reason)
-		v.descView.SetContent(reason)
+		v.showRuleMessage(reason, "")
 		v.activePane = paneDescribe
 		v.refreshTable()
 		return true
@@ -895,15 +964,29 @@ func (v *RulesView) blockFirewallMutationIfNeeded(action string, rule core.Firew
 		target,
 	)
 	applog.Warnf("component=firewall_rules event=action_blocked provider=%s account=%s region=%s mode=%s action=%s target=%s err=firewall updates require SDK mode", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(strings.TrimSpace(v.cfg.Backend)), action, target)
-	v.descView.SetContent(msg)
+	v.showRuleMessage(msg, "")
 	v.activePane = paneDescribe
 	v.refreshTable()
 	return true
 }
 
+func (v *RulesView) showRuleMessage(msg, consoleURL string) {
+	v.detailURL = strings.TrimSpace(consoleURL)
+	v.copyableText = core.DetailWithConsoleURL(msg, v.detailURL)
+	v.descView.SetContent(v.copyableText)
+}
+
+func (v *RulesView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
+	consoleURL = strings.TrimSpace(consoleURL)
+	if consoleURL == "" {
+		return v, nil
+	}
+	return v, ui.OpenURLCmd(consoleURL)
+}
+
 func isFirewallMutationAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "add", "edit", "delete", "enable", "disable", "enable/disable":
+	case "add", "add my ip", "edit", "delete", "enable", "disable", "enable/disable":
 		return true
 	default:
 		return false
@@ -931,6 +1014,44 @@ func editableFirewallRule(rule core.FirewallRule) core.FirewallRule {
 	rule.Action = cleanEditableValue(rule.Action)
 	rule.Description = cleanEditableValue(rule.Description)
 	return rule
+}
+
+func addMyIPTemplateRule(rule core.FirewallRule, group core.SecurityGroup, provider string) core.FirewallRule {
+	next := editableFirewallRule(rule)
+	next.OriginalRule = nil
+	next.ID = ""
+	next.Name = ""
+	next.Provider = orFallback(next.Provider, provider)
+	next.ResourceID = orFallback(next.ResourceID, group.ID)
+	next.ResourceName = orFallback(next.ResourceName, group.Name, group.ID)
+	next.Direction = defaultDirection(next.Direction)
+	next.Protocol = defaultProtocol(next.Protocol)
+	next.PortRange = defaultPorts(next.PortRange)
+	next.Action = "Allow"
+	if strings.TrimSpace(next.Description) == "" {
+		next.Description = "CloudManager: my current public IP"
+	}
+	return next
+}
+
+func firewallRuleWithMyIP(rule core.FirewallRule, group core.SecurityGroup, cidr string) core.FirewallRule {
+	next := addMyIPTemplateRule(rule, group, rule.Provider)
+	if strings.EqualFold(strings.TrimSpace(next.Direction), core.Outbound) {
+		next.Destination = cidr
+		if strings.TrimSpace(next.Source) == "" {
+			next.Source = orFallback(group.Name, group.ID)
+		}
+	} else {
+		next.Direction = core.Inbound
+		next.Source = cidr
+		if strings.TrimSpace(next.Destination) == "" {
+			next.Destination = orFallback(group.Name, group.ID)
+		}
+	}
+	if !strings.Contains(next.Description, cidr) {
+		next.Description = strings.TrimSpace(strings.TrimSpace(next.Description) + " " + cidr)
+	}
+	return next
 }
 
 func cleanEditableValue(value string) string {

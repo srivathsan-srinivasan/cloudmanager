@@ -17,10 +17,17 @@ import (
 
 func TestFirewallRuleActionsHideGCPOnlyItemsOutsideGCP(t *testing.T) {
 	awsActions := core.FirewallRuleActionsForProvider("AWS")
+	foundMyIP := false
 	for _, action := range awsActions {
 		if action.Title == "Enable" || action.Title == "Disable" {
 			t.Fatalf("unexpected GCP-only action %q in AWS actions", action.Title)
 		}
+		if action.Title == "Add My IP" {
+			foundMyIP = true
+		}
+	}
+	if !foundMyIP {
+		t.Fatalf("expected AWS actions to include Add My IP, got %#v", awsActions)
 	}
 
 	gcpActions := core.FirewallRuleActionsForProvider("GCP")
@@ -36,6 +43,128 @@ func TestFirewallRuleActionsHideGCPOnlyItemsOutsideGCP(t *testing.T) {
 	}
 	if !foundEnable || !foundDisable {
 		t.Fatalf("expected GCP actions to include enable/disable, got %#v", gcpActions)
+	}
+}
+
+func TestDescribePaneCopiesFirewallRuleDetails(t *testing.T) {
+	view := NewRules(&config.AppConfig{}, core.SecurityGroup{Name: "web", ID: "sg-1"})
+	view.activePane = paneDescribe
+	view.copyableText = "firewall rule details"
+
+	_, cmd := view.handleDescribeKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+
+	if cmd == nil {
+		t.Fatal("expected copy command for firewall-rule describe pane")
+	}
+}
+
+func TestAddMyIPHotkeyResolvesAndExecutesAdd(t *testing.T) {
+	origFirewallLookup := getFirewallProvider
+	origViewLookup := getProvider
+	origResolver := resolvePublicIPCIDR
+	defer func() {
+		getFirewallProvider = origFirewallLookup
+		getProvider = origViewLookup
+		resolvePublicIPCIDR = origResolver
+	}()
+
+	resolvePublicIPCIDR = func(context.Context) (string, error) {
+		return "203.0.113.10/32", nil
+	}
+
+	var gotAction string
+	var gotRule core.FirewallRule
+	mock := &providers.MockProvider{
+		ExecuteFirewallActionFn: func(_ context.Context, action string, rule core.FirewallRule, _ core.CloudContext) (string, error) {
+			gotAction = action
+			gotRule = rule
+			return "added", nil
+		},
+		FetchFirewallRulesFn: func(_ context.Context, _ string, _ core.CloudContext) ([]core.FirewallRule, error) {
+			return []core.FirewallRule{}, nil
+		},
+	}
+	getFirewallProvider = func(config.AppConfig) providers.Provider { return mock }
+	getProvider = func(config.AppConfig) providers.Provider { return mock }
+
+	view := NewRules(&config.AppConfig{Backend: "sdk"}, core.SecurityGroup{Name: "web-sg", ID: "sg-1", Provider: "AWS"})
+	view.activeCtx = core.CloudContext{Provider: "AWS", AccountID: "acct", Region: "us-east-1"}
+	view.ruleData = []core.FirewallRule{{
+		ID:           "sgr-1",
+		Direction:    "Inbound",
+		Protocol:     "tcp",
+		PortRange:    "443",
+		Source:       "0.0.0.0/0",
+		Destination:  "web-sg",
+		Action:       "Allow",
+		Provider:     "AWS",
+		ResourceID:   "sg-1",
+		ResourceName: "web-sg",
+		Description:  "https",
+	}}
+	view.visibleRules = []core.FirewallRule{view.ruleData[0]}
+	view.width = 120
+	view.height = 24
+	view.refreshTable()
+	view.rules.SetCursor(0)
+	view.rules.Focus()
+
+	updated, cmd := view.handleTableKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if cmd == nil {
+		t.Fatal("expected Add My IP hotkey to resolve public IP")
+	}
+	msg := cmd()
+	afterResolve, cmd2 := updated.(*RulesView).Update(msg)
+	if cmd2 == nil {
+		t.Fatal("expected resolved IP to execute Add firewall action")
+	}
+	finalMsg := cmd2()
+	afterExecute, _ := afterResolve.(*RulesView).Update(finalMsg)
+	final := afterExecute.(*RulesView)
+
+	if gotAction != "Add" {
+		t.Fatalf("expected provider Add action, got %q", gotAction)
+	}
+	if gotRule.Source != "203.0.113.10/32" {
+		t.Fatalf("expected my IP CIDR as source, got %#v", gotRule)
+	}
+	if gotRule.Protocol != "tcp" || gotRule.PortRange != "443" || gotRule.ResourceID != "sg-1" {
+		t.Fatalf("expected selected rule shape to be preserved, got %#v", gotRule)
+	}
+	if !strings.Contains(gotRule.Description, "203.0.113.10/32") {
+		t.Fatalf("expected description to include CIDR, got %q", gotRule.Description)
+	}
+	if final.activePane != paneTable {
+		t.Fatalf("expected successful Add My IP to return to table, got %d", final.activePane)
+	}
+}
+
+func TestAddMyIPResolverFailureShowsDescribePane(t *testing.T) {
+	origResolver := resolvePublicIPCIDR
+	defer func() { resolvePublicIPCIDR = origResolver }()
+	resolvePublicIPCIDR = func(context.Context) (string, error) {
+		return "", fmt.Errorf("no public network")
+	}
+
+	view := NewRules(&config.AppConfig{Backend: "sdk"}, core.SecurityGroup{Name: "web-sg", ID: "sg-1", Provider: "AWS"})
+	view.activeCtx = core.CloudContext{Provider: "AWS"}
+	view.width = 120
+	view.height = 24
+	rule := core.FirewallRule{Direction: "Inbound", Protocol: "tcp", PortRange: "22", ResourceID: "sg-1", Provider: "AWS"}
+
+	updated, cmd := view.startAddMyIP(rule)
+	if cmd == nil {
+		t.Fatal("expected Add My IP to start resolver")
+	}
+	msg := cmd()
+	after, _ := updated.(*RulesView).Update(msg)
+	final := after.(*RulesView)
+
+	if final.activePane != paneDescribe {
+		t.Fatalf("expected resolver failure in describe pane, got %d", final.activePane)
+	}
+	if !strings.Contains(final.descView.View(), "no public network") {
+		t.Fatalf("expected resolver error to be shown, got:\n%s", final.descView.View())
 	}
 }
 

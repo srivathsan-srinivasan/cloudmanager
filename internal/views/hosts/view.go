@@ -97,7 +97,7 @@ func (v *HostsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			return v, tea.ExecProcess(cmdExec, func(err error) tea.Msg {
 				return sshCompleteMsg{err: err}
 			})
-		case "c":
+		case "c", "C":
 			host, ok := v.selectedHost()
 			if !ok {
 				return v, nil

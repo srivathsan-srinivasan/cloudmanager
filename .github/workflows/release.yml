@@ -22,8 +22,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # TODO(packaging): Add Homebrew tap publishing configuration
-      # Example: brew tap via GoReleaser using a dedicated PAT
+      # The Homebrew formula in this repository is bumped by scripts/release
+      # before the tag is created. A separate generated tap can be added later
+      # if we split packaging into srivathsan-srinivasan/homebrew-cloudmanager.
 
       # TODO(packaging): Add Apt / Debian package repository configuration
       # Setup NFPM in .goreleaser.yaml to generate .deb, then push to PPA or custom repo

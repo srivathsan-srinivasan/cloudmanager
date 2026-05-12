@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/clipboard"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
@@ -34,6 +35,10 @@ type securityGroupFetchMsg struct {
 	requestKey string
 	groups     []core.SecurityGroup
 	err        error
+}
+
+type clipboardCompleteMsg struct {
+	err error
 }
 
 type actionItem struct {
@@ -94,6 +99,8 @@ type FirewallsView struct {
 	canScrollRight bool
 	filterTerms    []string
 	filterLabel    string
+	copyableText   string
+	detailURL      string
 }
 
 var getProvider = providers.GetProvider
@@ -204,6 +211,8 @@ func (v *FirewallsView) Init(ctx core.CloudContext, width, height int, showSideb
 	v.searchInput.Blur()
 	v.groupData = nil
 	v.visibleGroups = nil
+	v.copyableText = ""
+	v.detailURL = ""
 	v.requestKey = ctx.CacheKey()
 	v.columnOffset = 0
 	v.breadcrumbs = fmt.Sprintf("%s \u203A %s \u203A %s \u203A Firewalls", ctx.Provider, ctx.DisplayName(), ctx.Region)
@@ -283,6 +292,13 @@ func (v *FirewallsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			applog.Infof("component=firewalls event=fetch_completed provider=%s account=%s region=%s mode=%s count=%d", v.activeCtx.Provider, v.activeCtx.AccountID, v.activeCtx.Region, strings.ToUpper(v.cfg.Backend), len(msg.groups))
 			sortSecurityGroups(v.groupData, v.sortColumn, v.sortAsc)
 			v.syncVisibleRows()
+		}
+
+	case clipboardCompleteMsg:
+		// The rules view shares this message type; keep security-group copy silent.
+	case ui.BrowserOpenMsg:
+		if msg.Err != nil {
+			v.copyableText = fmt.Sprintf("Open failed: %v", msg.Err)
 		}
 
 	case tea.WindowSizeMsg:
@@ -415,17 +431,29 @@ func (v *FirewallsView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			}
 		case "Describe":
 			v.pendingGroup = group
-			v.descView.SetContent(core.DescribeSecurityGroup(group))
+			v.detailURL = core.SecurityGroupConsoleURL(v.activeCtx, group)
+			v.copyableText = core.DetailWithConsoleURL(core.DescribeSecurityGroup(group), v.detailURL)
+			v.descView.SetContent(v.copyableText)
 			v.activePane = paneDescribe
 			return v, nil
+		case "Open Console":
+			return v.openConsole(core.SecurityGroupConsoleURL(v.activeCtx, group))
 		}
 	}
 	return v, nil
 }
 
 func (v *FirewallsView) handleDescribeKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
-	if msg.String() == "esc" {
+	switch msg.String() {
+	case "esc":
 		v.activePane = paneTable
+	case "c", "C":
+		if strings.TrimSpace(v.copyableText) == "" {
+			return v, nil
+		}
+		return v, copyTextCmd(v.copyableText)
+	case "o", "O":
+		return v.openConsole(v.detailURL)
 	}
 	return v, nil
 }
@@ -676,6 +704,20 @@ func sortSecurityGroups(groups []core.SecurityGroup, column string, asc bool) {
 			groups[j], groups[j-1] = groups[j-1], groups[j]
 		}
 	}
+}
+
+func copyTextCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		return clipboardCompleteMsg{err: clipboard.Write(text)}
+	}
+}
+
+func (v *FirewallsView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
+	consoleURL = strings.TrimSpace(consoleURL)
+	if consoleURL == "" {
+		return v, nil
+	}
+	return v, ui.OpenURLCmd(consoleURL)
 }
 
 func compareSecurityGroups(left, right core.SecurityGroup, column string, asc bool) bool {

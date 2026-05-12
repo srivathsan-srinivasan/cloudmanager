@@ -59,8 +59,9 @@ type commandCompleteMsg struct {
 	err    error
 }
 type describeCompleteMsg struct {
-	output string
-	err    error
+	output     string
+	consoleURL string
+	err        error
 }
 type accessResolvedMsg struct {
 	vm      core.VM
@@ -195,6 +196,7 @@ type VMsView struct {
 	breadcrumbs    string
 	statusMsg      string
 	copyableText   string
+	detailURL      string
 
 	pendingAction     actionItem
 	pendingVM         core.VM
@@ -347,6 +349,7 @@ func (v *VMsView) Init(ctx core.CloudContext, width, height int, showSidebar boo
 	v.vmData = nil
 	v.visibleVMs = nil
 	v.copyableText = ""
+	v.detailURL = ""
 	v.columnOffset = 0
 	v.requestKey = ctx.CacheKey()
 	v.breadcrumbs = fmt.Sprintf("%s \u203A %s \u203A %s", ctx.Provider, ctx.DisplayName(), ctx.Region)
@@ -521,8 +524,8 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			v.showCopyableDetail(fmt.Sprintf("COMMAND FAILED\n\nError: %v\n\nOutput:\n%s", msg.err, msg.output))
 			cmds = append(cmds, statusCmd("Command failed. Press c to copy, Esc to close."))
 		} else {
-			v.showCopyableDetail(msg.output)
-			v.statusMsg = "Viewing details (c copy, Esc close, Up/Down scroll)."
+			v.showCopyableDetailWithURL(msg.output, msg.consoleURL)
+			v.statusMsg = "Viewing details (c copy, o open, Esc close, Up/Down scroll)."
 			cmds = append(cmds, statusCmd(v.statusMsg))
 		}
 
@@ -560,6 +563,13 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			v.statusMsg = fmt.Sprintf("Copy failed: %v", msg.err)
 		} else {
 			v.statusMsg = "Copied to clipboard."
+		}
+		cmds = append(cmds, statusCmd(v.statusMsg))
+	case ui.BrowserOpenMsg:
+		if msg.Err != nil {
+			v.statusMsg = fmt.Sprintf("Open failed: %v", msg.Err)
+		} else {
+			v.statusMsg = "Opened provider console."
 		}
 		cmds = append(cmds, statusCmd(v.statusMsg))
 
@@ -942,6 +952,9 @@ func (v *VMsView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 				v.statusMsg = fmt.Sprintf("Resolving access methods for %s...", vm.Name)
 				return v, v.resolveAccessCmd(vm)
 			}
+			if action.title == "Open Console" {
+				return v.openConsole(core.VMConsoleURL(v.activeCtx, vm))
+			}
 			// Other actions (Start, Stop, Restart, Describe)
 			v.activePane = paneTable
 			v.statusMsg = fmt.Sprintf("Executing %s on %s...", action.title, vm.Name)
@@ -1008,7 +1021,7 @@ func (v *VMsView) handleAccessKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			v.showCopyableDetail(command)
 			v.statusMsg = "Bootstrap command ready. Press c to copy, Esc to close."
 			return v, statusCmd(v.statusMsg)
-		case "c":
+		case "c", "C":
 			method, ok := v.currentPrivateKeyMethod()
 			if !ok {
 				v.statusMsg = "Select a key first."
@@ -1043,7 +1056,7 @@ func (v *VMsView) handleAccessKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.activePane = paneTable
 		return v, nil
 	case "u":
-	case "c":
+	case "c", "C":
 		if !ok || strings.TrimSpace(method.CopyText) == "" {
 			v.statusMsg = "Nothing to copy."
 			return v, statusCmd(v.statusMsg)
@@ -1102,13 +1115,15 @@ func (v *VMsView) handleDescribeKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		v.activePane = paneTable
-	case "c":
+	case "c", "C":
 		if strings.TrimSpace(v.copyableText) == "" {
 			v.statusMsg = "Nothing to copy."
 			return v, statusCmd(v.statusMsg)
 		}
 		v.statusMsg = "Copying to clipboard..."
 		return v, copyToClipboardCmd(v.copyableText)
+	case "o", "O":
+		return v.openConsole(v.detailURL)
 	}
 	return v, nil
 }
@@ -1186,9 +1201,29 @@ func (v *VMsView) handleSortConfigKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 
 func (v *VMsView) showCopyableDetail(content string) {
 	v.copyableText = content
+	v.detailURL = ""
 	v.descView.SetContent(content)
 	v.descView.GotoTop()
 	v.activePane = paneDescribe
+}
+
+func (v *VMsView) showCopyableDetailWithURL(content, consoleURL string) {
+	v.detailURL = strings.TrimSpace(consoleURL)
+	content = core.DetailWithConsoleURL(content, v.detailURL)
+	v.copyableText = content
+	v.descView.SetContent(content)
+	v.descView.GotoTop()
+	v.activePane = paneDescribe
+}
+
+func (v *VMsView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
+	consoleURL = strings.TrimSpace(consoleURL)
+	if consoleURL == "" {
+		v.statusMsg = "No provider console URL available."
+		return v, statusCmd(v.statusMsg)
+	}
+	v.statusMsg = "Opening provider console..."
+	return v, tea.Batch(statusCmd(v.statusMsg), ui.OpenURLCmd(consoleURL))
 }
 
 func statusCmd(msg string) tea.Cmd {
@@ -1856,7 +1891,7 @@ func executeActionCmd(action string, vm core.VM, cloudCtx core.CloudContext, cfg
 		provider := getProvider(*cfg)
 		output, err := provider.ExecuteAction(context.Background(), action, vm, cloudCtx)
 		if action == "Describe" {
-			return describeCompleteMsg{output: output, err: err}
+			return describeCompleteMsg{output: output, consoleURL: core.VMConsoleURL(cloudCtx, vm), err: err}
 		}
 		return commandCompleteMsg{output: output, err: err}
 	}
@@ -1872,6 +1907,7 @@ func (v *VMsView) resolveAccessCmd(vm core.VM) tea.Cmd {
 		methods := access.Resolve(context.Background(), req)
 		if learned, ok := learnedAccessMethod(context.Background(), v.activeCtx, vm); ok {
 			methods = append([]core.AccessMethod{learned}, methods...)
+			methods = access.PruneFallbacks(methods)
 		}
 		return accessResolvedMsg{
 			vm:      vm,

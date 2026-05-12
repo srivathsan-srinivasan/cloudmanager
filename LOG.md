@@ -1,5 +1,53 @@
 # LOG
 
+## 2026-05-10
+
+### User Request Handled
+
+- Add a firewall action to allow the user's current public IP.
+
+### Key Code And UI Changes
+
+1. Added `Add My IP` to firewall rule actions plus `i` as a table shortcut.
+2. The action resolves the current public IP, converts IPv4 to `/32` and IPv6 to `/128`, and creates a new allow rule using the selected firewall rule as the protocol/port/resource template.
+3. Firewall mutation guardrails still apply: SDK mode is required and read-only GCP effective policy rows remain blocked.
+4. Added `internal/publicip` with small resolver fallbacks and CIDR normalization tests.
+5. Added firewall regression tests for successful Add My IP and resolver failure handling.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/publicip ./internal/core ./internal/views/firewalls`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Runtime IP resolution depends on outbound HTTPS to public IP resolver endpoints.
+
+## 2026-05-09
+
+### User Request Handled
+
+- Automate the Go/Homebrew release flow.
+
+### Key Code And Packaging Changes
+
+1. Added `scripts/release` to cut stable releases from a clean worktree.
+2. The release script runs tests, updates `VERSION`, README pinned `go install`, and `Formula/cloudmanager.rb`, commits the release bump, creates an annotated tag, and pushes branch/tag unless `--no-push` is used.
+3. GoReleaser now injects `main.Version` and `main.BuildTime` with ldflags, so release artifacts do not report `vdev`.
+4. Updated release workflow comments to reflect that the checked-in formula is bumped before tagging.
+5. Documented the release command in README.
+
+### Validation Performed
+
+- `bash -n scripts/release`
+- `scripts/release --help`
+- `git diff --check`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. This keeps the Homebrew formula in the main repository. A separate generated tap such as `srivathsan-srinivasan/homebrew-cloudmanager` can be added later if we want GoReleaser to publish formula/cask updates directly.
+
 ## 2026-05-05
 
 ### Update
@@ -2818,3 +2866,178 @@ Completed a request to completely rewrite `ExecuteFirewallActionSDK` to use nati
 ### Remaining Risks Or Follow-Up
 
 - Confirmation is inline in the Hosts view, not a shared modal component yet.
+
+## 2026-05-11 (Access Method Cleanup)
+
+### User Request Handled
+
+- Cleaned up noisy VM access methods after the access picker showed learned SSH, weak SSH config aliases, direct default SSH, private-key picker, and remediation together.
+
+### Key Code And UI Changes
+
+1. Access method pruning.
+   - Added `access.PruneFallbacks`.
+   - Hides direct `ssh <ip>` fallback by default.
+   - Hides SSH config and private-key fallback when a learned SSH method exists.
+   - Hides remediation when any runnable or selectable access method exists.
+   - Fallbacks can still be shown with `CLOUDMANAGER_SHOW_ACCESS_FALLBACKS=1`.
+
+2. SSH config matching.
+   - Skips SSH config aliases that are literal IP addresses.
+   - Keeps friendly aliases that point to a VM IP through `HostName`.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/access ./internal/views/vms ./internal/localdb`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Fallback visibility is currently controlled by env var, not yet by a TUI setting.
+
+## 2026-05-12 (GCP VM Describe Fix)
+
+### User Request Handled
+
+- Fixed GCP VM describe failures when the selected VM record had an empty or full-URL zone.
+
+### Key Code And UI Changes
+
+1. GCP zone resolution.
+   - Normalizes GCP zone values before VM actions and SSH commands.
+   - If a VM has no zone, CloudManager now looks up the VM in the project and uses the discovered zone.
+
+2. GCP SDK describe output.
+   - SDK describe now returns the full instance JSON instead of a short hand-written summary.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/gcp ./internal/providers ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- If a VM is selected from stale cache and no longer exists in GCP, describe now fails with an explicit "instance not found in project" zone-discovery error.
+
+## 2026-05-12 (Live GCP Describe Sweep)
+
+### User Request Handled
+
+- Tested GCP VM describe across configured CloudManager GCP contexts and checked real describe output.
+
+### Key Code And UI Changes
+
+1. Added skipped-by-default live diagnostic test.
+   - `CLOUDMANAGER_LIVE_GCP_DESCRIBE=1 go test -v ./internal/providers/gcp -run TestLiveDescribeConfiguredGCPContexts -count=1`
+   - Lists one VM per configured GCP context, then validates both CLI and SDK describe output.
+
+2. Improved GCP CLI VM-list errors.
+   - `FetchVMsCLI` now uses `CombinedOutput`.
+   - CloudManager now surfaces the actual gcloud error text, including `SERVICE_DISABLED`.
+   - Added `--quiet` to GCP compute actions to avoid interactive prompts in the TUI path.
+
+### Validation Performed
+
+- Live describe sweep:
+  - Passed CLI and SDK describe for every configured GCP context with Compute enabled and at least one VM.
+  - Skipped contexts with no VMs: `firecompass-meun`, `firecompass-uat`.
+  - Failed before describe because Compute Engine API is disabled: `firecompass-qa-meun`, `fireshadow`, `gen-lang-client-0618559363`, `sys-74378647694670153862756860`.
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/gcp ./internal/providers ./internal/views/vms`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Configured GCP projects with disabled Compute API will still fail VM listing, but the UI now has the real provider error instead of only `exit status 1`.
+
+## 2026-05-12 (All-Context Describe Sweep)
+
+### User Request Handled
+
+- Checked VM Describe across all configured CloudManager cloud contexts and both CLI/SDK backends where supported.
+- Rechecked local Describe panes for VMs, disks, snapshots, firewalls, networks, databases, and storage.
+
+### Key Code And UI Changes
+
+1. Added skipped-by-default all-provider live diagnostic test.
+   - `CLOUDMANAGER_LIVE_DESCRIBE=1 go test -v ./internal/providers -run TestLiveVMDescribeAllConfiguredContexts -count=1`
+   - Walks configured contexts, lists VMs, describes one VM, and verifies non-empty output containing the VM name or ID.
+
+2. Fixed AWS SDK Describe panics.
+   - AWS SDK instance describe is now nil-safe for missing instance state, placement, IAM profile, EBS block mapping, and network association fields.
+
+3. Improved Azure CLI VM-list errors.
+   - Azure VM listing now captures stderr with `CombinedOutput`, so revoked-token errors are visible instead of only `exit status 1`.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/aws ./internal/providers/azure ./internal/providers ./internal/views/vms ./internal/views/disks ./internal/views/snapshots ./internal/views/firewalls ./internal/views/networks ./internal/views/databases ./internal/views/storage`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+- Live all-context Describe sweep:
+  - AWS CLI and SDK Describe passed across all configured AWS contexts/regions.
+  - GCP CLI and SDK Describe passed for contexts with Compute enabled and VMs.
+  - GCP contexts with no VMs skipped: `firecompass-meun`, `firecompass-uat`.
+  - GCP contexts blocked before Describe because Compute API is disabled: `firecompass-qa-meun`, `fireshadow`, `gen-lang-client-0618559363`, `sys-74378647694670153862756860`.
+  - Azure CLI and SDK blocked before Describe because the active Azure CLI grant is revoked/expired (`AADSTS50173`).
+
+### Remaining Risks Or Follow-Up
+
+- Azure Describe cannot be verified until the user refreshes Azure auth with `az logout` and `az login`.
+- Disabled GCP Compute projects will continue to fail VM listing until Compute Engine API is enabled or those projects are removed from CloudManager contexts.
+
+## 2026-05-12 (Copy Details Shortcut)
+
+### User Request Handled
+
+- Added a `c` / `C` clipboard shortcut for detail panes so users can copy clean text instead of terminal-rendered borders.
+
+### Key Code And UI Changes
+
+1. Added copyable detail state to disks, snapshots, firewalls, firewall rules, and networks.
+   - Describe/detail content is stored as plain text and copied through the shared clipboard helper.
+   - Disk and snapshot describe panes now show `c copy` in the status hint.
+
+2. Made existing copy shortcuts accept uppercase `C`.
+   - Updated VM access/describe copy paths, database/storage detail copy, and manual host command copy.
+
+3. Added focused key-handler coverage.
+   - Tests assert that `C` produces a copy command for disk, snapshot, security-group, firewall-rule, and network detail panes.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/disks ./internal/views/snapshots ./internal/views/firewalls ./internal/views/networks ./internal/views/databases ./internal/views/storage ./internal/views/vms ./internal/views/hosts`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Firewalls and networks copy silently today because those views do not have a status line; a small toast/status abstraction would make copy feedback consistent across every pane.
+
+## 2026-05-12 (Provider Console Drill-Down)
+
+### User Request Handled
+
+- Added a browser drill-down path from CloudManager resources to provider console pages.
+
+### Key Code And UI Changes
+
+1. Added provider console URL builders.
+   - Supports VMs, disks, snapshots, networks, subnets, security groups, firewall rules, databases, and storage where CloudManager has enough provider identity.
+   - Covers AWS, GCP, and Azure resource URL patterns.
+
+2. Added browser-open command support.
+   - New `internal/browseropen` helper uses `open`, `xdg-open`, or Windows URL handler.
+   - New `ui.OpenURLCmd` wraps browser launch as a Bubble Tea command.
+
+3. Added TUI drill-down affordances.
+   - Detail panes now include a visible `Console:` URL when available.
+   - Press `o` / `O` from detail panes to open the provider console.
+   - Resource action menus now include `Open Console` where applicable.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./internal/core ./internal/views/vms ./internal/views/disks ./internal/views/snapshots ./internal/views/firewalls ./internal/views/networks ./internal/views/databases ./internal/views/storage`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+- Terminal-native clickable buttons are not portable; the reliable UX is visible URL plus `o` to open.
+- Some provider URL formats may need refinement as we see real-world console routes, especially GCP subnet/firewall deep links and AWS console fragments.

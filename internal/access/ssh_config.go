@@ -2,6 +2,7 @@ package access
 
 import (
 	"bufio"
+	"net/netip"
 	"os"
 	"strings"
 
@@ -18,7 +19,7 @@ type SSHConfigEntry struct {
 
 func (e SSHConfigEntry) PrimaryAlias() string {
 	for _, alias := range e.Aliases {
-		if alias == "" || strings.ContainsAny(alias, "*?!") {
+		if alias == "" || strings.ContainsAny(alias, "*?!") || isLiteralIP(alias) {
 			continue
 		}
 		return alias
@@ -74,7 +75,7 @@ func ParseSSHConfig(path string) ([]SSHConfigEntry, error) {
 func entryMatchesVM(entry SSHConfigEntry, vm core.VM) bool {
 	fields := []string{vm.Name, vm.ID, vm.PublicIP, vm.PrivateIP}
 	for _, alias := range entry.Aliases {
-		if strings.ContainsAny(alias, "*?!") {
+		if strings.ContainsAny(alias, "*?!") || isLiteralIP(alias) {
 			continue
 		}
 		for _, field := range fields {
@@ -89,6 +90,15 @@ func entryMatchesVM(entry SSHConfigEntry, vm core.VM) bool {
 		}
 	}
 	return false
+}
+
+func isLiteralIP(value string) bool {
+	value = strings.Trim(strings.TrimSpace(value), "[]")
+	if value == "" {
+		return false
+	}
+	_, err := netip.ParseAddr(value)
+	return err == nil
 }
 
 func splitConfigLine(line string) (string, string, bool) {

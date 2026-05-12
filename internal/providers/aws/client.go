@@ -445,7 +445,7 @@ func awsInstanceDetailFromSDK(inst ec2types.Instance) awsInstanceDetail {
 		Name:              tagValueSDK(inst.Tags, "Name"),
 		InstanceID:        awssdk.ToString(inst.InstanceId),
 		InstanceType:      string(inst.InstanceType),
-		State:             string(inst.State.Name),
+		State:             instanceStateNameSDK(inst.State),
 		Lifecycle:         string(inst.InstanceLifecycle),
 		ImageID:           awssdk.ToString(inst.ImageId),
 		Architecture:      string(inst.Architecture),
@@ -453,12 +453,12 @@ func awsInstanceDetailFromSDK(inst ec2types.Instance) awsInstanceDetail {
 		KeyName:           awssdk.ToString(inst.KeyName),
 		VpcID:             awssdk.ToString(inst.VpcId),
 		SubnetID:          awssdk.ToString(inst.SubnetId),
-		AvailabilityZone:  awssdk.ToString(inst.Placement.AvailabilityZone),
+		AvailabilityZone:  placementAvailabilityZoneSDK(inst.Placement),
 		PrivateIP:         awssdk.ToString(inst.PrivateIpAddress),
 		PublicIP:          awssdk.ToString(inst.PublicIpAddress),
 		PrivateDNS:        awssdk.ToString(inst.PrivateDnsName),
 		PublicDNS:         awssdk.ToString(inst.PublicDnsName),
-		IAMProfile:        awssdk.ToString(inst.IamInstanceProfile.Arn),
+		IAMProfile:        iamInstanceProfileARNSDK(inst.IamInstanceProfile),
 		RootDeviceType:    string(inst.RootDeviceType),
 		RootDeviceName:    awssdk.ToString(inst.RootDeviceName),
 		Virtualization:    string(inst.VirtualizationType),
@@ -476,6 +476,27 @@ func awsInstanceDetailFromSDK(inst ec2types.Instance) awsInstanceDetail {
 		detail.Name = "-"
 	}
 	return detail
+}
+
+func iamInstanceProfileARNSDK(profile *ec2types.IamInstanceProfile) string {
+	if profile == nil {
+		return ""
+	}
+	return awssdk.ToString(profile.Arn)
+}
+
+func placementAvailabilityZoneSDK(placement *ec2types.Placement) string {
+	if placement == nil {
+		return ""
+	}
+	return awssdk.ToString(placement.AvailabilityZone)
+}
+
+func instanceStateNameSDK(state *ec2types.InstanceState) string {
+	if state == nil {
+		return ""
+	}
+	return string(state.Name)
 }
 
 func enrichAWSInstanceDetailSDK(ctx context.Context, client *ec2.Client, detail *awsInstanceDetail) {
@@ -655,9 +676,9 @@ func volumesSDK(mappings []ec2types.InstanceBlockDeviceMapping) []string {
 	for _, mapping := range mappings {
 		values = append(values, fmt.Sprintf("%s -> %s (%s, delete on termination: %t)",
 			awssdk.ToString(mapping.DeviceName),
-			awssdk.ToString(mapping.Ebs.VolumeId),
-			string(mapping.Ebs.Status),
-			awssdk.ToBool(mapping.Ebs.DeleteOnTermination),
+			blockDeviceVolumeIDSDK(mapping.Ebs),
+			blockDeviceStatusSDK(mapping.Ebs),
+			blockDeviceDeleteOnTerminationSDK(mapping.Ebs),
 		))
 	}
 	return values
@@ -669,13 +690,41 @@ func networkInterfacesSDK(interfaces []ec2types.InstanceNetworkInterface) []stri
 		values = append(values, fmt.Sprintf("%s private=%s public=%s subnet=%s vpc=%s groups=%s",
 			awssdk.ToString(iface.NetworkInterfaceId),
 			orDash(awssdk.ToString(iface.PrivateIpAddress)),
-			orDash(awssdk.ToString(iface.Association.PublicIp)),
+			orDash(networkAssociationPublicIPSDK(iface.Association)),
 			orDash(awssdk.ToString(iface.SubnetId)),
 			orDash(awssdk.ToString(iface.VpcId)),
 			strings.Join(securityGroupsSDK(iface.Groups), ", "),
 		))
 	}
 	return values
+}
+
+func blockDeviceVolumeIDSDK(ebs *ec2types.EbsInstanceBlockDevice) string {
+	if ebs == nil {
+		return ""
+	}
+	return awssdk.ToString(ebs.VolumeId)
+}
+
+func blockDeviceStatusSDK(ebs *ec2types.EbsInstanceBlockDevice) string {
+	if ebs == nil {
+		return ""
+	}
+	return string(ebs.Status)
+}
+
+func blockDeviceDeleteOnTerminationSDK(ebs *ec2types.EbsInstanceBlockDevice) bool {
+	if ebs == nil {
+		return false
+	}
+	return awssdk.ToBool(ebs.DeleteOnTermination)
+}
+
+func networkAssociationPublicIPSDK(assoc *ec2types.InstanceNetworkInterfaceAssociation) string {
+	if assoc == nil {
+		return ""
+	}
+	return awssdk.ToString(assoc.PublicIp)
 }
 
 func groupName(name, id string) string {

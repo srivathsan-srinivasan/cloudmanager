@@ -14,6 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/clipboard"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
@@ -46,8 +47,12 @@ type commandCompleteMsg struct {
 	err    error
 }
 type describeCompleteMsg struct {
-	output string
-	err    error
+	output     string
+	consoleURL string
+	err        error
+}
+type clipboardCompleteMsg struct {
+	err error
 }
 
 type cacheEntry struct {
@@ -118,6 +123,8 @@ type DisksView struct {
 	breadcrumbs    string
 	statusMsg      string
 	notSupported   bool
+	copyableText   string
+	detailURL      string
 
 	pendingAction actionItem
 	pendingDisk   core.Disk
@@ -233,6 +240,8 @@ func (v *DisksView) Init(ctx core.CloudContext, width, height int, showSidebar b
 	v.searchInput.Blur()
 	v.diskData = nil
 	v.visibleDisks = nil
+	v.copyableText = ""
+	v.detailURL = ""
 	v.requestKey = ctx.CacheKey()
 	v.columnOffset = 0
 	v.breadcrumbs = fmt.Sprintf("%s \u203A %s \u203A %s", ctx.Provider, ctx.DisplayName(), ctx.Region)
@@ -348,9 +357,24 @@ func (v *DisksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		if msg.err != nil {
 			v.statusMsg = fmt.Sprintf("Error: %v", msg.err)
 		} else {
-			v.descView.SetContent(msg.output)
+			v.detailURL = strings.TrimSpace(msg.consoleURL)
+			v.copyableText = core.DetailWithConsoleURL(msg.output, v.detailURL)
+			v.descView.SetContent(v.copyableText)
 			v.activePane = paneDescribe
-			v.statusMsg = "Viewing details (Esc to close, Up/Down to scroll)."
+			v.statusMsg = "Viewing details (c copy, o open, Esc close, Up/Down scroll)."
+		}
+
+	case clipboardCompleteMsg:
+		if msg.err != nil {
+			v.statusMsg = fmt.Sprintf("Copy failed: %v", msg.err)
+		} else {
+			v.statusMsg = "Copied to clipboard."
+		}
+	case ui.BrowserOpenMsg:
+		if msg.Err != nil {
+			v.statusMsg = fmt.Sprintf("Open failed: %v", msg.Err)
+		} else {
+			v.statusMsg = "Opened provider console."
 		}
 
 	case tea.WindowSizeMsg:
@@ -576,8 +600,11 @@ func (v *DisksView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			if action.title == "Describe" {
 				v.activePane = paneDescribe
 				return v, func() tea.Msg {
-					return describeCompleteMsg{output: core.DescribeDisk(disk)}
+					return describeCompleteMsg{output: core.DescribeDisk(disk), consoleURL: core.DiskConsoleURL(v.activeCtx, disk)}
 				}
+			}
+			if action.title == "Open Console" {
+				return v.openConsole(core.DiskConsoleURL(v.activeCtx, disk))
 			}
 
 			// Other actions (Detach, Create Snapshot)
@@ -631,8 +658,18 @@ func (v *DisksView) handleResizeKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 }
 
 func (v *DisksView) handleDescribeKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
-	if msg.String() == "esc" {
+	switch msg.String() {
+	case "esc":
 		v.activePane = paneTable
+	case "c", "C":
+		if strings.TrimSpace(v.copyableText) == "" {
+			v.statusMsg = "Nothing to copy."
+			return v, nil
+		}
+		v.statusMsg = "Copying to clipboard..."
+		return v, copyTextCmd(v.copyableText)
+	case "o", "O":
+		return v.openConsole(v.detailURL)
 	}
 	return v, nil
 }
@@ -872,8 +909,24 @@ func executeDiskActionCmd(action string, disk core.Disk, cloudCtx core.CloudCont
 		}
 		output, err := dp.ExecuteDiskAction(context.Background(), action, disk, cloudCtx)
 		if action == "Describe" {
-			return describeCompleteMsg{output: output, err: err}
+			return describeCompleteMsg{output: output, consoleURL: core.DiskConsoleURL(cloudCtx, disk), err: err}
 		}
 		return commandCompleteMsg{output: output, err: err}
+	}
+}
+
+func (v *DisksView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
+	consoleURL = strings.TrimSpace(consoleURL)
+	if consoleURL == "" {
+		v.statusMsg = "No provider console URL available."
+		return v, nil
+	}
+	v.statusMsg = "Opening provider console..."
+	return v, ui.OpenURLCmd(consoleURL)
+}
+
+func copyTextCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		return clipboardCompleteMsg{err: clipboard.Write(text)}
 	}
 }

@@ -65,5 +65,6 @@ func SubnetActions() []Action {
 	return []Action{
 		{"View VMs", "View instances within this subnet", false},
 		{"Describe", "View full resource details", false},
+		{"Open Console", "Open this subnet in the provider console", false},
 	}
 }

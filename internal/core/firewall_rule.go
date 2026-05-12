@@ -74,6 +74,8 @@ func FirewallRuleActions() []Action {
 func FirewallRuleActionsForProvider(provider string) []Action {
 	actions := []Action{
 		{"Describe", "Show full rule details", false},
+		{"Open Console", "Open this firewall rule source in the provider console", false},
+		{"Add My IP", "Create a scoped allow rule for your current public IP", false},
 		{"Edit", "Edit this firewall rule", false},
 		{"Delete", "Delete this firewall rule (Destructive)", true},
 	}

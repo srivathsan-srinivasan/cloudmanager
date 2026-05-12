@@ -220,6 +220,7 @@ func VMActions() []Action {
 		{"Terminate", "Permanently delete the virtual machine", true},
 		{"View Firewalls", "Open related firewalls or security groups for this VM", false},
 		{"Describe", "Show full resource details", false},
+		{"Open Console", "Open this VM in the provider console", false},
 		{"Cost", "Fetch on-demand cost report for this VM", false},
 		{"FinOps", "Get Gemini AI cost & architecture recommendations", false},
 		{"SSH", "Connect to the instance via SSH", false},

@@ -33,10 +33,11 @@ type gcpInstance struct {
 }
 
 func FetchVMsCLI(project string) ([]core.VM, error) {
-	cmd := exec.Command("gcloud", "compute", "instances", "list", "--project", project, "--format=json")
-	output, err := cmd.Output()
+	project = strings.TrimSpace(project)
+	cmd := exec.Command("gcloud", "compute", "instances", "list", "--project", project, "--format=json", "--quiet")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("gcloud cli error: %w", err)
+		return nil, fmt.Errorf("gcloud compute instances list failed for project %s: %w\n%s", project, err, strings.TrimSpace(string(output)))
 	}
 	var data []gcpInstance
 	if err := json.Unmarshal(output, &data); err != nil {
@@ -51,17 +52,25 @@ func FetchVMsCLI(project string) ([]core.VM, error) {
 
 func ExecuteActionCLI(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error) {
 	var cmd *exec.Cmd
+	project := strings.TrimSpace(cloudCtx.AccountID)
+	zone, err := resolveGCPVMZone(ctx, project, vm, func(ctx context.Context, project string) ([]core.VM, error) {
+		_ = ctx
+		return FetchVMsCLI(project)
+	})
+	if err != nil {
+		return "", err
+	}
 	switch action {
 	case "Start":
-		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "start", vm.Name, "--project", cloudCtx.AccountID, "--zone", vm.Zone)
+		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "start", vm.Name, "--project", project, "--zone", zone, "--quiet")
 	case "Stop":
-		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "stop", vm.Name, "--project", cloudCtx.AccountID, "--zone", vm.Zone)
+		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "stop", vm.Name, "--project", project, "--zone", zone, "--quiet")
 	case "Restart":
-		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "reset", vm.Name, "--project", cloudCtx.AccountID, "--zone", vm.Zone)
+		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "reset", vm.Name, "--project", project, "--zone", zone, "--quiet")
 	case "Terminate":
-		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "delete", vm.Name, "--project", cloudCtx.AccountID, "--zone", vm.Zone, "--quiet")
+		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "delete", vm.Name, "--project", project, "--zone", zone, "--quiet")
 	case "Describe":
-		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "describe", vm.Name, "--project", cloudCtx.AccountID, "--zone", vm.Zone)
+		cmd = exec.CommandContext(ctx, "gcloud", "compute", "instances", "describe", vm.Name, "--project", project, "--zone", zone, "--quiet")
 	default:
 		return "", fmt.Errorf("action %s not supported for GCP", action)
 	}
@@ -76,7 +85,7 @@ func ExecuteActionCLI(ctx context.Context, action string, vm core.VM, cloudCtx c
 }
 
 func GetSSHCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error) {
-	return exec.CommandContext(ctx, "gcloud", "compute", "ssh", vm.Name, "--project", cloudCtx.AccountID, "--zone", vm.Zone), nil
+	return exec.CommandContext(ctx, "gcloud", "compute", "ssh", vm.Name, "--project", cloudCtx.AccountID, "--zone", normalizeGCPZone(vm.Zone)), nil
 }
 
 // --- SDK Backend ---
@@ -130,7 +139,11 @@ func ExecuteActionSDK(ctx context.Context, action string, vm core.VM, cloudCtx c
 	if err != nil {
 		return "", fmt.Errorf("failed to create gcp compute service: %w", err)
 	}
-	project, zone := cloudCtx.AccountID, vm.Zone
+	project := strings.TrimSpace(cloudCtx.AccountID)
+	zone, err := resolveGCPVMZone(ctx, project, vm, FetchVMsSDKWithCLIAuthFallback)
+	if err != nil {
+		return "", err
+	}
 	switch action {
 	case "Start":
 		_, err = service.Instances.Start(project, zone, vm.Name).Context(ctx).Do()
@@ -145,9 +158,11 @@ func ExecuteActionSDK(ctx context.Context, action string, vm core.VM, cloudCtx c
 		if descErr != nil {
 			return "", descErr
 		}
-		machineParts := strings.Split(inst.MachineType, "/")
-		return fmt.Sprintf("Instance Name: %s\nID: %d\nType: %s\nStatus: %s\nZone: %s\n",
-			inst.Name, inst.Id, machineParts[len(machineParts)-1], inst.Status, inst.Zone), nil
+		output, marshalErr := json.MarshalIndent(inst, "", "  ")
+		if marshalErr != nil {
+			return "", marshalErr
+		}
+		return string(output), nil
 	default:
 		return "", fmt.Errorf("action %s not supported for GCP SDK", action)
 	}
@@ -157,8 +172,48 @@ func ExecuteActionSDK(ctx context.Context, action string, vm core.VM, cloudCtx c
 	return fmt.Sprintf("Successfully %sed %s", strings.ToLower(action), vm.Name), nil
 }
 
+func resolveGCPVMZone(ctx context.Context, project string, vm core.VM, fetch func(context.Context, string) ([]core.VM, error)) (string, error) {
+	if zone := normalizeGCPZone(vm.Zone); zone != "" {
+		return zone, nil
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return "", fmt.Errorf("gcp project is empty")
+	}
+	name := strings.TrimSpace(vm.Name)
+	id := strings.TrimSpace(vm.ID)
+	if name == "" && id == "" {
+		return "", fmt.Errorf("gcp vm name/id is empty")
+	}
+	vms, err := fetch(ctx, project)
+	if err != nil {
+		return "", fmt.Errorf("gcp vm zone is empty and zone discovery failed for project %s: %w", project, err)
+	}
+	for _, candidate := range vms {
+		if (name != "" && strings.EqualFold(strings.TrimSpace(candidate.Name), name)) ||
+			(id != "" && strings.EqualFold(strings.TrimSpace(candidate.ID), id)) {
+			if zone := normalizeGCPZone(candidate.Zone); zone != "" {
+				return zone, nil
+			}
+		}
+	}
+	if name != "" {
+		return "", fmt.Errorf("gcp vm zone is empty and instance %q was not found in project %s", name, project)
+	}
+	return "", fmt.Errorf("gcp vm zone is empty and instance id %q was not found in project %s", id, project)
+}
+
+func normalizeGCPZone(zone string) string {
+	zone = strings.TrimSpace(zone)
+	if zone == "" || zone == "-" {
+		return ""
+	}
+	parts := strings.Split(zone, "/")
+	return strings.TrimSpace(parts[len(parts)-1])
+}
+
 func GetSSHCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error) {
-	return exec.CommandContext(ctx, "gcloud", "compute", "ssh", vm.Name, "--project", cloudCtx.AccountID, "--zone", vm.Zone), nil
+	return exec.CommandContext(ctx, "gcloud", "compute", "ssh", vm.Name, "--project", cloudCtx.AccountID, "--zone", normalizeGCPZone(vm.Zone)), nil
 }
 
 // --- Helpers ---

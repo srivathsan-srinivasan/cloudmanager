@@ -65,6 +65,7 @@ type StorageView struct {
 	activePane   int
 	pending      core.StorageBucket
 	copyableText string
+	detailURL    string
 }
 
 func New(cfg *config.AppConfig) *StorageView {
@@ -111,6 +112,7 @@ func (v *StorageView) Init(ctx core.CloudContext, width, height int, showSidebar
 	v.requestKey = ctx.CacheKey()
 	v.activePane = paneTable
 	v.copyableText = ""
+	v.detailURL = ""
 	v.loading = true
 	v.statusMsg = fmt.Sprintf("Fetching storage for %s...", ctx.DisplayName())
 	v.refreshTable()
@@ -145,8 +147,11 @@ func (v *StorageView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			return v.handleActionKeys(msg)
 		}
 		if v.activePane == paneDescribe {
-			if msg.String() == "c" {
+			if msg.String() == "c" || msg.String() == "C" {
 				return v.copyText(v.copyableText)
+			}
+			if msg.String() == "o" || msg.String() == "O" {
+				return v.openConsole(v.detailURL)
 			}
 			v.descView, cmd = v.descView.Update(msg)
 			return v, cmd
@@ -194,6 +199,12 @@ func (v *StorageView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			v.statusMsg = fmt.Sprintf("Copy failed: %v", msg.err)
 		} else {
 			v.statusMsg = "Copied to clipboard."
+		}
+	case ui.BrowserOpenMsg:
+		if msg.Err != nil {
+			v.statusMsg = fmt.Sprintf("Open failed: %v", msg.Err)
+		} else {
+			v.statusMsg = "Opened provider console."
 		}
 	}
 	return v, cmd
@@ -296,7 +307,7 @@ func (v *StorageView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 	action := v.actions.SelectedItem().(actionItem).title
 	switch action {
 	case "Describe":
-		return v.showDetails(core.DescribeStorageBucket(v.activeCtx, bucket)), nil
+		return v.showDetails(core.DescribeStorageBucket(v.activeCtx, bucket), core.StorageConsoleURL(v.activeCtx, bucket)), nil
 	case "Copy URI":
 		return v.copyText(core.StorageURI(v.activeCtx, bucket))
 	case "Copy ID":
@@ -308,6 +319,8 @@ func (v *StorageView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			return v, nil
 		}
 		return v.copyText(consoleURL)
+	case "Open Console":
+		return v.openConsole(core.StorageConsoleURL(v.activeCtx, bucket))
 	case "Tag":
 		return v.openTag()
 	}
@@ -356,12 +369,13 @@ func (v *StorageView) openTag() (ui.View, tea.Cmd) {
 	return v, textinput.Blink
 }
 
-func (v *StorageView) showDetails(content string) ui.View {
+func (v *StorageView) showDetails(content, consoleURL string) ui.View {
+	v.detailURL = strings.TrimSpace(consoleURL)
 	v.copyableText = content
-	v.descView.SetContent(content)
+	v.descView.SetContent(v.copyableText)
 	v.descView.GotoTop()
 	v.activePane = paneDescribe
-	v.statusMsg = "Viewing details (c copy, Esc close)."
+	v.statusMsg = "Viewing details (c copy, o open, Esc close)."
 	return v
 }
 
@@ -375,6 +389,16 @@ func (v *StorageView) copyText(text string) (ui.View, tea.Cmd) {
 	return v, func() tea.Msg {
 		return clipboardCompleteMsg{err: clipboard.Write(text)}
 	}
+}
+
+func (v *StorageView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
+	consoleURL = strings.TrimSpace(consoleURL)
+	if consoleURL == "" {
+		v.statusMsg = "No provider console URL available."
+		return v, nil
+	}
+	v.statusMsg = "Opening provider console..."
+	return v, ui.OpenURLCmd(consoleURL)
 }
 
 func storageColumnWidth(name string) int {

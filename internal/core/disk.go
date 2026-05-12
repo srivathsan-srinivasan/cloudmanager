@@ -79,6 +79,7 @@ func DiskActions() []Action {
 		{"Resize", "Increase the size of the disk", false},
 		{"Create Snapshot", "Create a snapshot of the disk", false},
 		{"Describe", "Show full resource details", false},
+		{"Open Console", "Open this disk in the provider console", false},
 	}
 }
 

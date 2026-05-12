@@ -66,6 +66,25 @@ func TestResolveIncludesSSHConfigFallback(t *testing.T) {
 	}
 }
 
+func TestResolveSkipsIPAddressSSHConfigAlias(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("Host 198.51.100.10\n  User ubuntu\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLOUDMANAGER_SSH_CONFIG", path)
+
+	methods := Resolve(context.Background(), Request{
+		Context: core.CloudContext{Provider: "AWS"},
+		VM:      core.VM{Name: "api", PublicIP: "198.51.100.10"},
+	})
+
+	for _, method := range methods {
+		if method.Kind == "ssh_config" {
+			t.Fatalf("did not expect literal IP ssh config alias, got %+v in %+v", method, methods)
+		}
+	}
+}
+
 func TestResolveSkipsUnrelatedSSHConfigAliases(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config")
@@ -90,6 +109,52 @@ Host github-personal
 		if strings.Contains(method.CopyText, "github-") || strings.Contains(method.Label, "github-") {
 			t.Fatalf("unexpected unrelated ssh config method: %+v in %+v", method, methods)
 		}
+	}
+}
+
+func TestResolveHidesRemediationWhenRunnableAccessExists(t *testing.T) {
+	methods := Resolve(context.Background(), Request{
+		NativeMethod: &core.AccessMethod{
+			ID:        "provider-native",
+			Kind:      "native",
+			Label:     "AWS SSM Session Manager",
+			Priority:  10,
+			Command:   []string{"aws", "ssm", "start-session", "--target", "i-123"},
+			Available: true,
+		},
+		VM: core.VM{Name: "api", ID: "i-123"},
+	})
+
+	for _, method := range methods {
+		if method.Kind == "remediation" {
+			t.Fatalf("did not expect remediation when runnable access exists, got %+v", methods)
+		}
+	}
+}
+
+func TestPruneFallbacksHidesNoisyMethodsAfterLearnedSSH(t *testing.T) {
+	methods := PruneFallbacks([]core.AccessMethod{
+		{ID: "provider-native", Kind: "native", Label: "AWS SSM Session Manager", Priority: 10, Command: []string{"aws"}, Available: true},
+		{ID: "learned-ssh", Kind: "learned_ssh", Label: "Learned SSH", Priority: 12, Command: []string{"ssh", "-i", "key", "ubuntu@host"}, Available: true},
+		{ID: "ssh-config-host", Kind: "ssh_config", Label: "SSH config: host", Priority: 20, Command: []string{"ssh", "host"}, Available: true},
+		{ID: "private-key-ssh", Kind: "private_key_picker", Label: "Private key SSH", Priority: 35, Available: true},
+		{ID: "direct-ssh", Kind: "ssh", Label: "Direct SSH", Priority: 60, Command: []string{"ssh", "host"}, Available: true},
+		{ID: "remediation", Kind: "remediation", Label: "Access remediation guide", Priority: 90, Available: true},
+	})
+
+	var labels []string
+	for _, method := range methods {
+		labels = append(labels, method.Label)
+		switch method.Kind {
+		case "ssh_config", "private_key_picker", "remediation":
+			t.Fatalf("unexpected fallback %s in %+v", method.Kind, methods)
+		}
+		if method.ID == "direct-ssh" {
+			t.Fatalf("unexpected direct SSH fallback in %+v", methods)
+		}
+	}
+	if strings.Join(labels, ",") != "AWS SSM Session Manager,Learned SSH" {
+		t.Fatalf("expected native and learned only, got %+v", methods)
 	}
 }
 

@@ -82,6 +82,7 @@ func SecurityGroupActions() []Action {
 	return []Action{
 		{"View Rules", "Inspect inbound and outbound firewall rules", false},
 		{"Describe", "Show full resource details", false},
+		{"Open Console", "Open this firewall resource in the provider console", false},
 	}
 }
 

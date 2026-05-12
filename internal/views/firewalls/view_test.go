@@ -82,6 +82,18 @@ func TestViewRulesActionPushesRulesView(t *testing.T) {
 	}
 }
 
+func TestDescribePaneCopiesSecurityGroupDetails(t *testing.T) {
+	view := New(&config.AppConfig{})
+	view.activePane = paneDescribe
+	view.copyableText = "security group details"
+
+	_, cmd := view.handleDescribeKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+
+	if cmd == nil {
+		t.Fatal("expected copy command for security-group describe pane")
+	}
+}
+
 func TestHorizontalPanChangesVisibleFirewallColumns(t *testing.T) {
 	cfg := config.AppConfig{FirewallColumns: []string{"Name", "ID", "Network", "Inbound Rules", "Outbound Rules", "Attached", "Description"}}
 	view := New(&cfg)

@@ -31,10 +31,11 @@ type azureVMOutput struct {
 }
 
 func FetchVMsCLI(subscription string) ([]core.VM, error) {
+	subscription = strings.TrimSpace(subscription)
 	cmd := exec.Command("az", "vm", "list", "-d", "--subscription", subscription, "--output", "json")
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("az cli error: %w", err)
+		return nil, fmt.Errorf("az vm list failed for subscription %s: %w\n%s", subscription, err, strings.TrimSpace(string(output)))
 	}
 	var data []azureVMOutput
 	if err := json.Unmarshal(output, &data); err != nil {

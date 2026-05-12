@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 )
 
@@ -98,5 +99,19 @@ func TestFormatAWSInstanceDetailIncludesOperationalFields(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected formatted describe to contain %q, got:\n%s", want, out)
 		}
+	}
+}
+
+func TestAWSInstanceDetailFromSDKHandlesMissingIAMProfile(t *testing.T) {
+	detail := awsInstanceDetailFromSDK(ec2types.Instance{
+		BlockDeviceMappings: []ec2types.InstanceBlockDeviceMapping{{}},
+		NetworkInterfaces:   []ec2types.InstanceNetworkInterface{{}},
+	})
+
+	if detail.IAMProfile != "" {
+		t.Fatalf("expected empty IAM profile for nil SDK profile, got %q", detail.IAMProfile)
+	}
+	if len(detail.Volumes) != 1 || len(detail.NetworkInterfaces) != 1 {
+		t.Fatalf("expected nil-safe volume/network formatting, got volumes=%v network=%v", detail.Volumes, detail.NetworkInterfaces)
 	}
 }

@@ -113,6 +113,19 @@ brew tap srivathsan-srinivasan/cloudmanager https://github.com/srivathsan-sriniv
 brew install cloudmanager
 ```
 
+### Release Automation
+
+Releases are tag-driven. To cut a new stable release:
+
+```bash
+scripts/release v1.0.2
+```
+
+The script requires a clean worktree, runs `go test ./...`, updates `VERSION`,
+the pinned Go install command, and the Homebrew formula, commits the release
+bump, creates an annotated tag, then pushes the branch and tag. Pushing the tag
+triggers GoReleaser to publish GitHub release artifacts.
+
 ### Prerequisites
 CloudManager wraps the native CLI tools for the respective cloud providers. Ensure you have the following installed and authenticated if you intend to manage resources in those clouds:
 - **AWS:** [`aws-cli`](https://aws.amazon.com/cli/) + `aws configure`

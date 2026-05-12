@@ -64,6 +64,7 @@ type DatabasesView struct {
 	requestKey     string
 	activePane     int
 	copyableText   string
+	detailURL      string
 	pending        core.Database
 	canScrollLeft  bool
 	canScrollRight bool
@@ -117,6 +118,7 @@ func (v *DatabasesView) Init(ctx core.CloudContext, width, height int, showSideb
 	v.requestKey = ctx.CacheKey()
 	v.activePane = paneTable
 	v.copyableText = ""
+	v.detailURL = ""
 	v.loading = true
 	v.statusMsg = fmt.Sprintf("Fetching databases for %s...", ctx.DisplayName())
 	v.refreshTable()
@@ -148,8 +150,11 @@ func (v *DatabasesView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		case paneActions:
 			return v.handleActionKeys(msg)
 		case paneDescribe:
-			if msg.String() == "c" {
+			if msg.String() == "c" || msg.String() == "C" {
 				return v.copyText(v.copyableText)
+			}
+			if msg.String() == "o" || msg.String() == "O" {
+				return v.openConsole(v.detailURL)
 			}
 			v.descView, cmd = v.descView.Update(msg)
 			return v, cmd
@@ -198,6 +203,12 @@ func (v *DatabasesView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			v.statusMsg = fmt.Sprintf("Copy failed: %v", msg.err)
 		} else {
 			v.statusMsg = "Copied to clipboard."
+		}
+	case ui.BrowserOpenMsg:
+		if msg.Err != nil {
+			v.statusMsg = fmt.Sprintf("Open failed: %v", msg.Err)
+		} else {
+			v.statusMsg = "Opened provider console."
 		}
 	}
 	return v, cmd
@@ -302,7 +313,7 @@ func (v *DatabasesView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 	action := v.actions.SelectedItem().(actionItem).title
 	switch action {
 	case "Describe":
-		return v.showDetails(core.DescribeDatabase(v.activeCtx, db)), nil
+		return v.showDetails(core.DescribeDatabase(v.activeCtx, db), core.DatabaseConsoleURL(v.activeCtx, db)), nil
 	case "Copy ID":
 		return v.copyText(firstNonEmpty(db.ID, db.Name))
 	case "Copy Console URL":
@@ -312,6 +323,8 @@ func (v *DatabasesView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			return v, nil
 		}
 		return v.copyText(consoleURL)
+	case "Open Console":
+		return v.openConsole(core.DatabaseConsoleURL(v.activeCtx, db))
 	case "Tag":
 		return v.openTag()
 	}
@@ -355,12 +368,13 @@ func (v *DatabasesView) openTag() (ui.View, tea.Cmd) {
 	return v, textinput.Blink
 }
 
-func (v *DatabasesView) showDetails(content string) ui.View {
+func (v *DatabasesView) showDetails(content, consoleURL string) ui.View {
+	v.detailURL = strings.TrimSpace(consoleURL)
 	v.copyableText = content
-	v.descView.SetContent(content)
+	v.descView.SetContent(v.copyableText)
 	v.descView.GotoTop()
 	v.activePane = paneDescribe
-	v.statusMsg = "Viewing details (c copy, Esc close)."
+	v.statusMsg = "Viewing details (c copy, o open, Esc close)."
 	return v
 }
 
@@ -374,6 +388,16 @@ func (v *DatabasesView) copyText(text string) (ui.View, tea.Cmd) {
 	return v, func() tea.Msg {
 		return clipboardCompleteMsg{err: clipboard.Write(text)}
 	}
+}
+
+func (v *DatabasesView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
+	consoleURL = strings.TrimSpace(consoleURL)
+	if consoleURL == "" {
+		v.statusMsg = "No provider console URL available."
+		return v, nil
+	}
+	v.statusMsg = "Opening provider console..."
+	return v, ui.OpenURLCmd(consoleURL)
 }
 
 func firstNonEmpty(values ...string) string {

@@ -57,5 +57,6 @@ func NetworkActions() []Action {
 	return []Action{
 		{"View Subnets", "View subnets within this network", false},
 		{"Describe", "View full resource details", false},
+		{"Open Console", "Open this network in the provider console", false},
 	}
 }

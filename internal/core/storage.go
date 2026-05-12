@@ -67,6 +67,7 @@ func StorageActions() []Action {
 		{"Copy URI", "Copy the bucket/account URI", false},
 		{"Copy ID", "Copy the provider storage ID", false},
 		{"Copy Console URL", "Copy a provider console URL when CloudManager can infer one", false},
+		{"Open Console", "Open this storage resource in the provider console", false},
 		{"Tag", "Add CloudManager-only tags", false},
 	}
 }

@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/srivathsan-srinivasan/cloudmanager/internal/clipboard"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
 	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
@@ -37,6 +38,10 @@ type subnetFetchMsg struct {
 	requestKey string
 	subnets    []core.Subnet
 	err        error
+}
+
+type clipboardCompleteMsg struct {
+	err error
 }
 
 type actionItem struct {
@@ -73,6 +78,8 @@ type NetworksView struct {
 	pendingNetwork core.Network
 	filterVPCID    string
 	subnetSearch   string
+	copyableText   string
+	detailURL      string
 }
 
 func New(cfg *config.AppConfig) *NetworksView {
@@ -182,6 +189,8 @@ func (v *NetworksView) Init(ctx core.CloudContext, width, height int, showSideba
 	v.isSearching = false
 	v.searchInput.SetValue("")
 	v.subnetSearch = ""
+	v.copyableText = ""
+	v.detailURL = ""
 	v.requestKey = ctx.CacheKey()
 	v.breadcrumbs = fmt.Sprintf("%s \u203A %s \u203A %s \u203A Networks", ctx.Provider, ctx.DisplayName(), ctx.Region)
 	v.loading = true
@@ -232,6 +241,17 @@ func (v *NetworksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 				return v, nil
 			}
 		}
+		if v.activePane == paneDescribe {
+			switch msg.String() {
+			case "c", "C":
+				if strings.TrimSpace(v.copyableText) == "" {
+					return v, nil
+				}
+				return v, copyTextCmd(v.copyableText)
+			case "o", "O":
+				return v.openConsole(v.detailURL)
+			}
+		}
 
 		switch v.activePane {
 		case paneActions, paneSubnetActions:
@@ -265,6 +285,11 @@ func (v *NetworksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			v.subnetData = msg.subnets
 			v.syncVisibleSubnets()
 		}
+
+	case clipboardCompleteMsg:
+		// Copy is intentionally silent in this view; keep the detail pane unchanged.
+	case ui.BrowserOpenMsg:
+		// Browser-open feedback is silent in this view.
 	}
 
 	switch v.activePane {
@@ -385,10 +410,15 @@ func (v *NetworksView) handleNetworkAction() (ui.View, tea.Cmd) {
 		}
 		return v, nil
 	case "Describe":
-		v.descView.SetContent(fmt.Sprintf("Network: %s\nID: %s\nCIDR: %s\nState: %s\nRegion: %s\nLabels: %s",
-			net.Name, net.ID, net.CIDRBlock, net.State, net.Region, net.Labels))
+		v.detailURL = core.NetworkConsoleURL(v.activeCtx, net)
+		content := fmt.Sprintf("Network: %s\nID: %s\nCIDR: %s\nState: %s\nRegion: %s\nLabels: %s",
+			net.Name, net.ID, net.CIDRBlock, net.State, net.Region, net.Labels)
+		v.copyableText = core.DetailWithConsoleURL(content, v.detailURL)
+		v.descView.SetContent(v.copyableText)
 		v.activePane = paneDescribe
 		return v, nil
+	case "Open Console":
+		return v.openConsole(core.NetworkConsoleURL(v.activeCtx, net))
 	}
 	return v, nil
 }
@@ -411,10 +441,15 @@ func (v *NetworksView) handleSubnetAction() (ui.View, tea.Cmd) {
 			}
 		}
 	case "Describe":
-		v.descView.SetContent(fmt.Sprintf("Subnet: %s\nID: %s\nCIDR: %s\nAZ: %s\nNetwork: %s (%s)\nState: %s\nRegion: %s",
-			sub.Name, sub.ID, sub.CIDRBlock, sub.AvailabilityZone, sub.NetworkName, sub.NetworkID, sub.State, sub.Region))
+		v.detailURL = core.SubnetConsoleURL(v.activeCtx, sub)
+		content := fmt.Sprintf("Subnet: %s\nID: %s\nCIDR: %s\nAZ: %s\nNetwork: %s (%s)\nState: %s\nRegion: %s",
+			sub.Name, sub.ID, sub.CIDRBlock, sub.AvailabilityZone, sub.NetworkName, sub.NetworkID, sub.State, sub.Region)
+		v.copyableText = core.DetailWithConsoleURL(content, v.detailURL)
+		v.descView.SetContent(v.copyableText)
 		v.activePane = paneDescribe
 		return v, nil
+	case "Open Console":
+		return v.openConsole(core.SubnetConsoleURL(v.activeCtx, sub))
 	}
 	return v, nil
 }
@@ -494,4 +529,18 @@ func (v *NetworksView) syncVisibleSubnets() {
 		rows = append(rows, table.Row{s.Name, s.ID, s.CIDRBlock, s.AvailabilityZone, s.NetworkName, fmt.Sprintf("%d", s.AvailableIPs)})
 	}
 	v.subnets.SetRows(rows)
+}
+
+func copyTextCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		return clipboardCompleteMsg{err: clipboard.Write(text)}
+	}
+}
+
+func (v *NetworksView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
+	consoleURL = strings.TrimSpace(consoleURL)
+	if consoleURL == "" {
+		return v, nil
+	}
+	return v, ui.OpenURLCmd(consoleURL)
 }

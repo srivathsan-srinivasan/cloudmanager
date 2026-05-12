@@ -118,6 +118,21 @@ func TestSelectedDiskUsesVisibleRows(t *testing.T) {
 	}
 }
 
+func TestDescribePaneCopiesDiskDetails(t *testing.T) {
+	view := New(&config.AppConfig{DiskColumns: []string{"Name", "ID"}})
+	view.activePane = paneDescribe
+	view.copyableText = "disk details"
+
+	_, cmd := view.handleDescribeKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+
+	if cmd == nil {
+		t.Fatal("expected copy command for disk describe pane")
+	}
+	if view.statusMsg != "Copying to clipboard..." {
+		t.Fatalf("expected copy status, got %q", view.statusMsg)
+	}
+}
+
 func TestSetSearchQueryFiltersDisks(t *testing.T) {
 	cfg := config.AppConfig{DiskColumns: []string{"Name", "ID", "State"}}
 	view := New(&cfg)

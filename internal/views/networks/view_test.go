@@ -83,3 +83,15 @@ func TestSetSearchQueryCanOpenSubnetResults(t *testing.T) {
 		t.Fatalf("expected search handoff to filter to subnet-2, got %+v", view.visibleSubnets)
 	}
 }
+
+func TestDescribePaneCopiesNetworkDetails(t *testing.T) {
+	view := New(&config.AppConfig{})
+	view.activePane = paneDescribe
+	view.copyableText = "network details"
+
+	_, cmd := view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+
+	if cmd == nil {
+		t.Fatal("expected copy command for network describe pane")
+	}
+}

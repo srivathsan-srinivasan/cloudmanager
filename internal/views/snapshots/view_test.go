@@ -116,6 +116,21 @@ func TestSelectedSnapshotUsesVisibleRows(t *testing.T) {
 	}
 }
 
+func TestDescribePaneCopiesSnapshotDetails(t *testing.T) {
+	view := New(&config.AppConfig{SnapshotColumns: []string{"Name", "ID"}})
+	view.activePane = paneDescribe
+	view.copyableText = "snapshot details"
+
+	_, cmd := view.handleDescribeKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+
+	if cmd == nil {
+		t.Fatal("expected copy command for snapshot describe pane")
+	}
+	if view.statusMsg != "Copying to clipboard..." {
+		t.Fatalf("expected copy status, got %q", view.statusMsg)
+	}
+}
+
 func TestSetSearchQueryFiltersSnapshots(t *testing.T) {
 	cfg := config.AppConfig{SnapshotColumns: []string{"Name", "ID", "State"}}
 	view := New(&cfg)
