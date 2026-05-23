@@ -9,15 +9,36 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 // ThemeConfig defines color overrides for the TUI.
 type ThemeConfig struct {
-	Subtle    string `mapstructure:"subtle" json:"subtle"`
-	Highlight string `mapstructure:"highlight" json:"highlight"`
-	Special   string `mapstructure:"special" json:"special"`
-	Alert     string `mapstructure:"alert" json:"alert"`
+	Subtle            string `mapstructure:"subtle" json:"subtle"`
+	Highlight         string `mapstructure:"highlight" json:"highlight"`
+	Special           string `mapstructure:"special" json:"special"`
+	Info              string `mapstructure:"info" json:"info"`
+	Amber             string `mapstructure:"amber" json:"amber"`
+	Alert             string `mapstructure:"alert" json:"alert"`
+	StatusRunning     string `mapstructure:"status_running" json:"status_running"`
+	StatusAvailable   string `mapstructure:"status_available" json:"status_available"`
+	StatusReady       string `mapstructure:"status_ready" json:"status_ready"`
+	StatusInUse       string `mapstructure:"status_in_use" json:"status_in_use"`
+	StatusStarting    string `mapstructure:"status_starting" json:"status_starting"`
+	StatusStopping    string `mapstructure:"status_stopping" json:"status_stopping"`
+	StatusStopped     string `mapstructure:"status_stopped" json:"status_stopped"`
+	StatusTerminated  string `mapstructure:"status_terminated" json:"status_terminated"`
+	StatusDeallocated string `mapstructure:"status_deallocated" json:"status_deallocated"`
+	StatusUnknown     string `mapstructure:"status_unknown" json:"status_unknown"`
+	StatusReachable   string `mapstructure:"status_reachable" json:"status_reachable"`
+	StatusUnreachable string `mapstructure:"status_unreachable" json:"status_unreachable"`
+	ColumnName        string `mapstructure:"column_name" json:"column_name"`
+	ColumnID          string `mapstructure:"column_id" json:"column_id"`
+	ColumnIP          string `mapstructure:"column_ip" json:"column_ip"`
+	ColumnProvider    string `mapstructure:"column_provider" json:"column_provider"`
+	ColumnRegion      string `mapstructure:"column_region" json:"column_region"`
+	ColumnType        string `mapstructure:"column_type" json:"column_type"`
+	ColumnMeta        string `mapstructure:"column_meta" json:"column_meta"`
 }
 
 // ManagedCloudContext stores app-owned cloud context metadata independent of CLI naming quirks.
@@ -181,6 +202,11 @@ func GetResourceIndexPath() string {
 	return filepath.Join(home, ".cloudmanager-resource-index.json")
 }
 
+func GetPublicEndpointExportPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "cloudmanager-public-endpoints.csv")
+}
+
 func BackupConfig() (string, error) {
 	path := GetConfigPath()
 	data, err := os.ReadFile(path)
@@ -242,7 +268,28 @@ func Load() AppConfig {
 	viper.SetDefault("theme.subtle", "#D9DCCF")
 	viper.SetDefault("theme.highlight", "#874BFD")
 	viper.SetDefault("theme.special", "#43BF6D")
+	viper.SetDefault("theme.info", "#38BDF8")
+	viper.SetDefault("theme.amber", "#F59E0B")
 	viper.SetDefault("theme.alert", "#FF5F87")
+	viper.SetDefault("theme.status_running", "#22C55E")
+	viper.SetDefault("theme.status_available", "#06B6D4")
+	viper.SetDefault("theme.status_ready", "#A3E635")
+	viper.SetDefault("theme.status_in_use", "#60A5FA")
+	viper.SetDefault("theme.status_starting", "#38BDF8")
+	viper.SetDefault("theme.status_stopping", "#FB923C")
+	viper.SetDefault("theme.status_stopped", "#F59E0B")
+	viper.SetDefault("theme.status_terminated", "#EF4444")
+	viper.SetDefault("theme.status_deallocated", "#A78BFA")
+	viper.SetDefault("theme.status_unknown", "#737373")
+	viper.SetDefault("theme.status_reachable", "#10B981")
+	viper.SetDefault("theme.status_unreachable", "#F97316")
+	viper.SetDefault("theme.column_name", "#A855F7")
+	viper.SetDefault("theme.column_id", "#818CF8")
+	viper.SetDefault("theme.column_ip", "#06B6D4")
+	viper.SetDefault("theme.column_provider", "#F472B6")
+	viper.SetDefault("theme.column_region", "#2DD4BF")
+	viper.SetDefault("theme.column_type", "#FBBF24")
+	viper.SetDefault("theme.column_meta", "#94A3B8")
 	viper.SetDefault("keybindings", map[string]string{
 		"refresh": "r",
 		"search":  "/",

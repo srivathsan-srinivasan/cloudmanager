@@ -36,6 +36,7 @@ go.work.sum
 
 # Local tooling
 .codex-mcp/
+.playwright-mcp/
 
 # Editor/IDE
 # .idea/

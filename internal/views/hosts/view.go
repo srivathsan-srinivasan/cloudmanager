@@ -5,26 +5,36 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/access"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	hostinventory "github.com/srivathsan-srinivasan/cloudmanager/internal/hosts"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/access"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	hostinventory "github.com/vyoogam/cloudmanager/internal/hosts"
+	"github.com/vyoogam/cloudmanager/internal/ui"
 )
 
 type sshCompleteMsg struct{ err error }
 type clipboardCompleteMsg struct{ err error }
+type hostReachabilityMsg struct {
+	key    string
+	status string
+}
+
+var hostExecCommandContext = exec.CommandContext
 
 type HostsView struct {
 	table          table.Model
+	sortList       list.Model
 	cfg            *config.AppConfig
 	hosts          []core.ManualHost
 	visibleHosts   []core.ManualHost
+	reachability   map[string]string
 	searchQuery    string
 	activeCtx      core.CloudContext
 	width, height  int
@@ -33,17 +43,26 @@ type HostsView struct {
 	pendingRemove  core.ManualHost
 	canScrollLeft  bool
 	canScrollRight bool
+	showSort       bool
+	sortColumn     string
+	sortAsc        bool
+	sortHeader     ui.HeaderSortState
 }
 
 func New(cfg *config.AppConfig) *HostsView {
-	return &HostsView{cfg: cfg}
+	return &HostsView{
+		cfg:          cfg,
+		reachability: map[string]string{},
+		sortList:     ui.NewSortList("Sort Hosts by (Enter to select, Esc to cancel)", hostSortColumns()),
+		sortAsc:      true,
+	}
 }
 
 func (v *HostsView) Title() string { return "Hosts" }
 func (v *HostsView) ShortHelp() string {
-	return "↑↓: Navigate • s/Enter: SSH • c: Copy SSH • d: Remove • r: Reload"
+	return "↑↓: Navigate • ↑ at top: Columns • Enter: Sort/SSH • c: Copy SSH • d: Remove • r: Reload + retest"
 }
-func (v *HostsView) IsInputActive() bool { return false }
+func (v *HostsView) IsInputActive() bool { return v.sortHeader.Active || v.showSort }
 func (v *HostsView) SetSearchQuery(query string) {
 	v.searchQuery = strings.TrimSpace(query)
 	v.refreshTable()
@@ -54,14 +73,16 @@ func (v *HostsView) Init(ctx core.CloudContext, width, height int, showSidebar b
 	v.width = width
 	v.height = height
 	v.hosts = hostinventory.FromConfig(*v.cfg)
+	v.markReachabilityChecking()
 	v.statusMsg = fmt.Sprintf("Loaded %d manual hosts.", len(v.hosts))
 	v.refreshTable()
-	return nil
+	return v.reachabilityCmd()
 }
 
 func (v *HostsView) Resize(width, height int, showSidebar bool) {
 	v.width = width
 	v.height = height
+	v.sortList.SetSize(width-4, height-4)
 	v.refreshTable()
 }
 
@@ -72,12 +93,19 @@ func (v *HostsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		if v.confirmRemove {
 			return v.handleConfirmRemoveKeys(msg)
 		}
+		if v.sortHeader.Active {
+			return v.handleHeaderSortKeys(msg)
+		}
+		if v.showSort {
+			return v.handleSortKeys(msg)
+		}
 		switch msg.String() {
 		case "r":
 			v.hosts = hostinventory.FromConfig(*v.cfg)
-			v.statusMsg = fmt.Sprintf("Reloaded %d manual hosts.", len(v.hosts))
+			v.markReachabilityChecking()
+			v.statusMsg = fmt.Sprintf("Reloaded %d manual hosts; testing reachability.", len(v.hosts))
 			v.refreshTable()
-			return v, nil
+			return v, v.reachabilityCmd()
 		case "s", "enter":
 			host, ok := v.selectedHost()
 			if !ok {
@@ -117,6 +145,16 @@ func (v *HostsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			v.confirmRemove = true
 			v.statusMsg = fmt.Sprintf("Confirm remove %s: Enter yes, Esc no.", host.ID())
 			return v, nil
+		case "S":
+			v.sortHeader.Activate(hostColumns())
+			v.refreshTable()
+			return v, nil
+		case "up":
+			if v.table.Cursor() == 0 {
+				v.sortHeader.Activate(hostColumns())
+				v.refreshTable()
+				return v, nil
+			}
 		}
 		v.table, cmd = v.table.Update(msg)
 		return v, cmd
@@ -132,6 +170,12 @@ func (v *HostsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		} else {
 			v.statusMsg = "Copied SSH command."
 		}
+	case hostReachabilityMsg:
+		if v.reachability == nil {
+			v.reachability = map[string]string{}
+		}
+		v.reachability[msg.key] = msg.status
+		v.refreshTable()
 	}
 	return v, nil
 }
@@ -185,7 +229,10 @@ func (v *HostsView) removeHost(host core.ManualHost) (ui.View, tea.Cmd) {
 
 func (v *HostsView) Render() string {
 	header := ui.BreadcrumbStyle.Render("Manual Hosts")
-	content := v.table.View()
+	if v.showSort {
+		return ui.ClampToWindow(v.sortList.View(), v.width, v.height)
+	}
+	content := ui.ColorizeOperationalStates(v.table.View())
 	if len(v.visibleHosts) == 0 {
 		content = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("No manual hosts. Use :add-host to add one.")
 	}
@@ -212,15 +259,8 @@ func (v *HostsView) refreshTable() {
 	if v.width == 0 {
 		return
 	}
-	cols := []table.Column{
-		{Title: "Name", Width: 24},
-		{Title: "Host", Width: 20},
-		{Title: "User", Width: 12},
-		{Title: "Connection", Width: 10},
-		{Title: "Provider", Width: 12},
-		{Title: "Auth", Width: 18},
-		{Title: "Tags", Width: 24},
-	}
+	cursor := v.table.Cursor()
+	cols := hostColumns()
 	tbl := table.New(
 		table.WithColumns(cols),
 		table.WithFocused(true),
@@ -229,11 +269,15 @@ func (v *HostsView) refreshTable() {
 	)
 	tbl.SetStyles(ui.DefaultTableStyles())
 	v.visibleHosts = filterHosts(v.hosts, v.searchQuery)
+	ui.SortByColumn(v.visibleHosts, v.sortColumn, v.sortAsc, func(host core.ManualHost, column string) string {
+		return v.hostSortField(host, column)
+	})
 	rows := make([]table.Row, 0, len(v.visibleHosts))
 	for _, host := range v.visibleHosts {
 		rows = append(rows, table.Row{
 			host.Name,
 			host.Host,
+			v.hostStatus(host),
 			host.Username,
 			host.Connection,
 			host.Provider,
@@ -242,7 +286,203 @@ func (v *HostsView) refreshTable() {
 		})
 	}
 	tbl.SetRows(rows)
+	tbl.SetColumns(ui.DecorateSortColumns(cols, v.sortHeader, v.sortColumn, v.sortAsc))
+	if cursor >= len(rows) {
+		cursor = len(rows) - 1
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	tbl.SetCursor(cursor)
 	v.table = tbl
+}
+
+func (v *HostsView) handleHeaderSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	cols := hostColumns()
+	switch msg.String() {
+	case "esc", "down":
+		v.sortHeader.Deactivate()
+	case "left", "h":
+		v.sortHeader.Move(-1, cols)
+	case "right", "l":
+		v.sortHeader.Move(1, cols)
+	case "enter":
+		column := v.sortHeader.SelectedColumn(cols)
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, column)
+		v.statusMsg = fmt.Sprintf("Sorted by %s (%s).", v.sortColumn, ui.SortDirectionLabel(v.sortAsc))
+	}
+	v.refreshTable()
+	return v, nil
+}
+
+func (v *HostsView) handleSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		v.showSort = false
+		return v, nil
+	case "enter":
+		selected, ok := v.sortList.SelectedItem().(ui.SortColumnItem)
+		if !ok {
+			return v, nil
+		}
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, selected.Name)
+		v.refreshTable()
+		v.showSort = false
+		v.statusMsg = fmt.Sprintf("Sorted by %s (%s).", v.sortColumn, ui.SortDirectionLabel(v.sortAsc))
+		return v, nil
+	default:
+		var cmd tea.Cmd
+		v.sortList, cmd = v.sortList.Update(msg)
+		return v, cmd
+	}
+}
+
+func hostSortColumns() []table.Column {
+	return hostColumns()
+}
+
+func hostColumns() []table.Column {
+	return []table.Column{
+		{Title: "Name", Width: 24},
+		{Title: "Host", Width: 20},
+		{Title: "Status", Width: 12},
+		{Title: "User", Width: 12},
+		{Title: "Connection", Width: 10},
+		{Title: "Provider", Width: 12},
+		{Title: "Auth", Width: 18},
+		{Title: "Tags", Width: 24},
+	}
+}
+
+func hostSortItems(columns []table.Column) []list.Item {
+	items := make([]list.Item, 0, len(columns))
+	for _, col := range columns {
+		items = append(items, ui.SortColumnItem{Name: col.Title})
+	}
+	return items
+}
+
+func (v *HostsView) hostSortField(host core.ManualHost, column string) string {
+	switch column {
+	case "Name":
+		return host.Name
+	case "Host":
+		return host.Host
+	case "Status":
+		return v.hostStatus(host)
+	case "User":
+		return host.Username
+	case "Connection":
+		return host.Connection
+	case "Provider":
+		return host.Provider
+	case "Auth":
+		return host.AuthSummary()
+	case "Tags":
+		return strings.Join(host.Tags, ",")
+	default:
+		return ""
+	}
+}
+
+func (v *HostsView) markReachabilityChecking() {
+	v.reachability = map[string]string{}
+	for _, host := range v.hosts {
+		v.reachability[manualHostKey(host)] = "checking"
+	}
+}
+
+func (v *HostsView) hostStatus(host core.ManualHost) string {
+	if v.reachability == nil {
+		return "unknown"
+	}
+	status := strings.TrimSpace(v.reachability[manualHostKey(host)])
+	if status == "" {
+		return "unknown"
+	}
+	return status
+}
+
+func (v *HostsView) reachabilityCmd() tea.Cmd {
+	if len(v.hosts) == 0 {
+		return nil
+	}
+	cmds := make([]tea.Cmd, 0, len(v.hosts))
+	for _, host := range v.hosts {
+		host := host
+		cmds = append(cmds, func() tea.Msg {
+			return hostReachabilityMsg{key: manualHostKey(host), status: checkManualHostReachability(host)}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
+func manualHostKey(host core.ManualHost) string {
+	return strings.Join([]string{host.Name, host.Username, host.Host, host.Connection, host.SSHConfigHost}, "\x00")
+}
+
+func checkManualHostReachability(host core.ManualHost) string {
+	if strings.EqualFold(strings.TrimSpace(host.Connection), "ssh") {
+		if status := checkManualHostSSH(host); status != "" {
+			return status
+		}
+	}
+	if pingManualHost(host.Host) {
+		return "ping-ok"
+	}
+	return "unreachable"
+}
+
+func checkManualHostSSH(host core.ManualHost) string {
+	target := strings.TrimSpace(host.SSHConfigHost)
+	if target == "" {
+		target = manualSSHTarget(host)
+	}
+	if target == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	args := []string{
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=3",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		target,
+		"true",
+	}
+	out, err := hostExecCommandContext(ctx, "ssh", args...).CombinedOutput()
+	if err == nil {
+		return "ssh-ok"
+	}
+	lower := strings.ToLower(string(out))
+	if strings.Contains(lower, "permission denied") || strings.Contains(lower, "authentication") {
+		return "reachable"
+	}
+	return ""
+}
+
+func pingManualHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return hostExecCommandContext(ctx, "ping", "-c", "1", host).Run() == nil
+}
+
+func manualSSHTarget(host core.ManualHost) string {
+	address := strings.TrimSpace(host.Host)
+	if address == "" {
+		return ""
+	}
+	user := strings.TrimSpace(host.Username)
+	if user == "" {
+		return address
+	}
+	return user + "@" + address
 }
 
 func (v *HostsView) selectedHost() (core.ManualHost, bool) {

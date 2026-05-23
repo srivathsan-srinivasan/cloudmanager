@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 // --- CLI Backend ---
@@ -178,7 +178,7 @@ func FetchVMsCLI(profile, region string) ([]core.VM, error) {
 				State:          inst.State.Name,
 				PrivateIP:      orDash(inst.PrivateIpAddress),
 				PublicIP:       orDash(inst.PublicIpAddress),
-				Zone:           region,
+				Zone:           orDash(firstNonEmptyString(inst.Placement.AvailabilityZone, region)),
 				Network:        orDash(inst.VpcId),
 				Subnet:         orDash(inst.SubnetId),
 				Labels:         strings.Join(labelPairs, ", "),
@@ -279,7 +279,7 @@ func FetchVMsSDK(ctx context.Context, profile, region string) ([]core.VM, error)
 					State:          string(inst.State.Name),
 					PrivateIP:      orDash(awssdk.ToString(inst.PrivateIpAddress)),
 					PublicIP:       orDash(awssdk.ToString(inst.PublicIpAddress)),
-					Zone:           region,
+					Zone:           orDash(firstNonEmptyString(placementAvailabilityZoneSDK(inst.Placement), region)),
 					Network:        orDash(awssdk.ToString(inst.VpcId)),
 					Subnet:         orDash(awssdk.ToString(inst.SubnetId)),
 					Labels:         strings.Join(labelPairs, ", "),
@@ -347,6 +347,15 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func formatAWSDescribeCLI(ctx context.Context, cloudCtx core.CloudContext, output []byte) (string, error) {

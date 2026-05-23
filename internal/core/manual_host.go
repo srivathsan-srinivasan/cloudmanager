@@ -16,7 +16,7 @@ type ManualHost struct {
 }
 
 var DefaultManualHostColumns = []string{
-	"Name", "Host", "User", "Connection", "Provider", "Auth", "Tags",
+	"Name", "Host", "Status", "User", "Connection", "Provider", "Auth", "Tags",
 }
 
 func (h ManualHost) ID() string {

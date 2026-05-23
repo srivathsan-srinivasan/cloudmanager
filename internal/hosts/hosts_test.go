@@ -3,7 +3,7 @@ package hosts
 import (
 	"testing"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/config"
 )
 
 func TestFromConfigSkipsEmptyHostsAndSanitizes(t *testing.T) {

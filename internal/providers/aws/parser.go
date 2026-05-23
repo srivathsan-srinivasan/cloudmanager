@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 	"gopkg.in/ini.v1"
 )
 

@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	applog "github.com/vyoogam/cloudmanager/internal/logging"
 )
 
 // CLIProvider wraps the native CLI tools (aws, gcloud, az) for cloud operations.

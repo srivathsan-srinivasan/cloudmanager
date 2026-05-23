@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v6"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 // FetchDisksSDK fetches Managed Disks using the Azure SDK.

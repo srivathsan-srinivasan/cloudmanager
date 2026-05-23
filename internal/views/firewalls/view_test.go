@@ -8,9 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/ui"
 )
 
 func TestRenderWithManySecurityGroupsFitsViewWidth(t *testing.T) {

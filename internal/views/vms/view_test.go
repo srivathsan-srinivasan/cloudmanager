@@ -10,10 +10,10 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/ui"
 )
 
 func TestSelectedVMUsesVisibleRows(t *testing.T) {
@@ -504,7 +504,7 @@ func TestHorizontalPanChangesVisibleColumns(t *testing.T) {
 	}
 }
 
-func TestSortVMsKeepsRunningInstancesOnTop(t *testing.T) {
+func TestSortVMsSortsSelectedColumn(t *testing.T) {
 	vms := []core.VM{
 		{Name: "zeta", ID: "vm-3", State: "stopped"},
 		{Name: "alpha", ID: "vm-1", State: "running"},
@@ -514,11 +514,11 @@ func TestSortVMsKeepsRunningInstancesOnTop(t *testing.T) {
 	sortVMs(vms, "Name", true)
 
 	if vms[0].ID != "vm-1" {
-		t.Fatalf("expected running VM first, got %s", vms[0].ID)
+		t.Fatalf("expected Name asc first, got %s", vms[0].ID)
 	}
 }
 
-func TestSortVMsByCostStillKeepsRunningInstancesOnTop(t *testing.T) {
+func TestSortVMsByCostDoesNotForceRunningFirst(t *testing.T) {
 	vms := []core.VM{
 		{Name: "expensive-stopped", ID: "vm-2", State: "stopped", MonthlyCost: "$500.00"},
 		{Name: "cheap-running", ID: "vm-1", State: "running", MonthlyCost: "$1.00"},
@@ -526,8 +526,22 @@ func TestSortVMsByCostStillKeepsRunningInstancesOnTop(t *testing.T) {
 
 	sortVMs(vms, "Cost", false)
 
-	if vms[0].ID != "vm-1" {
-		t.Fatalf("expected running VM first even when sorting by cost desc, got %s", vms[0].ID)
+	if vms[0].ID != "vm-2" {
+		t.Fatalf("expected Cost desc first, got %s", vms[0].ID)
+	}
+}
+
+func TestSortVMsByStateUsesStatusRank(t *testing.T) {
+	vms := []core.VM{
+		{Name: "stopped", ID: "vm-2", State: "stopped"},
+		{Name: "running", ID: "vm-1", State: "running"},
+		{Name: "unknown", ID: "vm-3", State: "unknown"},
+	}
+
+	sortVMs(vms, "State", true)
+
+	if vms[0].ID != "vm-1" || vms[1].ID != "vm-2" || vms[2].ID != "vm-3" {
+		t.Fatalf("expected State sort rank, got %+v", vms)
 	}
 }
 

@@ -18,15 +18,15 @@ import (
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/access"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/iac"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/localdb"
-	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/firewalls"
+	"github.com/vyoogam/cloudmanager/internal/access"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/iac"
+	"github.com/vyoogam/cloudmanager/internal/localdb"
+	applog "github.com/vyoogam/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/views/firewalls"
 )
 
 const (
@@ -188,6 +188,7 @@ type VMsView struct {
 	activeCtx      core.CloudContext
 	sortColumn     string
 	sortAsc        bool
+	sortHeader     ui.HeaderSortState
 	columnOffset   int
 	canScrollLeft  bool
 	canScrollRight bool
@@ -318,7 +319,7 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 func (v *VMsView) Title() string { return "VMs" }
 
 func (v *VMsView) ShortHelp() string {
-	return "\u2191\u2193: Nav \u2022 \u2190\u2192: Pan \u2022 K:K8s nodes \u2022 t: Tag \u2022 f: FinOps \u2022 c: Cost \u2022 s: SSH \u2022 d: Describe \u2022 Enter: Menu \u2022 /: Search"
+	return "\u2191\u2193: Nav \u2022 ↑ at top: Columns \u2022 \u2190\u2192: Pan \u2022 Enter: Sort/Menu \u2022 K:K8s nodes \u2022 t: Tag \u2022 s: SSH \u2022 d: Describe \u2022 /: Search"
 }
 
 func (v *VMsView) SetSearchQuery(query string) {
@@ -334,7 +335,7 @@ func (v *VMsView) SetKubernetesNodesVisible(show bool) {
 }
 
 func (v *VMsView) IsInputActive() bool {
-	return v.isSearching || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneAccess || v.activePane == paneConfirm || v.activePane == paneDescribe || v.activePane == paneTag
+	return v.sortHeader.Active || v.isSearching || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneAccess || v.activePane == paneConfirm || v.activePane == paneDescribe || v.activePane == paneTag
 }
 
 func (v *VMsView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
@@ -383,6 +384,9 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if v.sortHeader.Active {
+			return v.handleHeaderSortKeys(msg)
+		}
 		if v.isSearching {
 			return v.handleSearchKeys(msg)
 		}
@@ -637,7 +641,7 @@ func (v *VMsView) Render() string {
 			header = ui.AppendScrollHint(ui.BreadcrumbStyle.Render(ui.TruncateText(fmt.Sprintf("%s | K8s nodes hidden: %d (K to show)", v.breadcrumbs, hidden), v.width-2)), v.canScrollLeft, v.canScrollRight, v.width)
 		}
 	}
-	tableContent := v.vms.View()
+	tableContent := ui.ColorizeOperationalStates(v.vms.View())
 
 	if v.loading {
 		tableContent = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("Loading instances...")
@@ -837,12 +841,18 @@ func (v *VMsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			v.refreshTable()
 			v.statusMsg = "Scrolled columns right."
 		}
+	case "up":
+		if v.vms.Cursor() == 0 {
+			v.sortHeader.Activate(v.tableCols)
+			v.refreshTable()
+		}
 	case "r":
 		v.loading = true
 		v.statusMsg = fmt.Sprintf("Refreshing instances for %s...", v.activeCtx.DisplayName())
 		return v, v.fetchVMsCmd(true)
 	case "S":
-		v.activePane = paneSortConfig
+		v.sortHeader.Activate(v.tableCols)
+		v.refreshTable()
 	case "C":
 		v.activePane = paneColumnConfig
 	}
@@ -1258,6 +1268,7 @@ func (v *VMsView) refreshTable() {
 	newVMs.SetWidth(ui.TableViewportWidth(availWidth))
 	rows := mapVMsToRows(v.visibleRowsSource(), newCols)
 	newVMs.SetRows(rows)
+	newVMs.SetColumns(ui.DecorateSortColumns(newCols, v.sortHeader, v.sortColumn, v.sortAsc))
 	if cursor >= 0 && cursor < len(rows) {
 		newVMs.SetCursor(cursor)
 	}
@@ -1266,6 +1277,33 @@ func (v *VMsView) refreshTable() {
 	}
 	v.vms = newVMs
 	v.tableCols = newCols
+}
+
+func (v *VMsView) handleHeaderSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "down":
+		v.sortHeader.Deactivate()
+	case "left", "h":
+		if !v.sortHeader.Move(-1, v.tableCols) && v.columnOffset > 0 {
+			v.columnOffset--
+			v.refreshTable()
+			v.sortHeader.Index = len(v.tableCols) - 1
+		}
+	case "right", "l":
+		if !v.sortHeader.Move(1, v.tableCols) && v.canScrollRight {
+			v.columnOffset++
+			v.sortHeader.Index = 0
+			v.refreshTable()
+		}
+	case "enter":
+		column := v.sortHeader.SelectedColumn(v.tableCols)
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, column)
+		sortVMs(v.vmData, v.sortColumn, v.sortAsc)
+		v.syncVisibleRows()
+		v.statusMsg = fmt.Sprintf("Sorted by %s (%s).", v.sortColumn, ui.SortDirectionLabel(v.sortAsc))
+	}
+	v.refreshTable()
+	return v, nil
 }
 
 func (v *VMsView) syncVisibleRows() {
@@ -1619,8 +1657,8 @@ func parsePercent(s string) float64 {
 }
 
 func sortVMs(vms []core.VM, column string, asc bool) {
-	sortSlice(vms, func(i, j int) bool {
-		return compareVMs(vms[i], vms[j], column, asc)
+	ui.SortByColumn(vms, column, asc, func(vm core.VM, column string) string {
+		return vm.GetField(column)
 	})
 }
 
@@ -1659,28 +1697,6 @@ func prepareVMs(vms []core.VM) []core.VM {
 	return prepared
 }
 
-func compareVMs(left, right core.VM, column string, asc bool) bool {
-	leftRank := vmStateRank(left.State)
-	rightRank := vmStateRank(right.State)
-	if leftRank != rightRank {
-		return leftRank < rightRank
-	}
-
-	valueCmp := compareVMField(left, right, column)
-	if valueCmp != 0 {
-		if asc {
-			return valueCmp < 0
-		}
-		return valueCmp > 0
-	}
-
-	nameCmp := strings.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
-	if nameCmp != 0 {
-		return nameCmp < 0
-	}
-	return strings.Compare(strings.ToLower(left.ID), strings.ToLower(right.ID)) < 0
-}
-
 func vmFirewallFilters(vm core.VM, provider string) []string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "gcp":
@@ -1704,21 +1720,6 @@ func splitNonEmpty(value string) []string {
 		out = append(out, part)
 	}
 	return out
-}
-
-func vmStateRank(state string) int {
-	if isRunningState(state) {
-		return 0
-	}
-	return 1
-}
-
-func isRunningState(state string) bool {
-	return strings.Contains(strings.ToLower(strings.TrimSpace(state)), "running")
-}
-
-func compareVMField(left, right core.VM, column string) int {
-	return strings.Compare(strings.ToLower(left.GetField(column)), strings.ToLower(right.GetField(column)))
 }
 
 // --- Commands ---

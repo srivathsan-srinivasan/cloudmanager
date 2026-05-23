@@ -7,7 +7,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v6"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func FetchSecurityGroupsSDK(ctx context.Context, subscriptionID string) ([]core.SecurityGroup, error) {

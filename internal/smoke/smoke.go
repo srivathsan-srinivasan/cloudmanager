@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/providers"
 )
 
 type Summary struct {

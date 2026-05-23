@@ -17,13 +17,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	hostinventory "github.com/srivathsan-srinivasan/cloudmanager/internal/hosts"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/iac"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/sysusage"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	hostinventory "github.com/vyoogam/cloudmanager/internal/hosts"
+	"github.com/vyoogam/cloudmanager/internal/iac"
+	"github.com/vyoogam/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/sysusage"
 )
 
 const (
@@ -154,6 +154,8 @@ type findRecord struct {
 	Kind       string
 	Name       string
 	ID         string
+	PublicIP   string
+	Location   string
 	Status     string
 	Match      string
 	Context    core.CloudContext
@@ -436,6 +438,7 @@ type App struct {
 	azureSubList   list.Model
 	discoveryList  list.Model
 	findScopeList  list.Model
+	findSortList   list.Model
 	rootNodes      []*TreeNode
 	allContexts    []core.CloudContext
 	viewStack      []View
@@ -458,10 +461,13 @@ type App struct {
 	showHostForm            bool
 	editCredential          bool
 	showLogs                bool
+	showHelp                bool
 	showGlobalSearch        bool
+	showFindSort            bool
 	showSplash              bool
 	showCmdBar              bool
 	cmdBar                  textinput.Model
+	helpSearchInput         textinput.Model
 	globalSearchInput       textinput.Model
 	globalSearchTable       table.Model
 	credentialInputs        []textinput.Model
@@ -488,6 +494,9 @@ type App struct {
 	vmSearchRows            []vmSearchRecord
 	findScope               findScope
 	findRows                []findRecord
+	findSortColumn          string
+	findSortAsc             bool
+	findSortHeader          HeaderSortState
 	dashboardCursor         int
 	vmPrefetchQueue         []core.CloudContext
 	vmPrefetchTotal         int
@@ -499,6 +508,7 @@ type App struct {
 	Version                 string
 	BuildTime               string
 	logView                 viewport.Model
+	helpView                viewport.Model
 	logPath                 string
 }
 
@@ -553,12 +563,21 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 	findScopeList.SetShowStatusBar(false)
 	findScopeList.SetFilteringEnabled(false)
 
+	findSortList := NewSortList("Sort Find by (Enter to select, Esc to cancel)", globalSearchColumns())
+
 	logView := viewport.New(0, 0)
 	logView.Style = lipgloss.NewStyle().Padding(0, 1)
+	helpView := viewport.New(0, 0)
+	helpView.Style = lipgloss.NewStyle().Padding(0, 1)
 
 	cmdInput := textinput.New()
 	cmdInput.Prompt = ":"
 	cmdInput.Placeholder = "command (e.g., vms, disks, ctx dev)"
+
+	helpSearchInput := textinput.New()
+	helpSearchInput.Prompt = "/ "
+	helpSearchInput.Placeholder = "filter shortcuts"
+	helpSearchInput.CharLimit = 80
 
 	searchInput := textinput.New()
 	searchInput.Prompt = "/ "
@@ -581,6 +600,7 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 		azureSubList:          azureSubList,
 		discoveryList:         discoveryList,
 		findScopeList:         findScopeList,
+		findSortList:          findSortList,
 		resourceViews:         make(map[string]registeredView),
 		activeTab:             "1",
 		cfg:                   cfg,
@@ -592,10 +612,12 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 		showSplash:            true,
 		showCmdBar:            false,
 		cmdBar:                cmdInput,
+		helpSearchInput:       helpSearchInput,
 		globalSearchInput:     searchInput,
 		globalSearchTable:     searchTable,
 		credentialDeleteIndex: -1,
 		findScope:             findScopeVMs,
+		findSortAsc:           true,
 		vmIndex:               make(map[string]vmSearchRecord),
 		clusterIndex:          make(map[string]clusterIndexRecord),
 		databaseIndex:         make(map[string]databaseIndexRecord),
@@ -612,6 +634,7 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 		storageSummaryIndex:   make(map[string]resourceSummaryRecord),
 		showKubernetesNodes:   !cfg.HideKubernetesNodes,
 		logView:               logView,
+		helpView:              helpView,
 		logPath:               logging.Path(),
 	}
 }
@@ -711,6 +734,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.showLogs {
 			return a.handleLogKeys(msg)
 		}
+		if a.showHelp {
+			return a.handleHelpKeys(msg)
+		}
 
 		if a.showCmdBar {
 			switch msg.String() {
@@ -764,6 +790,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "g":
 			if !isInputActive && a.cfg.GlobalSearch {
 				a.openFindScopePicker()
+				return a, nil
+			}
+		case "?", "f1":
+			if !isInputActive {
+				a.openHelp()
 				return a, nil
 			}
 		case ",":
@@ -901,6 +932,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.resizeGlobalSearch()
 		a.resizeViews()
 		a.resizeLogView()
+		a.resizeHelpView()
+		if a.showHelp {
+			a.refreshHelpContent()
+		}
 		return a, nil
 
 	case contextLoadMsg:
@@ -1232,6 +1267,9 @@ func (a App) View() string {
 	if a.showLogs {
 		return a.renderLogsView()
 	}
+	if a.showHelp {
+		return a.renderHelpView()
+	}
 	if a.showGlobalSearch {
 		return a.renderGlobalSearchView()
 	}
@@ -1279,7 +1317,7 @@ func (a App) View() string {
 
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, sidebarView, mainView)
 	mainShell := a.renderShellPane(panes, a.focus == focusMain)
-	footerText := fmt.Sprintf("\u2191\u2193 \u2022 Enter \u2022 H:Home \u2022 K:K8s nodes \u2022 g:Search \u2022 ,:Settings \u2022 Tab \u2022 Esc \u2022 L:Logs \u2022 B:Mode | Mode:%s | %s | %s | v%s", a.backendMode(), sysusage.FooterText(), a.statusMsg, a.Version)
+	footerText := fmt.Sprintf("\u2191\u2193 \u2022 Enter \u2022 ?:Help \u2022 H:Home \u2022 g:Find \u2022 ,:Set \u2022 Tab \u2022 Esc \u2022 L:Logs \u2022 B:Mode | Mode:%s | %s | %s | v%s", a.backendMode(), sysusage.FooterText(), a.statusMsg, a.Version)
 	footer := renderFooter(a.width, footerText)
 	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainShell, footer), a.width, a.height)
 }
@@ -1361,7 +1399,7 @@ func (a App) renderHomePanel(width, height int) string {
 			providerLine,
 			cacheLine,
 			kubernetesLine,
-			fmt.Sprintf("Databases: %d total | %d up | %d down | %d contexts", dbStats.Total, dbStats.Running, dbStats.Stopped, dbStats.IndexedContexts),
+			fmt.Sprintf("Databases: %d total | %d ready | %d down | %d other | %d contexts", dbStats.Total, dbStats.Running, dbStats.Stopped, dbStats.Other, dbStats.IndexedContexts),
 			fmt.Sprintf("K8s clusters:pools:nodes: %d:%d:%d", k8sStats.Clusters, k8sStats.Pools, k8sStats.Nodes),
 			fmt.Sprintf("Disks indexed: %d | snapshots indexed: %d", infraStats.Disks, infraStats.Snapshots),
 			fmt.Sprintf("Networks seen: %d | subnets seen: %d | security groups seen: %d", infraStats.Networks, infraStats.Subnets, infraStats.SecurityGroups),
@@ -1549,7 +1587,7 @@ func (a App) dashboardWidget(widget string, data dashboardWidgetData) (string, s
 	case "backend":
 		return strings.ToUpper(a.backendMode()), "Backend", true
 	case "databases":
-		return fmt.Sprintf("%d", data.dbStats.Total), fmt.Sprintf("DBs %d up / %d down", data.dbStats.Running, data.dbStats.Stopped), true
+		return fmt.Sprintf("%d", data.dbStats.Total), formatDatabaseDashboardLabel(data.dbStats), true
 	case "kubernetes":
 		return fmt.Sprintf("%d:%d:%d", data.k8sStats.Clusters, data.k8sStats.Pools, data.k8sStats.Nodes), "K8s clusters:pools:nodes", true
 	case "terraform":
@@ -1652,6 +1690,8 @@ func (a App) activateDashboardWidget() (App, tea.Cmd) {
 		return a.openFind(findScopeVMs, "running")
 	case "stopped_vms":
 		return a.openFind(findScopeVMs, "stopped")
+	case "public_ips":
+		return a.openFind(findScopeVMs, "has:public-ip")
 	case "disks":
 		return a.openFind(findScopeDisks, "")
 	case "snapshots":
@@ -1972,6 +2012,14 @@ func serviceStateClass(state string) string {
 	return "other"
 }
 
+func formatDatabaseDashboardLabel(stats databaseDashboardStats) string {
+	label := fmt.Sprintf("%d ready %d down", stats.Running, stats.Stopped)
+	if stats.Other > 0 {
+		label = fmt.Sprintf("%s +%d", label, stats.Other)
+	}
+	return label
+}
+
 func vmStateClass(state string) string {
 	normalized := strings.ToLower(strings.TrimSpace(state))
 	if strings.Contains(normalized, "running") {
@@ -2124,7 +2172,7 @@ func (a App) renderGlobalSearchView() string {
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		TitleStyle.Render(title),
 		lipgloss.NewStyle().Padding(0, 1).Render(a.globalSearchInput.View()),
-		a.globalSearchTable.View(),
+		ColorizeOperationalStates(a.globalSearchTable.View()),
 	)
 	meta := a.findMeta()
 	if a.findScope == findScopeVMs && !a.showKubernetesNodes {
@@ -2135,7 +2183,7 @@ func (a App) renderGlobalSearchView() string {
 		meta = fmt.Sprintf("%s | indexing %d/%d contexts", meta, a.vmPrefetchDone, a.vmPrefetchTotal)
 	}
 	mainView := a.renderShellPane(body, true)
-	footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 /:Filter \u2022 Enter: Open \u2022 K:K8s nodes \u2022 Esc: Close | %s | %s", meta, a.statusMsg))
+	footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 ↑ at top: Columns \u2022 /:Filter \u2022 Enter: Sort/Open \u2022 K:K8s nodes \u2022 Esc: Close | %s | %s", meta, a.statusMsg))
 	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
 }
 
@@ -2295,6 +2343,19 @@ func (a *App) resizeLogView() {
 	a.logView.Height = height
 }
 
+func (a *App) resizeHelpView() {
+	width := a.fullScreenContentWidth() - 2
+	height := a.fullScreenContentHeight() - 4
+	if width < 20 {
+		width = 20
+	}
+	if height < 5 {
+		height = 5
+	}
+	a.helpView.Width = width
+	a.helpView.Height = height
+}
+
 func renderTabBar(width int, contentWidth int, activeTab string, tabs []registeredView) string {
 	activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(Highlight).Padding(0, 1)
 	inactiveStyle := lipgloss.NewStyle().Foreground(Subtle).Padding(0, 1)
@@ -2374,9 +2435,6 @@ func renderFooter(width int, text string) string {
 
 func (a App) renderShellPane(content string, active bool) string {
 	style := sizedPaneStyle(ShellStyle.Copy(), a.width, a.panesHeight())
-	if active {
-		style = style.BorderForeground(Highlight)
-	}
 	return style.Render(content)
 }
 
@@ -2390,7 +2448,7 @@ func sidebarPaneStyle(active bool, width, height int) lipgloss.Style {
 		Height(height).
 		MaxHeight(height)
 	if active {
-		style = style.BorderForeground(Highlight)
+		style = style.BorderForeground(Subtle)
 	}
 	return style
 }
@@ -2460,6 +2518,9 @@ func (a App) handleCommand(query string) (App, tea.Cmd) {
 	switch cmd {
 	case "home", "dashboard", "dash":
 		a.openHome()
+		return a, nil
+	case "help", "shortcuts", "keys", "?":
+		a.openHelp()
 		return a, nil
 	case "summary", "refresh-dashboard", "dashboard-refresh":
 		cmds := a.startDashboardSummaryRefresh()
@@ -2536,6 +2597,12 @@ func (a App) handleCommand(query string) (App, tea.Cmd) {
 	case "settings", "set", "prefs", "preferences":
 		a.openSettings()
 		return a, nil
+	case "logs", "log", "tail-log", "tail-logs":
+		a.showLogs = true
+		a.resizeLogView()
+		a.statusMsg = fmt.Sprintf("Viewing application logs: %s", a.logPath)
+		logging.Infof("component=ui event=logs_open path=%s source=command", a.logPath)
+		return a, loadLogsCmd()
 	case "login", "auth", "provider-login", "cli-login":
 		if a.showCredentials {
 			return a.loginSelectedCredential()
@@ -2583,6 +2650,18 @@ func (a App) handleCommand(query string) (App, tea.Cmd) {
 		}
 		a.statusMsg = "Refreshing storage index..."
 		return a, tea.Batch(cmds...)
+	case "export-public-endpoints", "export-endpoints", "export-ips", "export-domains":
+		path := ""
+		if len(parts) > 1 {
+			path = strings.Join(parts[1:], " ")
+		}
+		count, writtenPath, err := exportPublicEndpointsCSV(a, path)
+		if err != nil {
+			a.statusMsg = fmt.Sprintf("Endpoint export failed: %v", err)
+			return a, nil
+		}
+		a.statusMsg = fmt.Sprintf("Exported %d public endpoints to %s", count, writtenPath)
+		return a, nil
 	case "ctx", "context", "project", "account":
 		if len(parts) > 1 {
 			target := strings.Join(parts[1:], " ")
@@ -2733,6 +2812,7 @@ func (a App) openFind(scope findScope, query string) (App, tea.Cmd) {
 		return a, nil
 	}
 	a.showGlobalSearch = true
+	a.showFindSort = false
 	a.showFindPicker = false
 	a.showContextDiscovery = false
 	a.findScope = scope
@@ -2761,6 +2841,7 @@ func (a *App) openHome() {
 	a.showContextDiscovery = false
 	a.showHostForm = false
 	a.showLogs = false
+	a.showHelp = false
 	a.showConfig = false
 	a.statusMsg = "Dashboard."
 }
@@ -2798,6 +2879,7 @@ func (a *App) applyKubernetesNodeVisibility() {
 
 func (a *App) openSettings() {
 	a.showSettings = true
+	a.showHelp = false
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
 	a.showContextDiscovery = false
@@ -2811,6 +2893,7 @@ func (a *App) openFindScopePicker() {
 	a.showFindPicker = true
 	a.showGlobalSearch = false
 	a.showSettings = false
+	a.showHelp = false
 	a.showCredentials = false
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
@@ -2818,11 +2901,13 @@ func (a *App) openFindScopePicker() {
 	a.showHostForm = false
 	a.findScopeList.SetItems(buildFindScopeItems())
 	a.findScopeList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
+	a.findSortList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
 	a.statusMsg = "Choose what to find."
 }
 
 func (a *App) openCredentials() {
 	a.showCredentials = true
+	a.showHelp = false
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
 	a.showContextDiscovery = false
@@ -2838,6 +2923,7 @@ func (a *App) openCredentials() {
 func (a *App) openHostForm() {
 	a.showHostForm = true
 	a.showSettings = false
+	a.showHelp = false
 	a.showCredentials = false
 	a.showProviderLogin = false
 	a.showAzureSubscriptions = false
@@ -2870,12 +2956,35 @@ func (a *App) openHostForm() {
 func (a *App) openProviderLogin() {
 	a.showProviderLogin = true
 	a.showSettings = false
+	a.showHelp = false
 	a.showCredentials = false
 	a.showAzureSubscriptions = false
 	a.showContextDiscovery = false
 	a.loginList.SetItems(buildProviderLoginItems())
 	a.loginList.SetSize(a.fullScreenContentWidth(), a.fullScreenContentHeight())
 	a.statusMsg = "Choose provider login. The native CLI will take over until it exits."
+}
+
+func (a *App) openHelp() {
+	a.showHelp = true
+	a.showConfig = false
+	a.showSettings = false
+	a.showFindPicker = false
+	a.showAzureSubscriptions = false
+	a.showContextDiscovery = false
+	a.showCredentials = false
+	a.showHostForm = false
+	a.showProviderLogin = false
+	a.showLogs = false
+	a.showGlobalSearch = false
+	a.showCmdBar = false
+	a.cmdBar.Blur()
+	a.helpSearchInput.SetValue("")
+	a.helpSearchInput.Blur()
+	a.resizeHelpView()
+	a.refreshHelpContent()
+	a.helpView.GotoTop()
+	a.statusMsg = "Help opened."
 }
 
 func (a App) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -4057,6 +4166,45 @@ func managedContextLabel(ctx config.ManagedCloudContext) string {
 }
 
 func (a App) handleGlobalSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if a.findSortHeader.Active {
+		switch msg.String() {
+		case "esc", "down":
+			a.findSortHeader.Deactivate()
+		case "left", "h":
+			a.findSortHeader.Move(-1, a.globalSearchTable.Columns())
+		case "right", "l":
+			a.findSortHeader.Move(1, a.globalSearchTable.Columns())
+		case "enter":
+			column := a.findSortHeader.SelectedColumn(a.globalSearchTable.Columns())
+			a.findSortColumn, a.findSortAsc = ToggleSortColumn(a.findSortColumn, a.findSortAsc, column)
+			a.statusMsg = fmt.Sprintf("Sorted Find by %s (%s).", a.findSortColumn, SortDirectionLabel(a.findSortAsc))
+		}
+		a.resizeGlobalSearch()
+		a.refreshGlobalSearchResults()
+		return a, nil
+	}
+	if a.showFindSort {
+		switch msg.String() {
+		case "esc":
+			a.showFindSort = false
+			a.globalSearchTable.Focus()
+			return a, nil
+		case "enter":
+			selected, ok := a.findSortList.SelectedItem().(SortColumnItem)
+			if !ok {
+				return a, nil
+			}
+			a.findSortColumn, a.findSortAsc = ToggleSortColumn(a.findSortColumn, a.findSortAsc, selected.Name)
+			a.refreshGlobalSearchResults()
+			a.showFindSort = false
+			a.statusMsg = fmt.Sprintf("Sorted Find by %s (%s).", a.findSortColumn, SortDirectionLabel(a.findSortAsc))
+			return a, nil
+		default:
+			var cmd tea.Cmd
+			a.findSortList, cmd = a.findSortList.Update(msg)
+			return a, cmd
+		}
+	}
 	switch msg.String() {
 	case "esc":
 		if a.globalSearchInput.Focused() {
@@ -4072,6 +4220,18 @@ func (a App) handleGlobalSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.globalSearchInput.Focus()
 		a.globalSearchTable.Blur()
 		return a, textinput.Blink
+	case "S":
+		a.findSortHeader.Activate(a.globalSearchTable.Columns())
+		a.globalSearchInput.Blur()
+		a.globalSearchTable.Focus()
+		a.resizeGlobalSearch()
+		return a, nil
+	case "up":
+		if a.globalSearchTable.Cursor() == 0 && !a.globalSearchInput.Focused() {
+			a.findSortHeader.Activate(a.globalSearchTable.Columns())
+			a.resizeGlobalSearch()
+			return a, nil
+		}
 	case "K":
 		if a.findScope == findScopeVMs || a.findScope == findScopeAll {
 			a.toggleKubernetesNodes()
@@ -4169,6 +4329,7 @@ func (a *App) refreshGlobalSearchResults() {
 	} else {
 		rows = a.findRecords(a.findScope, query)
 	}
+	SortByColumn(rows, a.findSortColumn, a.findSortAsc, findField)
 	a.findRows = rows
 	a.globalSearchTable.SetRows(mapFindRows(rows, a.globalSearchTable.Columns()))
 	if len(rows) == 0 {
@@ -4190,10 +4351,12 @@ func (a *App) resizeGlobalSearch() {
 		height = 5
 	}
 	columns := fitGlobalSearchColumns(width)
+	columns = DecorateSortColumns(columns, a.findSortHeader, a.findSortColumn, a.findSortAsc)
 	a.globalSearchTable.SetRows(nil)
 	a.globalSearchTable.SetColumns(columns)
 	a.globalSearchTable.SetWidth(TableViewportWidth(width))
 	a.globalSearchTable.SetHeight(height)
+	a.findSortList.SetSize(width, height)
 	a.globalSearchInput.Width = width - 8
 	if a.globalSearchInput.Width < 20 {
 		a.globalSearchInput.Width = 20
@@ -4267,6 +4430,8 @@ func (a *App) indexDatabases(ctx core.CloudContext, databases []core.Database) {
 		key := fmt.Sprintf("%s|%s", ctx.CacheKey(), orFallback(db.ID, db.Name))
 		a.databaseIndex[key] = databaseIndexRecord{Database: db, Context: ctx, SeenAt: now}
 	}
+	stats := a.databaseDashboardStats()
+	logging.Infof("component=ui event=database_index_updated provider=%s account=%s region=%s added=%d total=%d ready=%d down=%d other=%d contexts=%d", ctx.Provider, ctx.AccountID, ctx.Region, len(databases), stats.Total, stats.Running, stats.Stopped, stats.Other, stats.IndexedContexts)
 }
 
 func (a *App) indexResourceSummary(ctx core.CloudContext, resource string, count, extra int) {
@@ -4463,7 +4628,7 @@ func searchVMRecords(records []vmSearchRecord, query string) []vmSearchRecord {
 	query = strings.ToLower(strings.TrimSpace(query))
 	results := make([]vmSearchRecord, 0, len(records))
 	for _, rec := range records {
-		if query == "" || strings.Contains(vmSearchBlob(rec), query) {
+		if vmRecordMatchesQuery(rec, query) {
 			results = append(results, rec)
 		}
 	}
@@ -4483,6 +4648,17 @@ func searchVMRecords(records []vmSearchRecord, query string) []vmSearchRecord {
 		return false
 	})
 	return results
+}
+
+func vmRecordMatchesQuery(rec vmSearchRecord, query string) bool {
+	switch query {
+	case "":
+		return true
+	case "has:public-ip", "public-ip:true", "public_ip:true":
+		return hasUsablePublicIP(rec.VM.PublicIP)
+	default:
+		return strings.Contains(vmSearchBlob(rec), query)
+	}
 }
 
 func vmSearchBlob(rec vmSearchRecord) string {
@@ -4542,6 +4718,7 @@ func (a App) diskFindRecords() []findRecord {
 			Kind:       "DISK",
 			Name:       disk.Name,
 			ID:         id,
+			Location:   disk.Zone,
 			Status:     disk.State,
 			Match:      strings.Join(nonEmptyStrings(disk.Type, disk.Zone, disk.AttachedToVM, disk.ResourceGroup, disk.Labels), " "),
 			Context:    rec.Context,
@@ -4561,6 +4738,7 @@ func (a App) snapshotFindRecords() []findRecord {
 			Kind:       "SNAP",
 			Name:       snap.Name,
 			ID:         id,
+			Location:   snap.Zone,
 			Status:     snap.State,
 			Match:      strings.Join(nonEmptyStrings(snap.SourceDiskName, snap.SourceDiskID, snap.Zone, snap.ResourceGroup, snap.Labels), " "),
 			Context:    rec.Context,
@@ -4580,6 +4758,7 @@ func (a App) databaseFindRecords() []findRecord {
 			Kind:       "DB",
 			Name:       db.Name,
 			ID:         id,
+			Location:   db.Region,
 			Status:     db.Status,
 			Match:      strings.Join(nonEmptyStrings(db.Engine, db.Version, db.Size, db.Labels), " "),
 			Context:    rec.Context,
@@ -4599,6 +4778,7 @@ func (a App) k8sFindRecords() []findRecord {
 			Kind:       "K8S",
 			Name:       cluster.Name,
 			ID:         id,
+			Location:   cluster.Location,
 			Status:     cluster.Status,
 			Match:      strings.Join(nonEmptyStrings(cluster.Version, cluster.NodeCount, cluster.Labels), " "),
 			Context:    rec.Context,
@@ -4618,6 +4798,7 @@ func (a App) networkFindRecords() []findRecord {
 			Kind:       "NET",
 			Name:       network.Name,
 			ID:         id,
+			Location:   network.Region,
 			Status:     network.State,
 			Match:      strings.Join(nonEmptyStrings(network.CIDRBlock, network.Region, network.ResourceGroup, network.Labels), " "),
 			Context:    rec.Context,
@@ -4637,6 +4818,7 @@ func (a App) subnetFindRecords() []findRecord {
 			Kind:       "SUBNET",
 			Name:       subnet.Name,
 			ID:         id,
+			Location:   orFallback(subnet.AvailabilityZone, subnet.Region),
 			Status:     subnet.State,
 			Match:      strings.Join(nonEmptyStrings(subnet.CIDRBlock, subnet.AvailabilityZone, subnet.NetworkName, subnet.NetworkID, subnet.Region, subnet.ResourceGroup, subnet.Labels), " "),
 			Context:    rec.Context,
@@ -4656,6 +4838,7 @@ func (a App) firewallFindRecords() []findRecord {
 			Kind:       "SG",
 			Name:       group.Name,
 			ID:         id,
+			Location:   group.Region,
 			Status:     firewallFindStatus(group),
 			Match:      strings.Join(nonEmptyStrings(group.Description, group.NetworkName, group.NetworkID, group.Region, group.ResourceGroup, group.Labels), " "),
 			Context:    rec.Context,
@@ -4675,6 +4858,7 @@ func (a App) storageFindRecords() []findRecord {
 			Kind:       "STORE",
 			Name:       bucket.Name,
 			ID:         id,
+			Location:   bucket.Region,
 			Status:     bucket.Access,
 			Match:      strings.Join(nonEmptyStrings(bucket.ProviderType, bucket.Region, bucket.StorageClass, bucket.Encrypted, bucket.Versioning, bucket.ResourceGroup, bucket.Labels), " "),
 			Context:    rec.Context,
@@ -4707,8 +4891,10 @@ func vmRecordsToFindRecords(records []vmSearchRecord) []findRecord {
 			Kind:       kind,
 			Name:       vm.Name,
 			ID:         id,
+			PublicIP:   vm.PublicIP,
+			Location:   vm.Zone,
 			Status:     vm.State,
-			Match:      strings.Join(nonEmptyStrings(vm.PrivateIP, vm.PublicIP, vm.Network, vm.Subnet, vm.SecurityGroups, vm.Labels), " "),
+			Match:      strings.Join(nonEmptyStrings(vm.PrivateIP, vm.PublicIP, vm.Zone, vm.Network, vm.Subnet, vm.SecurityGroups, vm.Labels), " "),
 			Context:    rec.Context,
 			Capability: capability,
 			Filter:     id,
@@ -4726,9 +4912,11 @@ func findRecordsToVMRecords(records []findRecord) []vmSearchRecord {
 		out = append(out, vmSearchRecord{
 			Context: rec.Context,
 			VM: core.VM{
-				Name:  rec.Name,
-				ID:    rec.ID,
-				State: rec.Status,
+				Name:     rec.Name,
+				ID:       rec.ID,
+				PublicIP: rec.PublicIP,
+				Zone:     rec.Location,
+				State:    rec.Status,
 			},
 		})
 	}
@@ -4759,7 +4947,7 @@ func searchFindRecords(records []findRecord, query string) []findRecord {
 			strings.Compare(left.Kind, right.Kind),
 			strings.Compare(left.Context.Provider, right.Context.Provider),
 			strings.Compare(left.Context.DisplayName(), right.Context.DisplayName()),
-			strings.Compare(left.Context.Region, right.Context.Region),
+			strings.Compare(findRecordLocation(left), findRecordLocation(right)),
 			strings.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name)),
 			strings.Compare(strings.ToLower(left.ID), strings.ToLower(right.ID)),
 		} {
@@ -4774,8 +4962,15 @@ func searchFindRecords(records []findRecord, query string) []findRecord {
 
 func findRecordBlob(rec findRecord) string {
 	return strings.ToLower(strings.Join([]string{
-		rec.Kind, rec.Name, rec.ID, rec.Status, rec.Match,
+		rec.Kind, rec.Name, rec.ID, rec.Status, findRecordLocation(rec), rec.Match,
 	}, " "))
+}
+
+func findRecordLocation(rec findRecord) string {
+	if value := strings.TrimSpace(rec.Location); value != "" && value != "-" {
+		return value
+	}
+	return rec.Context.Region
 }
 
 func nonEmptyStrings(values ...string) []string {
@@ -4794,9 +4989,10 @@ func globalSearchColumns() []table.Column {
 		{Title: "Type", Width: 10},
 		{Title: "Name", Width: 24},
 		{Title: "ID", Width: 20},
+		{Title: "Public IP", Width: 15},
 		{Title: "Provider", Width: 10},
 		{Title: "Context", Width: 18},
-		{Title: "Region", Width: 14},
+		{Title: "Location", Width: 14},
 		{Title: "Status", Width: 12},
 		{Title: "Match", Width: 28},
 	}
@@ -4827,6 +5023,7 @@ func mapFindRows(records []findRecord, columns []table.Column) []table.Row {
 }
 
 func findField(rec findRecord, col string) string {
+	col = NormalizeSortColumnTitle(col)
 	switch col {
 	case "Type":
 		return rec.Kind
@@ -4834,12 +5031,14 @@ func findField(rec findRecord, col string) string {
 		return rec.Name
 	case "ID":
 		return rec.ID
+	case "Public IP":
+		return orFallback(rec.PublicIP, "-")
 	case "Provider":
 		return rec.Context.Provider
 	case "Context":
 		return rec.Context.DisplayName()
-	case "Region":
-		return rec.Context.Region
+	case "Region", "Location":
+		return findRecordLocation(rec)
 	case "Status":
 		return rec.Status
 	case "Match":
@@ -4855,7 +5054,10 @@ func vmSearchField(rec vmSearchRecord, col string) string {
 		return rec.Context.Provider
 	case "Account":
 		return rec.Context.DisplayName()
-	case "Region":
+	case "Region", "Location":
+		if zone := strings.TrimSpace(rec.VM.Zone); zone != "" && zone != "-" {
+			return zone
+		}
 		return rec.Context.Region
 	case "Name":
 		return rec.VM.Name
@@ -4885,6 +5087,23 @@ func (a App) renderLogsView() string {
 	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
 }
 
+func (a App) renderHelpView() string {
+	title := TitleStyle.Render("Help")
+	searchWidth := a.fullScreenContentWidth() - 2
+	if searchWidth < 20 {
+		searchWidth = 20
+	}
+	search := lipgloss.NewStyle().
+		Width(searchWidth).
+		MaxWidth(searchWidth).
+		Render(a.helpSearchInput.View())
+	body := a.helpView.View()
+	content := lipgloss.JoinVertical(lipgloss.Left, title, search, body)
+	mainView := a.renderShellPane(content, true)
+	footer := renderFooter(a.width, fmt.Sprintf("↑↓ Scroll • / Filter • Esc Clear/Close • F1/? Toggle • :help | Mode:%s | %s", a.backendMode(), a.statusMsg))
+	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
+}
+
 func (a App) backendMode() string {
 	mode := strings.ToUpper(strings.TrimSpace(a.cfg.Backend))
 	if mode == "" {
@@ -4907,6 +5126,183 @@ func (a App) handleLogKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	a.logView, cmd = a.logView.Update(msg)
 	return a, cmd
+}
+
+func (a App) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if a.helpSearchInput.Focused() {
+		switch msg.String() {
+		case "esc":
+			a.helpSearchInput.SetValue("")
+			a.helpSearchInput.Blur()
+			a.refreshHelpContent()
+			a.helpView.GotoTop()
+			a.statusMsg = "Help filter cleared."
+			return a, nil
+		case "enter":
+			a.helpSearchInput.Blur()
+			return a, nil
+		}
+		var cmd tea.Cmd
+		a.helpSearchInput, cmd = a.helpSearchInput.Update(msg)
+		a.refreshHelpContent()
+		a.helpView.GotoTop()
+		return a, cmd
+	}
+	switch msg.String() {
+	case "esc", "q", "?", "f1":
+		if msg.String() == "esc" && strings.TrimSpace(a.helpSearchInput.Value()) != "" {
+			a.helpSearchInput.SetValue("")
+			a.refreshHelpContent()
+			a.helpView.GotoTop()
+			a.statusMsg = "Help filter cleared."
+			return a, nil
+		}
+		a.showHelp = false
+		a.statusMsg = "Closed help."
+		return a, nil
+	case "/":
+		a.helpSearchInput.Focus()
+		return a, textinput.Blink
+	}
+	var cmd tea.Cmd
+	a.helpView, cmd = a.helpView.Update(msg)
+	return a, cmd
+}
+
+func (a *App) refreshHelpContent() {
+	a.helpView.SetContent(a.helpContent())
+}
+
+type helpSection struct {
+	title string
+	lines []string
+}
+
+func (a App) helpContent() string {
+	sections := []helpSection{}
+	if len(a.viewStack) > 0 {
+		topView := a.viewStack[len(a.viewStack)-1]
+		if help := strings.TrimSpace(topView.ShortHelp()); help != "" {
+			sections = append(sections, helpSection{title: "Current View", lines: []string{topView.Title() + ": " + help}})
+		}
+	}
+	sections = append(sections,
+		helpSection{title: "Everywhere", lines: []string{
+			"?: Help",
+			"F1: Help",
+			"1-9: Resource tabs",
+			"↑/↓ or k/j: Move",
+			"Enter: Select or open action menu",
+			"Esc: Back or close panel",
+			"q: Quit when at the top level",
+			"Tab: Switch sidebar/main focus",
+			"b: Toggle sidebar",
+			"H: Home dashboard",
+			"K: Toggle Kubernetes worker nodes",
+			"g: Find resources",
+			",: Settings",
+			"L: Logs",
+			":logs: Open application logs",
+			"B: Toggle CLI/SDK backend",
+			":: Command bar",
+		}},
+		helpSection{title: "Help", lines: []string{
+			"/: Filter shortcuts",
+			"Enter: Keep filter and return to scrolling",
+			"Esc: Clear filter, then close help",
+		}},
+		helpSection{title: "Resource Lists", lines: []string{
+			"/: Filter current list",
+			"r: Refresh current view",
+			"←/→: Pan wide tables",
+			"↑ at first row: Focus column headers",
+			"←/→ on headers: Choose column",
+			"Enter on header: Sort or reverse sort",
+			"C: Configure visible columns",
+			"t: CloudManager tag, where supported",
+		}},
+		helpSection{title: "VMs", lines: []string{
+			"s: SSH/access picker",
+			"d: Describe",
+			"c: Cost/details copy when detail pane is open",
+			"f: FinOps actions",
+		}},
+		helpSection{title: "Firewalls", lines: []string{
+			"Enter: Open firewall actions",
+			"a: Add rule in rule view",
+			"i: Add current public IP in rule view",
+			"e: Edit rule in rule view",
+			"ctrl+d: Delete rule in rule view",
+		}},
+		helpSection{title: "Profiles And Contexts", lines: []string{
+			":login: Provider CLI login",
+			":discover: Scan local cloud CLIs for contexts",
+			":creds: Manage profiles/contexts",
+			":add-provider: Add a managed provider context",
+			":add-host: Add a manual SSH/RDP host",
+			":ctx <name>: Switch context",
+		}},
+		helpSection{title: "Find And Index", lines: []string{
+			":find-vms, :find-dbs, :find-k8s, :find-storage, :find-hosts, :find-all",
+			":index: Refresh VM index",
+			":index-db: Refresh database index",
+			":index-storage: Refresh storage index",
+			":index-all: Refresh all supported resource indexes",
+			":summary: Refresh dashboard summaries",
+			":export-public-endpoints [path]: Export known indexed public endpoints",
+		}},
+		helpSection{title: "Tab Map", lines: []string{
+			"1 VMs, 2 Disks, 3 Snapshots, 4 Firewalls, 5 Clusters",
+			"6 Databases, 7 Networks, 8 Storage, 9 Hosts",
+		}},
+	)
+
+	var b strings.Builder
+	query := strings.ToLower(strings.TrimSpace(a.helpSearchInput.Value()))
+	matches := 0
+	for _, section := range sections {
+		filtered := filteredHelpLines(section, query)
+		if len(filtered) == 0 {
+			continue
+		}
+		matches += len(filtered)
+		writeHelpSection(&b, section.title, filtered)
+	}
+	if b.Len() == 0 {
+		b.WriteString(fmt.Sprintf("No shortcuts match %q.", a.helpSearchInput.Value()))
+	} else if query != "" {
+		b.WriteString(fmt.Sprintf("\n\n%d match(es) for %q.", matches, a.helpSearchInput.Value()))
+	}
+	return lipgloss.NewStyle().Width(a.helpView.Width).Render(strings.TrimSpace(b.String()))
+}
+
+func filteredHelpLines(section helpSection, query string) []string {
+	if query == "" {
+		return section.lines
+	}
+	if strings.Contains(strings.ToLower(section.title), query) {
+		return section.lines
+	}
+	var lines []string
+	for _, line := range section.lines {
+		if strings.Contains(strings.ToLower(line), query) {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func writeHelpSection(b *strings.Builder, title string, lines []string) {
+	if b.Len() > 0 {
+		b.WriteString("\n\n")
+	}
+	b.WriteString(title)
+	b.WriteString("\n")
+	for _, line := range lines {
+		b.WriteString("  ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
 }
 
 func (a App) handleConfigKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

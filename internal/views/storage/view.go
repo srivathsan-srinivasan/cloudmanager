@@ -12,12 +12,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/clipboard"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/tagging"
+	"github.com/vyoogam/cloudmanager/internal/clipboard"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/views/tagging"
 )
 
 const (
@@ -25,6 +25,7 @@ const (
 	paneActions
 	paneDescribe
 	paneTag
+	paneSortConfig
 )
 
 type storageFetchMsg struct {
@@ -49,6 +50,7 @@ func (i actionItem) FilterValue() string { return i.title }
 type StorageView struct {
 	table        table.Model
 	actions      list.Model
+	sortList     list.Model
 	descView     viewport.Model
 	activeCtx    core.CloudContext
 	bucketData   []core.StorageBucket
@@ -66,6 +68,9 @@ type StorageView struct {
 	pending      core.StorageBucket
 	copyableText string
 	detailURL    string
+	sortColumn   string
+	sortAsc      bool
+	sortHeader   ui.HeaderSortState
 }
 
 func New(cfg *config.AppConfig) *StorageView {
@@ -80,6 +85,8 @@ func New(cfg *config.AppConfig) *StorageView {
 	actions.SetShowStatusBar(false)
 	actions.SetFilteringEnabled(false)
 
+	sortList := ui.NewSortList("Sort Storage by (Enter to select, Esc to cancel)", storageSortColumns())
+
 	descView := viewport.New(80, 20)
 	descView.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(ui.Highlight).PaddingRight(2)
@@ -89,15 +96,15 @@ func New(cfg *config.AppConfig) *StorageView {
 	tagInput.Prompt = "tags> "
 	tagInput.CharLimit = 160
 	tagInput.Width = 42
-	return &StorageView{cfg: cfg, actions: actions, descView: descView, tagInput: tagInput}
+	return &StorageView{cfg: cfg, actions: actions, sortList: sortList, descView: descView, tagInput: tagInput, sortAsc: true}
 }
 
 func (v *StorageView) Title() string { return "Storage" }
 func (v *StorageView) ShortHelp() string {
-	return "↑↓: Navigate • Enter: Actions • t: Tag • / from Find • r: Refresh"
+	return "↑↓: Navigate • ↑ at top: Columns • Enter: Sort/Actions • t: Tag • / from Find • r: Refresh"
 }
 func (v *StorageView) IsInputActive() bool {
-	return v.activePane == paneActions || v.activePane == paneDescribe || v.activePane == paneTag
+	return v.sortHeader.Active || v.activePane == paneActions || v.activePane == paneDescribe || v.activePane == paneTag || v.activePane == paneSortConfig
 }
 
 func (v *StorageView) SetSearchQuery(query string) {
@@ -123,6 +130,7 @@ func (v *StorageView) Resize(width, height int, showSidebar bool) {
 	v.width = width
 	v.height = height
 	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
+	v.sortList.SetSize(width-4, height-4)
 	v.descView.Width = width - 4
 	v.descView.Height = height - 4
 	v.refreshTable()
@@ -132,9 +140,12 @@ func (v *StorageView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if v.sortHeader.Active {
+			return v.handleHeaderSortKeys(msg)
+		}
 		if msg.String() == "esc" {
 			switch v.activePane {
-			case paneActions, paneDescribe, paneTag:
+			case paneActions, paneDescribe, paneTag, paneSortConfig:
 				v.activePane = paneTable
 				v.tagInput.Blur()
 				return v, nil
@@ -142,6 +153,9 @@ func (v *StorageView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		}
 		if v.activePane == paneTag {
 			return v.handleTagKeys(msg)
+		}
+		if v.activePane == paneSortConfig {
+			return v.handleSortConfigKeys(msg)
 		}
 		if v.activePane == paneActions {
 			return v.handleActionKeys(msg)
@@ -172,6 +186,16 @@ func (v *StorageView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		}
 		if msg.String() == "t" {
 			return v.openTag()
+		}
+		if msg.String() == "S" {
+			v.sortHeader.Activate(v.tableCols)
+			v.refreshTable()
+			return v, nil
+		}
+		if msg.String() == "up" && v.table.Cursor() == 0 {
+			v.sortHeader.Activate(v.tableCols)
+			v.refreshTable()
+			return v, nil
 		}
 		v.table, cmd = v.table.Update(msg)
 		return v, cmd
@@ -211,7 +235,7 @@ func (v *StorageView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 }
 
 func (v *StorageView) Render() string {
-	content := v.table.View()
+	content := ui.ColorizeOperationalStates(v.table.View())
 	if v.loading {
 		content = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("Loading storage...")
 	}
@@ -239,6 +263,9 @@ func (v *StorageView) Render() string {
 		bodyWithOverlay := lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", bodyWithOverlay), v.width, v.height)
 	}
+	if v.activePane == paneSortConfig {
+		return ui.ClampToWindow(v.sortList.View(), v.width, v.height)
+	}
 	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", content), v.width, v.height)
 }
 
@@ -256,6 +283,9 @@ func (v *StorageView) refreshTable() {
 		cols = append(cols, table.Column{Title: c, Width: storageColumnWidth(c)})
 	}
 	tbl, visibleCols, _, _, _ := ui.NewResourceTable(cols, v.width, 0, "Name")
+	ui.SortByColumn(v.bucketData, v.sortColumn, v.sortAsc, func(bucket core.StorageBucket, column string) string {
+		return bucket.GetField(column)
+	})
 	rows := make([]table.Row, 0, len(v.bucketData))
 	v.visibleRows = v.visibleRows[:0]
 	for _, bucket := range v.bucketData {
@@ -270,6 +300,7 @@ func (v *StorageView) refreshTable() {
 		rows = append(rows, table.Row(row))
 	}
 	tbl.SetRows(rows)
+	tbl.SetColumns(ui.DecorateSortColumns(visibleCols, v.sortHeader, v.sortColumn, v.sortAsc))
 	tbl.SetHeight(ui.TableHeight(v.height))
 	tbl.SetWidth(ui.TableViewportWidth(v.width))
 	if len(rows) > 0 {
@@ -284,6 +315,66 @@ func (v *StorageView) refreshTable() {
 	tbl.Focus()
 	v.table = tbl
 	v.tableCols = visibleCols
+}
+
+func (v *StorageView) handleHeaderSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "down":
+		v.sortHeader.Deactivate()
+	case "left", "h":
+		v.sortHeader.Move(-1, v.tableCols)
+	case "right", "l":
+		v.sortHeader.Move(1, v.tableCols)
+	case "enter":
+		column := v.sortHeader.SelectedColumn(v.tableCols)
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, column)
+		v.statusMsg = fmt.Sprintf("Sorted by %s (%s).", v.sortColumn, ui.SortDirectionLabel(v.sortAsc))
+	}
+	v.refreshTable()
+	return v, nil
+}
+
+func (v *StorageView) handleSortConfigKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	if msg.String() != "enter" {
+		var cmd tea.Cmd
+		v.sortList, cmd = v.sortList.Update(msg)
+		return v, cmd
+	}
+	selected, ok := v.sortList.SelectedItem().(ui.SortColumnItem)
+	if !ok {
+		return v, nil
+	}
+	v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, selected.Name)
+	ui.SortByColumn(v.bucketData, v.sortColumn, v.sortAsc, func(bucket core.StorageBucket, column string) string {
+		return bucket.GetField(column)
+	})
+	v.refreshTable()
+	v.activePane = paneTable
+	v.statusMsg = fmt.Sprintf("Sorted by %s (%s).", v.sortColumn, ui.SortDirectionLabel(v.sortAsc))
+	return v, nil
+}
+
+func (v *StorageView) visibleOrDefaultColumns() []table.Column {
+	if len(v.tableCols) > 0 {
+		return v.tableCols
+	}
+	return storageSortColumns()
+}
+
+func storageSortColumns() []table.Column {
+	cols := make([]table.Column, 0, len(core.DefaultStorageColumns))
+	for _, col := range core.DefaultStorageColumns {
+		cols = append(cols, table.Column{Title: col})
+	}
+	return cols
+}
+
+func storageSortItems(columns []table.Column) []list.Item {
+	items := make([]list.Item, 0, len(columns))
+	for _, col := range columns {
+		items = append(items, ui.SortColumnItem{Name: col.Title})
+	}
+	return items
 }
 
 func (v *StorageView) selectedBucket() (core.StorageBucket, bool) {

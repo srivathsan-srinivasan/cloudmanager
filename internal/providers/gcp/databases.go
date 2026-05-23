@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/logging"
 )
 
 func FetchDatabasesSDK(ctx context.Context, project string) ([]core.Database, error) {
@@ -23,8 +23,14 @@ func FetchDatabasesSDK(ctx context.Context, project string) ([]core.Database, er
 	var databases []core.Database
 	for _, db := range out.Items {
 		var labels []string
-		for k, v := range db.Settings.UserLabels {
-			labels = append(labels, fmt.Sprintf("%s=%s", k, v))
+		tier := ""
+		activationPolicy := ""
+		if db.Settings != nil {
+			tier = db.Settings.Tier
+			activationPolicy = db.Settings.ActivationPolicy
+			for k, v := range db.Settings.UserLabels {
+				labels = append(labels, fmt.Sprintf("%s=%s", k, v))
+			}
 		}
 
 		databases = append(databases, core.Database{
@@ -32,9 +38,9 @@ func FetchDatabasesSDK(ctx context.Context, project string) ([]core.Database, er
 			Name:    db.Name,
 			Engine:  db.DatabaseVersion,
 			Version: db.DatabaseVersion,
-			Status:  db.State,
+			Status:  gcpCloudSQLDisplayStatus(db.State, activationPolicy),
 			Region:  db.Region,
-			Size:    db.Settings.Tier,
+			Size:    tier,
 			Labels:  strings.Join(labels, ", "),
 		})
 	}
@@ -49,4 +55,22 @@ func FetchDatabasesSDKWithCLIAuthFallback(ctx context.Context, project string) (
 		return FetchDatabasesCLI(project)
 	}
 	return databases, nil
+}
+
+func gcpCloudSQLDisplayStatus(state, activationPolicy string) string {
+	state = strings.ToUpper(strings.TrimSpace(state))
+	activationPolicy = strings.ToUpper(strings.TrimSpace(activationPolicy))
+	if state == "" {
+		return "-"
+	}
+	if state == "RUNNABLE" {
+		if activationPolicy == "NEVER" {
+			return "STOPPED"
+		}
+		return "RUNNING"
+	}
+	if state == "SUSPENDED" {
+		return "STOPPED"
+	}
+	return state
 }

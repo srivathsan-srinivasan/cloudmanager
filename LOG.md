@@ -1,5 +1,212 @@
 # LOG
 
+## 2026-05-23
+
+### User Request Handled
+
+- Prepare CloudManager for the moved `vyoogam/cloudmanager` repo, improve public docs, and add a manual GitHub Actions release path.
+
+### Key Code And Docs Changes
+
+1. Updated Go module/import paths, release metadata, Homebrew formula, scripts, docs, and badges to `github.com/vyoogam/cloudmanager`.
+2. Expanded README features into a public-facing feature list covering cockpit, inventory/search, provider coverage, access/actions, FinOps/health, and local-first safety.
+3. Added README release-download and visitor badges.
+4. Rebuilt `CONTRIBUTING.md` with setup, validation, contribution areas, design rules, and release-change expectations.
+5. Added manual `workflow_dispatch` release automation: enter `vX.Y.Z`, optionally skip tests, bump release files, commit, tag, push, and run GoReleaser.
+6. Added the static GitHub Pages docs page under `docs/index.html` plus `docs/.nojekyll`.
+
+### Validation Performed
+
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+- `git diff --check`
+- `ruby -c Formula/cloudmanager.rb`
+- `bash -n scripts/release`
+- Local docs preview was previously verified from `docs/`.
+
+### Remaining Risks Or Follow-Up
+
+1. GitHub Pages still needs repository settings pointed at the chosen source branch/path.
+2. The manual release workflow will publish only after the pushed workflow is present on GitHub and Actions has write permissions enabled for the repo.
+
+## 2026-05-19
+
+### Update
+
+- Implemented SQLite-backed VM/resource inventory caching behind the existing cache functions.
+- Added `resource_inventory` and `resource_summaries` tables to the local SQLite DB at `~/.cloudmanager.db` / `CLOUDMANAGER_DB_PATH`.
+- VM index, resource index, and summary cache saves now write SQLite first and keep the existing JSON files as compatibility fallback.
+- Cache loads now prefer SQLite; if no SQLite rows exist, they fall back to existing JSON and import on the next save path.
+- Resource inventory rows store provider/context/resource type/resource id/name/searchable text/tags/payload/seen-at so FTS and direct SQLite Find can be added next.
+- Updated roadmap: access memory and inventory cache are now done; remaining local-index work is direct SQLite query paths, FTS, then JSON fallback removal.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/localdb ./internal/ui -run 'TestResourceRowsRoundTrip|TestSummaryRowsRoundTrip|TestVMIndexCacheRoundTrip|TestVMIndexCacheLoadsFromSQLiteWhenJSONMissing|TestResourceIndexCacheRoundTrip|TestResourceIndexCacheLoadsFromSQLiteWhenJSONMissing|TestResourceIndexCacheLoadWithSummariesOnly' -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`; `git diff --check -- internal/localdb/access.go internal/localdb/inventory.go internal/localdb/access_test.go internal/ui/vm_index_cache.go internal/ui/app_test.go`.
+
+### User Request Handled
+
+- Fix VM resource location display: GCP VMs were showing context `global` in Find instead of the actual zone, and Azure needed proper VM location handling.
+
+### Key Code And UI Changes
+
+1. Find records now carry a resource-level `Location` field and the Find table shows `Location` instead of context-only `Region`.
+2. VM Find now prefers `VM.Zone` for location, with compatibility for old `Region` lookups.
+3. Non-VM Find records also set resource locations from their own fields: disk/snapshot zone, database/cluster/network/subnet/firewall/storage region or availability zone.
+4. Azure VM CLI and SDK fetchers now preserve Azure `location` into `core.VM.Zone` so the UI can show `eastus`, `centralindia`, etc.
+5. AWS VM CLI and SDK fetchers now prefer EC2 Availability Zone over the broader configured region.
+6. GCP VM zone normalization was covered with a regression test; provider mapping already preserved the zone, while Find was using the wrong display source.
+
+### Validation Performed
+
+- `git diff --check -- internal/ui/app.go internal/ui/app_test.go internal/providers/azure/client.go internal/providers/azure/client_test.go internal/providers/aws/client.go internal/providers/gcp/client_test.go`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/providers/gcp ./internal/providers/azure ./internal/providers/aws -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Existing cached/indexed rows that already contain `global` or missing Azure location need a fresh VM index refresh to pick up provider-side location values.
+
+## 2026-05-18
+
+### User Request Handled
+
+- Fix confusing database counts/statuses, correctly derive GCP Cloud SQL running/stopped state, make the Databases tab clearer when empty, and improve CloudManager logging.
+
+### Key Code And UI Changes
+
+1. GCP Cloud SQL fetchers now derive display status from both `state` and `settings.activationPolicy`: `RUNNABLE+ALWAYS` becomes `RUNNING`, while `RUNNABLE+NEVER` becomes `STOPPED`.
+2. Raw `RUNNABLE` is no longer counted as ready if it appears from old cache or incomplete data.
+3. Dashboard database summary now exposes the hidden `other` bucket; compact card labels show `ready`, `down`, and `+N` other when needed.
+4. Databases tab now renders explicit empty/error states instead of a blank table, including the distinction between selected-context rows and global dashboard/index counts.
+5. Database fetches now log `fetch_start`, `fetch_completed`, and `fetch_failed` with provider/account/region/backend/count/status buckets.
+6. Database index updates now log aggregate ready/down/other totals.
+7. Logging now initializes before CLI subcommands as well as TUI/smoke flows, and `:logs` opens application logs from the command bar.
+8. Public IP dashboard card now opens VM Find with `has:public-ip` instead of the unfiltered VM Find fallback.
+9. VM Find results now include a visible `Public IP` column so the Public IP dashboard drill-down shows the address directly.
+10. Table status text is now colorized after table layout across Find and resource viewports, while pre-styled selected rows are left untouched so the selection bar stays solid.
+11. Roadmap now tracks shared sortable columns for Find and every resource viewport.
+12. Centralized the status color system in `internal/ui`: `in-use`, `available`, `running`, reachable, and completed states are green; starting/checking states are blue; stopped/stopping/terminated/deallocated/unreachable states are amber; unknown states are subdued.
+13. Manual Hosts now include a `Status` column and asynchronously test SSH first, then ping, reporting `ssh-ok`, `ping-ok`, or `unreachable`.
+14. Status colors now use exact theme slots instead of broad green/amber buckets, so `running`, `available`, `ready`, `in-use`, `starting`, `stopping`, `stopped`, `terminated`, `deallocated`, `unknown`, reachable, and unreachable states can each be styled distinctly across all table text.
+15. Theme configuration now applies beyond the dashboard: table headers, selected rows, status tokens, provider names, regions, IDs, IPs, instance types, booleans, and common column header tokens all use centralized adaptive theme colors that work on light and dark terminals.
+
+### Validation Performed
+
+- `git diff --check -- main.go internal/providers/gcp/databases.go internal/providers/gcp/resources_cli.go internal/providers/gcp/resources_cli_test.go internal/ui/app.go internal/ui/app_test.go internal/views/databases/view.go internal/views/databases/view_test.go README.md`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/providers/gcp ./internal/views/databases ./internal/ui -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestSelectableDashboardPublicIPsOpensFilteredVMFind|TestSelectableDashboardOpensScopedFind|TestSelectableDashboardResourceCardsOpenFindScopes' -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestSelectableDashboardPublicIPsOpensFilteredVMFind' -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestSelectableDashboardPublicIPsOpensFilteredVMFind|TestOperationalStateColorTones' -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/hosts -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/views/vms ./internal/views/disks ./internal/views/snapshots ./internal/views/databases ./internal/views/clusters ./internal/views/hosts ./internal/views/storage ./internal/views/networks ./internal/views/firewalls -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestOperationalStateColorTones|TestStatusColorUsesDistinctThemeSlots' -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestOperationalStateColorTones|TestStatusColorUsesDistinctThemeSlots|TestSemanticTableTokenColorsUseThemeSlots' -count=1`
+
+### Remaining Risks Or Follow-Up
+
+1. Dashboard totals are global indexed/cache totals; the Databases tab remains scoped to the selected context by design.
+2. Existing cached raw `RUNNABLE` rows may stay in the `other` bucket until `:index-db`, `:index-all`, or a Databases tab refresh updates the cache.
+
+### Update
+
+- Added shared column sorting for previously unsorted viewports: global Find, Databases, Storage, Clusters, Networks, Subnets, Manual Hosts, and nested Firewall Rules. Existing VM, Disk, Snapshot, and Security Group sorting remains intact.
+- Sort is opt-in via `S`; default provider/index order is preserved until the user chooses a column. Re-selecting the same column toggles ascending/descending.
+- Removed broad semantic token coloring from table rows so names like `aws-prod-gateway`, `gcp-lab`, or `sg-web` are not randomly highlighted inside the Name column. Runtime state tokens still get status colors.
+- Changed the active outer shell/sidebar border back to the subtle theme color instead of purple highlight.
+- Validation: `git diff --check -- internal/ui/sort_helpers.go internal/ui/sort_helpers_test.go internal/ui/state_colors.go internal/ui/app.go internal/ui/app_test.go internal/views/databases/view.go internal/views/storage/view.go internal/views/clusters/view.go internal/views/networks/view.go internal/views/hosts/view.go internal/views/firewalls/rules_view.go`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/databases ./internal/views/storage ./internal/views/clusters ./internal/views/networks ./internal/views/hosts ./internal/views/firewalls -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
+- Reworked sorting UX from a picker overlay to header-focused sorting: press `↑` on the first row to focus column headers, use `←/→` to choose a column, and press `Enter` to sort or reverse-sort that column.
+- `S` now jumps directly into header focus instead of opening a separate sort menu.
+- Header markers show the active header (`▸`) and current direction (`↑`/`↓`) without changing field lookup.
+- Applied the header sorting flow to Find, VMs, Disks, Snapshots, Security Groups, Firewall Rules, Databases, Storage, Clusters, Networks/Subnets, and Manual Hosts.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/databases ./internal/views/storage ./internal/views/clusters ./internal/views/networks ./internal/views/hosts ./internal/views/firewalls ./internal/views/vms ./internal/views/disks ./internal/views/snapshots -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`; `git diff --check`.
+
+### Update
+
+- Fixed the actual sort semantics: VM sorting no longer forces running instances to the top when sorting unrelated columns like Name or Cost.
+- VM, Disk, Snapshot, and Security Group sorting now use the shared comparator: Status/State columns get status-aware rank; numeric/currency columns sort numerically; other columns sort alphabetically.
+- Updated VM sort tests to prove Cost desc is not overridden by running-first behavior, and State sort still uses status rank.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/vms ./internal/views/disks ./internal/views/snapshots ./internal/views/firewalls -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`; `git diff --check`.
+
+### Update
+
+- Fixed repeated header-sort `Enter`: sorting no longer exits header focus, so pressing `Enter` repeatedly on the same header toggles asc/desc instead of opening the first resource row.
+- `Esc` or `Down` still exits header focus and returns to row navigation.
+- Added a database regression test proving the second header `Enter` reverses the sort while header focus stays active.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/databases ./internal/views/storage ./internal/views/clusters ./internal/views/networks ./internal/views/hosts ./internal/views/firewalls ./internal/views/vms ./internal/views/disks ./internal/views/snapshots -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`; `git diff --check`.
+
+## 2026-05-17
+
+### User Request Handled
+
+- Add and improve an in-app help page for remembered shortcuts.
+
+### Key Code And UI Changes
+
+1. Added a scrollable shell-owned Help view opened with `?`, `F1`, or `:help`.
+2. Help covers global navigation, resource-list controls, VM/firewall actions, profile/context commands, find/index commands, tab mapping, and current-view `ShortHelp()` when available.
+3. Added a Help-local `/` filter; `Esc` clears the filter first, then closes Help.
+4. Updated the footer and README keybindings to expose `?:Help` / `:help`.
+5. Added UI tests for opening, rendering, filtering, clearing, and closing help.
+
+### Validation Performed
+
+- `git diff --check -- README.md internal/ui/app.go internal/ui/app_test.go`
+- `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Help content is maintained manually; future shortcut additions should update this page and README together.
+
+## 2026-05-15
+
+### User Request Handled
+
+- Add a simple, elegant GitHub Pages introductory/docs page for CloudManager.
+
+### Key Code And UI Changes
+
+1. Added `docs/index.html` as a self-contained static GitHub Pages landing page.
+2. The page introduces CloudManager, highlights core workflows, shows install commands, links to repo docs, and keeps the product boundary around small core plus optional components.
+3. Added `docs/.nojekyll` so GitHub Pages serves the static docs directory plainly.
+
+### Validation Performed
+
+- `git diff --check -- docs/index.html docs/.nojekyll`
+- Served `docs/` locally with `python3 -m http.server 4173`.
+- Verified desktop and mobile renders in Playwright.
+- Confirmed no current browser console errors or warnings after favicon fix.
+
+### Remaining Risks Or Follow-Up
+
+1. GitHub Pages still needs repo settings pointed at the `docs/` directory on the desired branch.
+
+## 2026-05-14
+
+### User Request Handled
+
+- Check whether CloudManager lists load balancers, public IP endpoints, and domains, and add a practical export for known indexed public endpoints.
+
+### Key Code And UI Changes
+
+1. Confirmed native load balancer, DNS, and static public-IP inventory are still roadmap/component work, not current provider capabilities.
+2. Added `:export-public-endpoints` aliases `:export-endpoints`, `:export-ips`, and `:export-domains`.
+3. The export writes CSV rows for known indexed VM/host public endpoints and storage URIs, with provider/context/region/resource metadata and last-seen timestamps.
+4. Default output path is `~/cloudmanager-public-endpoints.csv`; a path argument can override it.
+
+### Validation Performed
+
+- `gofmt` on touched Go files.
+- `GOCACHE=/tmp/go-build-cache go test ./internal/config -count=1`
+
+### Remaining Risks Or Follow-Up
+
+1. `internal/ui` test runs hung in the tool harness with no visible `go` process in `ps`; focused UI export tests were added but not confirmed in this session.
+2. Export scope is honest but narrow: it only exports fields CloudManager already indexes. Full cloudlist-like breadth needs LB, DNS, static IP, and/or external asset-inventory ingestion.
+
 ## 2026-05-10
 
 ### User Request Handled
@@ -3041,3 +3248,33 @@ Completed a request to completely rewrite `ExecuteFirewallActionSDK` to use nati
 
 - Terminal-native clickable buttons are not portable; the reliable UX is visible URL plus `o` to open.
 - Some provider URL formats may need refinement as we see real-world console routes, especially GCP subnet/firewall deep links and AWS console fragments.
+
+## 2026-05-12 (Prerequisite Installer)
+
+### User Request Handled
+
+- Added an installation script to check, install, and update CloudManager prerequisites and provider CLIs.
+
+### Key Code And UI Changes
+
+1. Added `scripts/install-prereqs`.
+   - Supports `--check`, `--install`, and `--update`.
+   - Supports selection flags: `--core`, `--cloud`, `--k8s`, `--all`, `--aws`, `--gcp`, `--azure`, `--doctl`, `--kubectl`.
+   - Checks Git, Go, OpenSSH, curl, AWS CLI, AWS SSM Session Manager plugin, Google Cloud CLI, Azure CLI, DigitalOcean CLI, and kubectl.
+
+2. Installer behavior.
+   - Homebrew support is first-class on macOS.
+   - Linux `apt` support is best-effort for safe/common packages.
+   - The script does not run cloud login flows; authentication remains in CloudManager `:login` or native CLIs.
+
+3. README updated.
+   - Added prerequisite installer usage examples.
+
+### Validation Performed
+
+- `bash -n scripts/install-prereqs`
+- `scripts/install-prereqs --check --all`
+
+### Remaining Risks Or Follow-Up
+
+- Linux cloud CLI installs that require vendor package repositories are reported/skipped instead of mutating system package sources automatically.

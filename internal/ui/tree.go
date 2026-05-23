@@ -7,8 +7,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/providers"
 )
 
 // TreeNode represents a collapsible node in the context sidebar.

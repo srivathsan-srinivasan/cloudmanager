@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,14 +11,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/providers"
 )
 
 type mockView struct {
 	rendered         string
 	title            string
+	shortHelp        string
 	lastResizeWidth  int
 	lastResizeHeight int
 	lastShowSidebar  bool
@@ -44,7 +46,7 @@ func (m *mockView) Title() string {
 	}
 	return "Mock"
 }
-func (m *mockView) ShortHelp() string { return "" }
+func (m *mockView) ShortHelp() string { return m.shortHelp }
 func (m *mockView) Resize(width, height int, showSidebar bool) {
 	m.lastResizeWidth = width
 	m.lastResizeHeight = height
@@ -175,6 +177,89 @@ func TestLogsViewFitsWindow(t *testing.T) {
 	}
 }
 
+func TestHelpOpensWithQuestionMarkAndCloses(t *testing.T) {
+	app := NewApp(config.AppConfig{Backend: "cli"}, "1.0.0", "today")
+	app.width = 90
+	app.height = 24
+	app.showSplash = false
+	app.viewStack = []View{&mockView{title: "VMs", rendered: "content", shortHelp: "x: Test shortcut"}}
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	updated := model.(App)
+	if !updated.showHelp {
+		t.Fatal("expected ? to open help")
+	}
+
+	rendered := strings.TrimRight(updated.View(), "\n")
+	if !strings.Contains(rendered, "Help") || !strings.Contains(rendered, "Everywhere") || !strings.Contains(rendered, "?: Help") {
+		t.Fatalf("expected help content in render, got:\n%s", rendered)
+	}
+	if !strings.Contains(updated.helpContent(), "Current View") {
+		t.Fatalf("expected current view help in full content, got:\n%s", updated.helpContent())
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if lipgloss.Width(line) > updated.width {
+			t.Fatalf("rendered line exceeds window width: got %d want <= %d\n%s", lipgloss.Width(line), updated.width, line)
+		}
+	}
+
+	model, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated = model.(App)
+	if updated.showHelp {
+		t.Fatal("expected Esc to close help")
+	}
+}
+
+func TestHelpCommandOpens(t *testing.T) {
+	app := NewApp(config.AppConfig{}, "1.0.0", "today")
+	app.width = 100
+	app.height = 24
+
+	updated, _ := app.handleCommand("help")
+
+	if !updated.showHelp {
+		t.Fatal("expected :help to open help")
+	}
+	if !strings.Contains(updated.helpContent(), ":find-all") {
+		t.Fatalf("expected shortcut content in help view, got:\n%s", updated.helpContent())
+	}
+}
+
+func TestHelpFilterNarrowsShortcutsAndEscClearsFirst(t *testing.T) {
+	app := NewApp(config.AppConfig{}, "1.0.0", "today")
+	app.width = 100
+	app.height = 24
+	app.showSplash = false
+	app.openHelp()
+
+	model, _ := app.handleHelpKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	updated := model.(App)
+	if !updated.helpSearchInput.Focused() {
+		t.Fatal("expected / to focus help filter")
+	}
+
+	for _, r := range "firewall" {
+		model, _ = updated.handleHelpKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		updated = model.(App)
+	}
+	content := updated.helpContent()
+	if !strings.Contains(content, "Firewalls") || strings.Contains(content, "Kubernetes worker nodes") {
+		t.Fatalf("expected filtered firewall help, got:\n%s", content)
+	}
+
+	model, _ = updated.handleHelpKeys(tea.KeyMsg{Type: tea.KeyEsc})
+	updated = model.(App)
+	if updated.helpSearchInput.Focused() || updated.helpSearchInput.Value() != "" || !updated.showHelp {
+		t.Fatal("expected first Esc to clear filter and keep help open")
+	}
+
+	model, _ = updated.handleHelpKeys(tea.KeyMsg{Type: tea.KeyEsc})
+	updated = model.(App)
+	if updated.showHelp {
+		t.Fatal("expected second Esc to close help")
+	}
+}
+
 func TestGlobalVMSearchMatchesIdentityAndIPs(t *testing.T) {
 	app := NewApp(config.AppConfig{GlobalSearch: true}, "1.0.0", "today")
 	ctx := core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
@@ -193,6 +278,23 @@ func TestGlobalVMSearchMatchesIdentityAndIPs(t *testing.T) {
 	app.refreshGlobalSearchResults()
 	if len(app.vmSearchRows) != 1 || app.vmSearchRows[0].VM.Name != "worker" {
 		t.Fatalf("expected instance ID search to find worker, got %+v", app.vmSearchRows)
+	}
+}
+
+func TestFindVMLocationUsesResourceZoneOverContextRegion(t *testing.T) {
+	ctx := core.CloudContext{Provider: "GCP", AccountID: "project-a", AccountName: "project-a", Region: "global"}
+	records := vmRecordsToFindRecords([]vmSearchRecord{{
+		Context: ctx,
+		VM:      core.VM{Name: "gcp-vm", ID: "gce-1", Zone: "us-central1-a", State: "running"},
+	}})
+	if len(records) != 1 {
+		t.Fatalf("expected one Find record, got %d", len(records))
+	}
+	if got := findField(records[0], "Location"); got != "us-central1-a" {
+		t.Fatalf("expected Location to use VM zone, got %q", got)
+	}
+	if got := findField(records[0], "Region"); got != "us-central1-a" {
+		t.Fatalf("expected Region compatibility lookup to use VM zone, got %q", got)
 	}
 }
 
@@ -644,6 +746,28 @@ func TestVMIndexCacheRoundTrip(t *testing.T) {
 	}
 }
 
+func TestVMIndexCacheLoadsFromSQLiteWhenJSONMissing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
+	index := map[string]vmSearchRecord{
+		"one": {Context: ctx, VM: core.VM{Name: "api", ID: "i-123"}, SeenAt: time.Now()},
+	}
+	if err := saveVMIndexCache(index); err != nil {
+		t.Fatalf("save index cache: %v", err)
+	}
+	if err := os.Remove(config.GetVMIndexPath()); err != nil {
+		t.Fatalf("remove json cache: %v", err)
+	}
+
+	loaded, total, err := loadVMIndexCache(24 * time.Hour)
+	if err != nil {
+		t.Fatalf("load sqlite index cache: %v", err)
+	}
+	if total != 1 || len(loaded) != 1 {
+		t.Fatalf("expected sqlite cache record, total=%d len=%d", total, len(loaded))
+	}
+}
+
 func TestResourceIndexCacheRoundTrip(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ctx := core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
@@ -679,6 +803,33 @@ func TestResourceIndexCacheRoundTrip(t *testing.T) {
 	}
 	if loaded.DiskSummaries[ctx.CacheKey()].Count != 1 || loaded.NetworkSummaries[ctx.CacheKey()].Extra != 1 || loaded.StorageSummaries[ctx.CacheKey()].Count != 1 {
 		t.Fatalf("expected cached summaries, got disks=%+v networks=%+v storage=%+v", loaded.DiskSummaries, loaded.NetworkSummaries, loaded.StorageSummaries)
+	}
+}
+
+func TestResourceIndexCacheLoadsFromSQLiteWhenJSONMissing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
+	app := NewApp(config.AppConfig{
+		ResourceIndexPersistence: true,
+		ResourceIndexCacheTTL:    24,
+	}, "1.0.0", "today")
+	now := time.Now()
+	app.databaseIndex["db"] = databaseIndexRecord{Context: ctx, Database: core.Database{Name: "orders", ID: "db-1"}, SeenAt: now}
+	app.diskSummaryIndex[ctx.CacheKey()] = resourceSummaryRecord{Count: 7}
+
+	if err := saveResourceIndexCache(app); err != nil {
+		t.Fatalf("save resource index cache: %v", err)
+	}
+	if err := os.Remove(config.GetResourceIndexPath()); err != nil {
+		t.Fatalf("remove json cache: %v", err)
+	}
+
+	loaded, err := loadResourceIndexCache(24 * time.Hour)
+	if err != nil {
+		t.Fatalf("load sqlite resource index cache: %v", err)
+	}
+	if loaded.Total != 2 || len(loaded.Databases) != 1 || loaded.DiskSummaries[ctx.CacheKey()].Count != 7 {
+		t.Fatalf("expected sqlite resource cache, got total=%d db=%d summaries=%+v", loaded.Total, len(loaded.Databases), loaded.DiskSummaries)
 	}
 }
 
@@ -744,6 +895,7 @@ func TestDashboardSummarizesDatabasesAndKubernetes(t *testing.T) {
 	ctx := core.CloudContext{Provider: "AWS", AccountID: "1111", AccountName: "prod", Region: "us-east-1"}
 	app.indexDatabases(ctx, []core.Database{
 		{Name: "orders", ID: "db-1", Status: "available"},
+		{Name: "cloudsql", ID: "db-gcp", Status: "RUNNING"},
 		{Name: "archive", ID: "db-2", Status: "stopped"},
 		{Name: "unknown", ID: "db-3", Status: "maintenance"},
 	})
@@ -754,7 +906,7 @@ func TestDashboardSummarizesDatabasesAndKubernetes(t *testing.T) {
 	})
 
 	dbStats := app.databaseDashboardStats()
-	if dbStats.Total != 3 || dbStats.Running != 1 || dbStats.Stopped != 1 || dbStats.Other != 1 {
+	if dbStats.Total != 4 || dbStats.Running != 2 || dbStats.Stopped != 1 || dbStats.Other != 1 {
 		t.Fatalf("unexpected database stats: %+v", dbStats)
 	}
 	k8sStats := app.kubernetesDashboardStats()
@@ -762,10 +914,25 @@ func TestDashboardSummarizesDatabasesAndKubernetes(t *testing.T) {
 		t.Fatalf("unexpected k8s stats: %+v", k8sStats)
 	}
 	rendered := app.renderHomePanel(120, 35)
-	for _, expected := range []string{"DBs 1 up / 1 down", "1:2:2", "clusters:pools:nodes"} {
+	for _, expected := range []string{"2 ready 1 down +1", "Databases: 4 total | 2 ready | 1 down | 1 other", "1:2:2", "clusters:pools:nodes"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("expected dashboard to contain %q, got:\n%s", expected, rendered)
 		}
+	}
+}
+
+func TestLogsCommandOpensApplicationLogs(t *testing.T) {
+	app := NewApp(config.AppConfig{}, "1.0.0", "today")
+	app.width = 100
+	app.height = 24
+
+	updated, cmd := app.handleCommand("logs")
+
+	if !updated.showLogs {
+		t.Fatal("expected :logs to open application logs")
+	}
+	if cmd == nil {
+		t.Fatal("expected :logs to load log content")
 	}
 }
 
@@ -856,6 +1023,224 @@ func TestSelectableDashboardOpensScopedFind(t *testing.T) {
 	}
 	if len(app.findRows) != 1 || app.findRows[0].ID != "db-orders" {
 		t.Fatalf("expected database find result, got %+v", app.findRows)
+	}
+}
+
+func TestSelectableDashboardPublicIPsOpensFilteredVMFind(t *testing.T) {
+	app := NewApp(config.AppConfig{
+		GlobalSearch:     true,
+		VMIndexCacheTTL:  24,
+		DashboardWidgets: []string{"public_ips"},
+	}, "1.0.0", "today")
+	app.width = 120
+	app.height = 40
+	app.showSplash = false
+	app.focus = focusMain
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1111", AccountName: "prod", Region: "us-east-1"}
+	app.indexVMs(ctx, []core.VM{
+		{Name: "public", ID: "i-public", PublicIP: "203.0.113.10", State: "running"},
+		{Name: "private", ID: "i-private", PublicIP: "-", State: "running"},
+	})
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app = model.(App)
+
+	if !app.showGlobalSearch || app.findScope != findScopeVMs {
+		t.Fatalf("expected VM find to open, show=%t scope=%s", app.showGlobalSearch, app.findScope)
+	}
+	if got := app.globalSearchInput.Value(); got != "has:public-ip" {
+		t.Fatalf("expected public IP filter token, got %q", got)
+	}
+	if len(app.findRows) != 1 || app.findRows[0].ID != "i-public" {
+		t.Fatalf("expected only public-IP VM result, got %+v", app.findRows)
+	}
+	if app.findRows[0].PublicIP != "203.0.113.10" {
+		t.Fatalf("expected find row to keep public IP, got %+v", app.findRows[0])
+	}
+	hasPublicIPColumn := false
+	for _, col := range app.globalSearchTable.Columns() {
+		if col.Title == "Public IP" {
+			hasPublicIPColumn = true
+			break
+		}
+	}
+	if !hasPublicIPColumn {
+		t.Fatalf("expected visible Find table columns to include Public IP, got %+v", app.globalSearchTable.Columns())
+	}
+	if got := app.globalSearchTable.View(); !strings.Contains(got, "203.0.113.10") {
+		t.Fatalf("expected Find table view to show public IP, got %q", got)
+	}
+}
+
+func TestOperationalStateColorTones(t *testing.T) {
+	checks := []struct {
+		state string
+		want  string
+	}{
+		{"running", "running"},
+		{"available", "running"},
+		{"in-use", "running"},
+		{"RUNNING", "running"},
+		{"starting", "progress"},
+		{"stopped", "stopped"},
+		{"stopping", "stopped"},
+		{"terminated", "stopped"},
+		{"deallocated", "stopped"},
+		{"Unknown", "unknown"},
+		{"maintenance", ""},
+	}
+	for _, check := range checks {
+		if got := operationalStateTone(check.state); got != check.want {
+			t.Fatalf("expected %s tone for %q, got %s", check.want, check.state, got)
+		}
+	}
+
+	rendered := "api running\ndb stopped"
+	colorized := ColorizeOperationalStates(rendered)
+	if lipgloss.Width(colorized) != lipgloss.Width(rendered) {
+		t.Fatalf("colorized state text changed layout width: got %d want %d", lipgloss.Width(colorized), lipgloss.Width(rendered))
+	}
+	selectedLine := "\x1b[44mrunning stopped\x1b[0m"
+	if got := ColorizeOperationalStates(selectedLine); got != selectedLine {
+		t.Fatalf("expected pre-styled selected line to remain untouched, got %q", got)
+	}
+}
+
+func TestStatusColorUsesDistinctThemeSlots(t *testing.T) {
+	InitTheme(config.ThemeConfig{
+		Subtle:            "#111111",
+		Highlight:         "#222222",
+		Special:           "#333333",
+		Info:              "#444444",
+		Amber:             "#555555",
+		Alert:             "#666666",
+		StatusRunning:     "#010101",
+		StatusAvailable:   "#020202",
+		StatusReady:       "#030303",
+		StatusInUse:       "#040404",
+		StatusStarting:    "#050505",
+		StatusStopping:    "#060606",
+		StatusStopped:     "#070707",
+		StatusTerminated:  "#080808",
+		StatusDeallocated: "#090909",
+		StatusUnknown:     "#0A0A0A",
+		StatusReachable:   "#0B0B0B",
+		StatusUnreachable: "#0C0C0C",
+		ColumnName:        "#0D0D0D",
+		ColumnID:          "#0E0E0E",
+		ColumnIP:          "#0F0F0F",
+		ColumnProvider:    "#101010",
+		ColumnRegion:      "#111111",
+		ColumnType:        "#121212",
+		ColumnMeta:        "#131313",
+	})
+	defer InitTheme(config.ThemeConfig{
+		Subtle:            "#D9DCCF",
+		Highlight:         "#874BFD",
+		Special:           "#43BF6D",
+		Info:              "#38BDF8",
+		Amber:             "#F59E0B",
+		Alert:             "#FF5F87",
+		StatusRunning:     "#22C55E",
+		StatusAvailable:   "#06B6D4",
+		StatusReady:       "#A3E635",
+		StatusInUse:       "#60A5FA",
+		StatusStarting:    "#38BDF8",
+		StatusStopping:    "#FB923C",
+		StatusStopped:     "#F59E0B",
+		StatusTerminated:  "#EF4444",
+		StatusDeallocated: "#A78BFA",
+		StatusUnknown:     "#737373",
+		StatusReachable:   "#10B981",
+		StatusUnreachable: "#F97316",
+		ColumnName:        "#A855F7",
+		ColumnID:          "#818CF8",
+		ColumnIP:          "#06B6D4",
+		ColumnProvider:    "#F472B6",
+		ColumnRegion:      "#2DD4BF",
+		ColumnType:        "#FBBF24",
+		ColumnMeta:        "#94A3B8",
+	})
+
+	cases := map[string]string{
+		"running":     "#010101",
+		"available":   "#020202",
+		"ready":       "#030303",
+		"in-use":      "#040404",
+		"starting":    "#050505",
+		"stopping":    "#060606",
+		"stopped":     "#070707",
+		"terminated":  "#080808",
+		"deallocated": "#090909",
+		"unknown":     "#0A0A0A",
+		"ssh-ok":      "#0B0B0B",
+		"unreachable": "#0C0C0C",
+	}
+	for status, want := range cases {
+		color, _ := StatusColor(status)
+		if color == nil || color.Dark != want || color.Light != want {
+			t.Fatalf("expected %s to use %s, got %#v", status, want, color)
+		}
+	}
+}
+
+func TestSemanticTableTokenColorsUseThemeSlots(t *testing.T) {
+	InitTheme(config.ThemeConfig{
+		Subtle:         "#111111",
+		Highlight:      "#222222",
+		Special:        "#333333",
+		Info:           "#444444",
+		Amber:          "#555555",
+		Alert:          "#666666",
+		ColumnName:     "#010101",
+		ColumnID:       "#020202",
+		ColumnIP:       "#030303",
+		ColumnProvider: "#040404",
+		ColumnRegion:   "#050505",
+		ColumnType:     "#060606",
+		ColumnMeta:     "#070707",
+	})
+	defer InitTheme(config.ThemeConfig{
+		Subtle:         "#D9DCCF",
+		Highlight:      "#874BFD",
+		Special:        "#43BF6D",
+		Info:           "#38BDF8",
+		Amber:          "#F59E0B",
+		Alert:          "#FF5F87",
+		ColumnName:     "#A855F7",
+		ColumnID:       "#818CF8",
+		ColumnIP:       "#06B6D4",
+		ColumnProvider: "#F472B6",
+		ColumnRegion:   "#2DD4BF",
+		ColumnType:     "#FBBF24",
+		ColumnMeta:     "#94A3B8",
+	})
+
+	cases := map[string]string{
+		"Name":       "#010101",
+		"i-0123abcd": "#020202",
+		"10.0.0.5":   "#030303",
+		"AWS":        "#040404",
+		"us-east-1":  "#050505",
+		"t3.micro":   "#060606",
+		"Network":    "#070707",
+	}
+	for token, want := range cases {
+		color, _ := SemanticTokenColor(token)
+		if color == nil || color.Dark != want || color.Light != want {
+			t.Fatalf("expected %q to use %s, got %#v", token, want, color)
+		}
+	}
+	selectedLine := "\x1b[44mAWS running 10.0.0.5\x1b[0m"
+	if got := ColorizeOperationalStates(selectedLine); got != selectedLine {
+		t.Fatalf("expected selected table line to remain untouched, got %q", got)
+	}
+	plainLine := "aws-prod-gateway sg-web gcp-lab running 10.0.0.5"
+	got := ColorizeOperationalStates(plainLine)
+	firstANSI := strings.Index(got, "\x1b[")
+	runningAt := strings.Index(got, "running")
+	if firstANSI >= 0 && runningAt >= 0 && firstANSI < runningAt {
+		t.Fatalf("expected names to stay uncolored before status token, got %q", got)
 	}
 }
 
@@ -1171,6 +1556,79 @@ func TestIndexAllSchedulesSupportedResourceIndexes(t *testing.T) {
 	cmds := app.startAllIndexRefresh()
 	if len(cmds) != 8 {
 		t.Fatalf("expected VM, cluster, database, disk, snapshot, network, firewall, and storage index commands, got %d", len(cmds))
+	}
+}
+
+func TestExportPublicEndpointsCSVUsesIndexedResources(t *testing.T) {
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1111", AccountName: "prod", Region: "us-east-1"}
+	manualCtx := core.CloudContext{Provider: "Manual", AccountName: "hosts", Region: "global"}
+	app := NewApp(config.AppConfig{}, "1.0.0", "today")
+	now := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	app.vmIndex["vm-1"] = vmSearchRecord{
+		Context: ctx,
+		VM:      core.VM{Name: "api", ID: "i-1", PublicIP: "203.0.113.10", State: "running"},
+		SeenAt:  now,
+	}
+	app.vmIndex["vm-private"] = vmSearchRecord{
+		Context: ctx,
+		VM:      core.VM{Name: "worker", ID: "i-2", PublicIP: "-"},
+		SeenAt:  now,
+	}
+	app.vmIndex["host-1"] = vmSearchRecord{
+		Context: manualCtx,
+		VM:      core.VM{Name: "bastion", ID: "bastion", PublicIP: "bastion.example.com", State: "manual"},
+		SeenAt:  now,
+	}
+	app.storageIndex["bucket-1"] = storageIndexRecord{
+		Context: ctx,
+		Bucket:  core.StorageBucket{Name: "logs", ID: "logs", Region: "us-east-1", Access: "unknown"},
+		SeenAt:  now,
+	}
+
+	path := filepath.Join(t.TempDir(), "endpoints.csv")
+	count, writtenPath, err := exportPublicEndpointsCSV(app, path)
+	if err != nil {
+		t.Fatalf("export public endpoints: %v", err)
+	}
+	if count != 3 || writtenPath != path {
+		t.Fatalf("expected three endpoints at %s, got count=%d path=%s", path, count, writtenPath)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	csv := string(data)
+	for _, expected := range []string{
+		"source_type,provider,context,region,resource_name,resource_id,endpoint_type,endpoint,notes,seen_at",
+		"vm,AWS,1111 (prod),us-east-1,api,i-1,public_ip,203.0.113.10,running,2026-05-14T12:00:00Z",
+		"host,Manual,hosts,global,bastion,bastion,domain,bastion.example.com,manual,2026-05-14T12:00:00Z",
+		"storage,AWS,1111 (prod),us-east-1,logs,logs,uri,s3://logs,unknown,2026-05-14T12:00:00Z",
+	} {
+		if !strings.Contains(csv, expected) {
+			t.Fatalf("expected CSV to contain %q, got:\n%s", expected, csv)
+		}
+	}
+	if strings.Contains(csv, "worker") {
+		t.Fatalf("expected private-only VM to be skipped, got:\n%s", csv)
+	}
+}
+
+func TestExportPublicEndpointsCommandWritesDefaultPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1111", AccountName: "prod", Region: "us-east-1"}
+	app := NewApp(config.AppConfig{}, "1.0.0", "today")
+	app.vmIndex["vm-1"] = vmSearchRecord{
+		Context: ctx,
+		VM:      core.VM{Name: "api", ID: "i-1", PublicIP: "203.0.113.10"},
+		SeenAt:  time.Now(),
+	}
+
+	updated, _ := app.handleCommand("export-public-endpoints")
+	if !strings.Contains(updated.statusMsg, config.GetPublicEndpointExportPath()) {
+		t.Fatalf("expected status to include default export path, got %q", updated.statusMsg)
+	}
+	if _, err := os.Stat(config.GetPublicEndpointExportPath()); err != nil {
+		t.Fatalf("expected default endpoint export file: %v", err)
 	}
 }
 

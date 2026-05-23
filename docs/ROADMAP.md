@@ -54,6 +54,11 @@ Core must stay focused:
 - provider capability registry
 - TUI shell
 
+Core UX backlog:
+
+- Make Find and every resource viewport sort by any visible column, with a
+  shared keyboard flow instead of one fixed/default sort per view.
+
 Everything else should be a component unless it is essential to the core
 operator workflow.
 
@@ -134,21 +139,18 @@ inventory, query, security, or governance platform.
 
 ### Local Index
 
-- Keep JSON cache for the current small/medium estate path.
-- Add SQLite first for access memory, then resource inventory, then FTS.
+- SQLite now backs access memory and the local VM/resource inventory cache.
+- Keep JSON cache compatibility temporarily as import/fallback during migration.
 - Store normalized indexed rows by provider, context, resource type, resource ID,
   searchable text, tags, and last-seen timestamp.
-- Keep JSON compatibility temporarily while SQLite becomes the source of truth.
 - Keep provider refresh explicit: startup stays fast unless the user enables
   prefetch.
 
-Proposed build order:
+Remaining build order:
 
-1. SQLite access memory: remember successful VM access by provider/context/user/IP/key.
-2. SQLite resource inventory tables behind the existing JSON cache interface.
-3. JSON import/fallback for existing cache files during migration.
-4. Dashboard and `find-*` reads from SQLite.
-5. SQLite FTS for fast name/IP/tag/security-group/subnet searches.
+1. Dashboard and `find-*` direct query paths from SQLite instead of in-memory maps.
+2. SQLite FTS for fast name/IP/tag/security-group/subnet searches.
+3. Remove JSON fallback after a stable migration window.
 
 ### Asset Inventory And Tags
 

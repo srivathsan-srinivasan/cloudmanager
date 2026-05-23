@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 type SSHConfigEntry struct {

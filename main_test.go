@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/config"
 )
 
 func TestAddAndUseAzureProfile(t *testing.T) {

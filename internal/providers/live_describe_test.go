@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func TestLiveVMDescribeAllConfiguredContexts(t *testing.T) {

@@ -1,11 +1,11 @@
 class Cloudmanager < Formula
   desc "Fast terminal control plane for cloud operations"
-  homepage "https://github.com/srivathsan-srinivasan/cloudmanager"
-  url "https://github.com/srivathsan-srinivasan/cloudmanager.git",
+  homepage "https://github.com/vyoogam/cloudmanager"
+  url "https://github.com/vyoogam/cloudmanager.git",
       tag: "v1.0.1"
   version "1.0.1"
   license "MIT"
-  head "https://github.com/srivathsan-srinivasan/cloudmanager.git",
+  head "https://github.com/vyoogam/cloudmanager.git",
        branch: "release/v1.0.0"
 
   depends_on "go" => :build

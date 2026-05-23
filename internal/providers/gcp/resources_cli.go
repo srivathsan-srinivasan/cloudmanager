@@ -11,8 +11,8 @@ import (
 
 	"google.golang.org/api/compute/v1"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/logging"
 )
 
 type gcpDiskCLI struct {
@@ -49,8 +49,9 @@ type gcpClusterCLI struct {
 }
 
 type gcpDatabaseSettingsCLI struct {
-	Tier       string            `json:"tier"`
-	UserLabels map[string]string `json:"userLabels"`
+	Tier             string            `json:"tier"`
+	ActivationPolicy string            `json:"activationPolicy"`
+	UserLabels       map[string]string `json:"userLabels"`
 }
 
 type gcpDatabaseCLI struct {
@@ -104,7 +105,7 @@ func FetchDatabasesCLI(project string) ([]core.Database, error) {
 			Name:    db.Name,
 			Engine:  db.DatabaseVersion,
 			Version: db.DatabaseVersion,
-			Status:  db.State,
+			Status:  gcpCloudSQLDisplayStatus(db.State, db.Settings.ActivationPolicy),
 			Region:  db.Region,
 			Size:    db.Settings.Tier,
 			Labels:  joinLabelMap(db.Settings.UserLabels),

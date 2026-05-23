@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/install-prereqs [--check|--install|--update] [options]
+
+Modes:
+  --check        Report installed/missing tools. This is the default.
+  --install      Install missing selected tools.
+  --update       Update selected tools; installs missing tools when supported.
+
+Selection:
+  --core         git, go, ssh, curl
+  --cloud        aws, gcloud, az, doctl
+  --k8s          kubectl
+  --all          core, cloud, k8s
+  --aws          AWS CLI + SSM session plugin
+  --gcp          Google Cloud CLI
+  --azure        Azure CLI
+  --doctl        DigitalOcean CLI
+  --kubectl      kubectl
+
+Examples:
+  scripts/install-prereqs --check --all
+  scripts/install-prereqs --install --core --cloud
+  scripts/install-prereqs --update --all
+
+Notes:
+  - macOS Homebrew is fully supported.
+  - Linux apt is best-effort for common packages; cloud vendor repos are not
+    added automatically.
+USAGE
+}
+
+mode="check"
+want_core=0
+want_aws=0
+want_gcp=0
+want_azure=0
+want_doctl=0
+want_kubectl=0
+
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --check)
+      mode="check"
+      ;;
+    --install)
+      mode="install"
+      ;;
+    --update)
+      mode="update"
+      ;;
+    --core)
+      want_core=1
+      ;;
+    --cloud)
+      want_aws=1
+      want_gcp=1
+      want_azure=1
+      want_doctl=1
+      ;;
+    --k8s)
+      want_kubectl=1
+      ;;
+    --all)
+      want_core=1
+      want_aws=1
+      want_gcp=1
+      want_azure=1
+      want_doctl=1
+      want_kubectl=1
+      ;;
+    --aws)
+      want_aws=1
+      ;;
+    --gcp)
+      want_gcp=1
+      ;;
+    --azure)
+      want_azure=1
+      ;;
+    --doctl)
+      want_doctl=1
+      ;;
+    --kubectl)
+      want_kubectl=1
+      ;;
+    *)
+      echo "install-prereqs: unknown argument: $arg" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+if [[ $# -eq 0 || "$want_core$want_aws$want_gcp$want_azure$want_doctl$want_kubectl" == "000000" ]]; then
+  want_core=1
+  want_aws=1
+  want_gcp=1
+  want_azure=1
+  want_doctl=1
+  want_kubectl=1
+fi
+
+has_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+version_line() {
+	local cmd="$1"
+	shift
+	if has_cmd "$cmd"; then
+		local output
+		case "$cmd" in
+			gcloud)
+				output="$(CLOUDSDK_CONFIG="${TMPDIR:-/tmp}/cloudmanager-gcloud-check" "$cmd" version 2>&1 || true)"
+				;;
+			az)
+				output="$(AZURE_CONFIG_DIR="${TMPDIR:-/tmp}/cloudmanager-azure-check" "$cmd" --version 2>&1 || true)"
+				;;
+			*)
+				output="$("$cmd" "$@" 2>&1 || true)"
+				;;
+		esac
+		awk '
+			/Google Cloud SDK/ { print; found=1; exit }
+			/^azure-cli[[:space:]]/ { print; found=1; exit }
+			!/^(WARNING|Traceback|ERROR|  File )/ && NF { print; found=1; exit }
+			END { if (!found) print "installed (version check failed)" }
+		' <<<"$output"
+	else
+		echo "missing"
+	fi
+}
+
+status() {
+  local label="$1"
+  local cmd="$2"
+  shift 2
+  if has_cmd "$cmd"; then
+    printf '✓ %-22s %s\n' "$label" "$(version_line "$cmd" "$@")"
+  else
+    printf '✗ %-22s missing\n' "$label"
+  fi
+}
+
+manager="none"
+if has_cmd brew; then
+  manager="brew"
+elif has_cmd apt-get; then
+  manager="apt"
+fi
+
+run_sudo() {
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+brew_install_or_update() {
+	local kind="$1"
+	local name="$2"
+	if [[ "$kind" == "auto" ]]; then
+		if brew info --formula "$name" >/dev/null 2>&1; then
+			kind="formula"
+		else
+			kind="cask"
+		fi
+	fi
+	if [[ "$kind" == "cask" ]]; then
+    if brew list --cask "$name" >/dev/null 2>&1; then
+      [[ "$mode" == "update" ]] && brew upgrade --cask "$name" || true
+    else
+      brew install --cask "$name"
+    fi
+    return
+  fi
+
+  if brew list --formula "$name" >/dev/null 2>&1; then
+    [[ "$mode" == "update" ]] && brew upgrade "$name" || true
+  else
+    brew install "$name"
+  fi
+}
+
+apt_install_or_update() {
+  local pkg="$1"
+  if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+    run_sudo apt-get install -y "$pkg"
+  elif [[ "$mode" == "update" ]]; then
+    run_sudo apt-get install --only-upgrade -y "$pkg"
+  fi
+}
+
+install_tool() {
+  local label="$1"
+  local cmd="$2"
+  local brew_kind="$3"
+  local brew_pkg="$4"
+  local apt_pkg="$5"
+
+  if [[ "$mode" == "check" ]]; then
+    return
+  fi
+
+  if [[ "$mode" == "install" ]] && has_cmd "$cmd"; then
+    return
+  fi
+
+  case "$manager" in
+    brew)
+      brew_install_or_update "$brew_kind" "$brew_pkg"
+      ;;
+    apt)
+      if [[ -n "$apt_pkg" ]]; then
+        apt_install_or_update "$apt_pkg"
+      else
+        echo "skip: $label has no safe apt package mapping in this script" >&2
+      fi
+      ;;
+    *)
+      echo "skip: no supported package manager found for $label" >&2
+      ;;
+  esac
+}
+
+install_selected() {
+  if [[ "$mode" == "check" ]]; then
+    return
+  fi
+
+  if [[ "$manager" == "brew" ]]; then
+    brew update
+  elif [[ "$manager" == "apt" ]]; then
+    run_sudo apt-get update
+  fi
+
+  if [[ "$want_core" -eq 1 ]]; then
+    install_tool "Git" "git" "formula" "git" "git"
+    install_tool "Go" "go" "formula" "go" "golang-go"
+    install_tool "OpenSSH" "ssh" "formula" "openssh" "openssh-client"
+    install_tool "curl" "curl" "formula" "curl" "curl"
+  fi
+
+	if [[ "$want_aws" -eq 1 ]]; then
+		install_tool "AWS CLI" "aws" "formula" "awscli" "awscli"
+		install_tool "AWS SSM plugin" "session-manager-plugin" "auto" "session-manager-plugin" ""
+	fi
+	[[ "$want_gcp" -eq 1 ]] && install_tool "Google Cloud CLI" "gcloud" "auto" "google-cloud-sdk" ""
+  [[ "$want_azure" -eq 1 ]] && install_tool "Azure CLI" "az" "formula" "azure-cli" ""
+  [[ "$want_doctl" -eq 1 ]] && install_tool "DigitalOcean CLI" "doctl" "formula" "doctl" ""
+  [[ "$want_kubectl" -eq 1 ]] && install_tool "kubectl" "kubectl" "formula" "kubectl" "kubectl"
+}
+
+print_report() {
+  echo "CloudManager prerequisite report"
+  echo "mode: ${mode}"
+  echo "package manager: ${manager}"
+  echo
+
+  if [[ "$want_core" -eq 1 ]]; then
+    status "Git" "git" "--version"
+    status "Go" "go" "version"
+    status "OpenSSH" "ssh" "-V"
+    status "curl" "curl" "--version"
+  fi
+  if [[ "$want_aws" -eq 1 ]]; then
+    status "AWS CLI" "aws" "--version"
+    status "AWS SSM plugin" "session-manager-plugin" "--version"
+  fi
+  [[ "$want_gcp" -eq 1 ]] && status "Google Cloud CLI" "gcloud" "--version"
+  [[ "$want_azure" -eq 1 ]] && status "Azure CLI" "az" "--version"
+  [[ "$want_doctl" -eq 1 ]] && status "DigitalOcean CLI" "doctl" "version"
+  [[ "$want_kubectl" -eq 1 ]] && status "kubectl" "kubectl" "version" "--client=true"
+}
+
+install_selected
+print_report

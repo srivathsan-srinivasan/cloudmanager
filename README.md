@@ -1,5 +1,8 @@
 # CloudManager
 
+[![GitHub release downloads](https://img.shields.io/github/downloads/vyoogam/cloudmanager/total?style=flat-square&label=release%20downloads)](https://github.com/vyoogam/cloudmanager/releases)
+![README visitors](https://visitor-badge.laobi.icu/badge?page_id=vyoogam.cloudmanager&left_text=repo%20visits)
+
 CloudManager is a fast, terminal control plane for cloud operations.
 
 It is built for **speed, firefighting, and instantaneous access** to the cloud
@@ -46,15 +49,59 @@ engineer to the right resource faster than a browser console can.
 
 ## Features
 
-- **Multi-Cloud Dashboard:** View VMs, Disks, Snapshots, Networks, Databases, Kubernetes, and Storage across AWS, Google Cloud, and Azure.
-- **FinOps Intelligence:** Get actionable AI-powered cost and architecture recommendations via Gemini 1.5 Flash.
-- **Live Metrics:** Real-time CPU and memory utilization indicators (🟢🟡🔴) integrated into your resource tables.
-- **Cost Transparency:** Track monthly spending and cost trends for individual instances and entire accounts.
-- **Direct SSH Access:** Drop directly into an interactive SSH session with your instances using native tools.
-- **Manual Hosts:** Add SSH/RDP-style hosts by IP, username, SSH config alias, or key path without provider API credentials.
-- **CloudManager Tags:** Add local, cross-cloud tags such as `VFWEB` or `incident-watch` without mutating provider metadata.
-- **Find Resources:** Use scoped find flows such as `:find-vms`, `:find-dbs`, `:find-storage`, and `:find-all` against indexed resources.
-- **Lightning Fast:** Powered by Go and Bubble Tea with smart async enrichment and caching.
+### Operator Cockpit
+
+- Multi-cloud dashboard for AWS, GCP, Azure, DigitalOcean, Kubernetes, and manual hosts.
+- Keyboard-first Bubble Tea TUI with tabs for VMs, Disks, Snapshots, Firewalls, Clusters, Databases, Networks, Storage, and Hosts.
+- Home dashboard with indexed counts, running/stopped state, public IPs, database health, Kubernetes visibility, storage, networks, firewalls, and manual hosts.
+- In-app Help view with `?`, `F1`, and `:help`.
+- Application logs view with `:logs`.
+- Adaptive table colors for light and dark terminals.
+- Configurable visible columns and sortable headers across resource tables and Find.
+
+### Cloud Inventory And Search
+
+- Local SQLite-backed VM and resource inventory cache.
+- JSON cache fallback during migration from older installs.
+- Scoped Find flows: `:find-vms`, `:find-dbs`, `:find-k8s`, `:find-storage`, `:find-hosts`, and `:find-all`.
+- Public IP drill-down from dashboard to filtered VM Find results.
+- CSV export for known indexed public endpoints.
+- Terraform state cross-reference for VMs, databases, and Kubernetes clusters.
+- CloudManager-local tags across clouds without mutating provider metadata by default.
+
+### Provider Coverage
+
+- AWS VM, disk, snapshot, firewall/security group, database, cluster, network, subnet, storage, billing, metrics, and recommendation surfaces.
+- GCP VM, disk, snapshot, firewall, Cloud SQL, GKE, network, storage, billing, metrics, and recommendation surfaces.
+- Azure VM, disk, snapshot, firewall, PostgreSQL, AKS, network, storage, billing, metrics, and recommendation surfaces.
+- DigitalOcean VM/database/cluster parser support where available.
+- Manual SSH/RDP-style host inventory for resources outside the major cloud APIs.
+
+### Access And Actions
+
+- Provider-native VM actions: start, stop, restart, terminate, describe, and open console where supported.
+- Direct SSH access through native provider tools where available.
+- Learned SSH access memory stored locally in SQLite.
+- Manual host reachability checks with SSH first, then ping fallback.
+- Firewall rule editing with provider-aware guardrails.
+- Add current public IP to firewall rules when SDK mutation mode is available.
+- Copy IDs, console URLs, public endpoints, and detail output from resource views.
+
+### FinOps And Health
+
+- VM-level metrics and utilization indicators.
+- Monthly cost enrichment and per-resource cost display.
+- Provider recommendation hooks for rightsizing and cost cleanup.
+- Dashboard summaries for database and Kubernetes health.
+- Cache-aware async enrichment to keep the TUI responsive.
+
+### Local-First Safety
+
+- Uses native CLIs and SDKs; credentials stay in the user's environment.
+- CloudManager-owned config lives under the user's home directory.
+- Tags, access memory, inventory cache, and logs are local by default.
+- Mutating actions are explicit and provider-aware.
+- Component roadmap keeps the core binary focused while allowing service-specific expansion.
 
 ## Core vs Components
 
@@ -85,23 +132,23 @@ terminal workflow, active context, audit path, and provider-aware guardrails.
 
 ## Installation
 
-Ensure you have [Go](https://golang.org/doc/install) (1.20+) installed.
+Ensure you have [Go](https://golang.org/doc/install) 1.25 or newer installed.
 
 ```bash
-go install github.com/srivathsan-srinivasan/cloudmanager@latest
+go install github.com/vyoogam/cloudmanager@latest
 ```
 
 `go get` is no longer the right way to install Go binaries on modern Go. Use
 `go install ...@version`. To pin this release:
 
 ```bash
-go install github.com/srivathsan-srinivasan/cloudmanager@v1.0.1
+go install github.com/vyoogam/cloudmanager@v1.0.1
 ```
 
 From source:
 
 ```bash
-git clone https://github.com/srivathsan-srinivasan/cloudmanager.git
+git clone https://github.com/vyoogam/cloudmanager.git
 cd cloudmanager
 go build -o cloudmanager .
 ```
@@ -109,13 +156,25 @@ go build -o cloudmanager .
 Homebrew tap:
 
 ```bash
-brew tap srivathsan-srinivasan/cloudmanager https://github.com/srivathsan-srinivasan/cloudmanager
+brew tap vyoogam/cloudmanager https://github.com/vyoogam/cloudmanager
 brew install cloudmanager
 ```
 
 ### Release Automation
 
-Releases are tag-driven. To cut a new stable release:
+Releases can be created from GitHub Actions:
+
+1. Open **Actions** in GitHub.
+2. Select **Release Go Module**.
+3. Click **Run workflow**.
+4. Enter a stable version such as `v1.0.2`.
+5. Run it from the release branch.
+
+The workflow runs tests, updates `VERSION`, the README install pin, and the
+Homebrew formula, commits the release bump, creates the tag, pushes it, and
+publishes GitHub release artifacts with GoReleaser.
+
+Local releases are also supported:
 
 ```bash
 scripts/release v1.0.2
@@ -132,6 +191,18 @@ CloudManager wraps the native CLI tools for the respective cloud providers. Ensu
 - **GCP:** [`gcloud`](https://cloud.google.com/sdk/gcloud) + `gcloud auth login --no-browser`
 - **Azure:** [`az`](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) + `az login`
 - **DigitalOcean:** [`doctl`](https://docs.digitalocean.com/reference/doctl/) + `doctl auth init`
+
+You can check, install, or update common prerequisites with:
+
+```bash
+scripts/install-prereqs --check --all
+scripts/install-prereqs --install --core --cloud
+scripts/install-prereqs --update --all
+```
+
+The script supports Homebrew first-class on macOS and best-effort `apt` installs
+on Linux. It never runs login flows; authenticate through CloudManager `:login`
+or the native CLIs after installation.
 
 Inside CloudManager, run `:login` to launch wrapped native login flows and refresh discovered contexts afterward.
 
@@ -182,6 +253,8 @@ cloudmanager tui
 - `1` - `9`: Switch between resource views (VMs, Disks, Snapshots, Firewalls, Clusters, Databases, Networks, Storage, Hosts)
 - `↑` / `↓` / `k` / `j`: Navigate lists
 - `Enter`: Select an item or execute an action
+- `?` / `F1`: Open the in-app help / shortcuts page
+- `/` in Help: Filter shortcuts
 - `Tab`: Switch focus between Sidebar (Contexts) and Main View
 - `b`: Toggle Sidebar visibility
 - `H`: Return to the home dashboard
@@ -189,6 +262,8 @@ cloudmanager tui
 - `t`: Add CloudManager-only tags to the selected resource where supported
 - `,`: Open Settings
 - `g`: Open the scoped Find picker
+- `:help`: Open the in-app help / shortcuts page
+- `:logs`: Open application logs
 - `:dashboard`: Open the home dashboard
 - `:find-vms`, `:find-dbs`, `:find-k8s`, `:find-storage`, `:find-hosts`, `:find-all`: Find across indexed resources by scope
 - `:summary`: Refresh database and Kubernetes dashboard summary counts
@@ -303,6 +378,27 @@ Upon first run, a default configuration file will be created at `~/.cloudmanager
     "subtle": "#D9DCCF",
     "highlight": "#874BFD",
     "special": "#43BF6D",
+    "info": "#38BDF8",
+    "amber": "#F59E0B",
+    "status_running": "#22C55E",
+    "status_available": "#06B6D4",
+    "status_ready": "#A3E635",
+    "status_in_use": "#60A5FA",
+    "status_starting": "#38BDF8",
+    "status_stopping": "#FB923C",
+    "status_stopped": "#F59E0B",
+    "status_terminated": "#EF4444",
+    "status_deallocated": "#A78BFA",
+    "status_unknown": "#737373",
+    "status_reachable": "#10B981",
+    "status_unreachable": "#F97316",
+    "column_name": "#A855F7",
+    "column_id": "#818CF8",
+    "column_ip": "#06B6D4",
+    "column_provider": "#F472B6",
+    "column_region": "#2DD4BF",
+    "column_type": "#FBBF24",
+    "column_meta": "#94A3B8",
     "alert": "#FF5F87"
   },
   "keybindings": {
@@ -344,7 +440,7 @@ Useful contribution areas:
 - audit and telemetry
 - terminal UX polish
 
-👉 **[Request a Feature or Open an Issue](https://github.com/srivathsan-srinivasan/cloudmanager/issues)**
+👉 **[Request a Feature or Open an Issue](https://github.com/vyoogam/cloudmanager/issues)**
 
 Please review the [Contributing Guide](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before submitting PRs.
 

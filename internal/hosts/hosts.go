@@ -3,8 +3,8 @@ package hosts
 import (
 	"strings"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func FromConfig(cfg config.AppConfig) []core.ManualHost {

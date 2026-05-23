@@ -12,7 +12,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 type AccessProfile struct {
@@ -75,6 +75,39 @@ CREATE TABLE IF NOT EXISTS access_profiles (
   PRIMARY KEY (provider, context_key, region, resource_id)
 );
 CREATE INDEX IF NOT EXISTS idx_access_profiles_resource_name ON access_profiles(provider, context_key, region, resource_name);
+CREATE TABLE IF NOT EXISTS resource_inventory (
+  resource_type TEXT NOT NULL,
+  cache_key TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  context_key TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  account_name TEXT NOT NULL,
+  region TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  resource_name TEXT NOT NULL,
+  searchable_text TEXT NOT NULL,
+  tags TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  seen_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (resource_type, cache_key)
+);
+CREATE INDEX IF NOT EXISTS idx_resource_inventory_context ON resource_inventory(provider, context_key, region);
+CREATE INDEX IF NOT EXISTS idx_resource_inventory_type_seen ON resource_inventory(resource_type, seen_at);
+CREATE INDEX IF NOT EXISTS idx_resource_inventory_search ON resource_inventory(resource_type, resource_name, resource_id);
+CREATE TABLE IF NOT EXISTS resource_summaries (
+  summary_type TEXT NOT NULL,
+  context_key TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  account_name TEXT NOT NULL,
+  region TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  extra INTEGER NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (summary_type, context_key)
+);
+CREATE INDEX IF NOT EXISTS idx_resource_summaries_context ON resource_summaries(provider, context_key, region);
 `)
 	return err
 }

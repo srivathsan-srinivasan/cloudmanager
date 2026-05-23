@@ -10,20 +10,20 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/smoke"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/clusters"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/databases"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/disks"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/firewalls"
-	hostview "github.com/srivathsan-srinivasan/cloudmanager/internal/views/hosts"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/networks"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/snapshots"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/storage"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/vms"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/smoke"
+	"github.com/vyoogam/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/views/clusters"
+	"github.com/vyoogam/cloudmanager/internal/views/databases"
+	"github.com/vyoogam/cloudmanager/internal/views/disks"
+	"github.com/vyoogam/cloudmanager/internal/views/firewalls"
+	hostview "github.com/vyoogam/cloudmanager/internal/views/hosts"
+	"github.com/vyoogam/cloudmanager/internal/views/networks"
+	"github.com/vyoogam/cloudmanager/internal/views/snapshots"
+	"github.com/vyoogam/cloudmanager/internal/views/storage"
+	"github.com/vyoogam/cloudmanager/internal/views/vms"
 )
 
 // Version and BuildTime are injected at build time via ldflags.
@@ -60,8 +60,13 @@ func main() {
 		}
 	}
 
+	if err := logging.Init(Version, BuildTime, cfg.Backend); err != nil {
+		fmt.Printf("Warning: failed to initialize logging: %v\n", err)
+	} else {
+		logging.Infof("component=main event=start args=%s backend=%s", strings.Join(flag.Args(), ","), cfg.Backend)
+	}
+
 	if *smokeTestFlag != "" {
-		_ = logging.Init(Version, BuildTime, cfg.Backend)
 		summary, err := smoke.Run(cfg, *smokeTestFlag, os.Stdout)
 		if err != nil {
 			logging.Errorf("component=smoke event=failed target=%s checked=%d passed=%d failed=%d err=%v", *smokeTestFlag, summary.Checked, summary.Passed, summary.Failed, err)
@@ -75,16 +80,13 @@ func main() {
 	}
 
 	if handled := handleProfileCLI(flag.Args(), cfg); handled {
+		logging.Infof("component=main event=cli_exit args=%s", strings.Join(flag.Args(), ","))
 		return
 	}
 
-	if err := logging.Init(Version, BuildTime, cfg.Backend); err != nil {
-		fmt.Printf("Warning: failed to initialize logging: %v\n", err)
-	} else {
-		logging.Infof("component=main event=ui_start backend=%s", cfg.Backend)
-	}
+	logging.Infof("component=main event=ui_start backend=%s", cfg.Backend)
 
-	ui.InitStyles(cfg.Theme.Subtle, cfg.Theme.Highlight, cfg.Theme.Special, cfg.Theme.Alert)
+	ui.InitTheme(cfg.Theme)
 
 	app := ui.NewApp(cfg, Version, BuildTime)
 

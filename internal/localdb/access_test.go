@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func TestAccessProfileRoundTrip(t *testing.T) {
@@ -57,6 +57,70 @@ func TestLearnedAccessMethodUsesDefaultKeyReady(t *testing.T) {
 	}
 	if method.CopyText != "ssh ec2-user@10.0.0.5" {
 		t.Fatalf("expected direct ssh without key, got %q", method.CopyText)
+	}
+}
+
+func TestResourceRowsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	seenAt := time.Now().UTC().Truncate(time.Second)
+
+	err := ReplaceResourceRows(ctx, db, []string{"vm"}, []ResourceRow{{
+		ResourceType:   "vm",
+		CacheKey:       "AWS|123|us-east-1|prod|i-123",
+		Provider:       "AWS",
+		ContextKey:     "AWS|123|us-east-1|prod",
+		AccountID:      "123",
+		AccountName:    "prod",
+		Region:         "us-east-1",
+		ResourceID:     "i-123",
+		ResourceName:   "api",
+		SearchableText: "api i-123 203.0.113.10",
+		Tags:           "env=prod",
+		PayloadJSON:    `{"name":"api"}`,
+		SeenAt:         seenAt,
+	}})
+	if err != nil {
+		t.Fatalf("replace resource rows: %v", err)
+	}
+
+	rows, total, err := LoadResourceRows(ctx, db, []string{"vm"}, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("load resource rows: %v", err)
+	}
+	if total != 1 || len(rows) != 1 {
+		t.Fatalf("expected one row, total=%d len=%d", total, len(rows))
+	}
+	if rows[0].ResourceID != "i-123" || rows[0].PayloadJSON != `{"name":"api"}` || !rows[0].SeenAt.Equal(seenAt) {
+		t.Fatalf("unexpected resource row: %+v", rows[0])
+	}
+}
+
+func TestSummaryRowsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+
+	err := ReplaceSummaryRows(ctx, db, []string{"disks"}, []SummaryRow{{
+		SummaryType: "disks",
+		ContextKey:  "AWS|123|us-east-1|prod",
+		Provider:    "AWS",
+		AccountID:   "123",
+		AccountName: "prod",
+		Region:      "us-east-1",
+		Count:       7,
+		Extra:       2,
+		UpdatedAt:   time.Now().UTC().Truncate(time.Second),
+	}})
+	if err != nil {
+		t.Fatalf("replace summary rows: %v", err)
+	}
+
+	rows, total, err := LoadSummaryRows(ctx, db, []string{"disks"}, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("load summary rows: %v", err)
+	}
+	if total != 1 || len(rows) != 1 || rows[0].Count != 7 || rows[0].Extra != 2 {
+		t.Fatalf("unexpected summary rows total=%d rows=%+v", total, rows)
 	}
 }
 

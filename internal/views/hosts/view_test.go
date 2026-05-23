@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/ui"
 )
 
 func TestFilterHostsMatchesNameIPUserAndTags(t *testing.T) {
@@ -42,6 +42,25 @@ func TestHostsViewSearchQueryNarrowsRows(t *testing.T) {
 	}
 	if strings.Contains(rendered, "hetzner-web") {
 		t.Fatalf("did not expect unfiltered host in render, got:\n%s", rendered)
+	}
+}
+
+func TestHostsViewShowsReachabilityStatus(t *testing.T) {
+	cfg := config.AppConfig{
+		ManualHosts: []config.ManualHost{
+			{Name: "hetzner-web", Host: "203.0.113.10", Username: "root"},
+		},
+	}
+	view := New(&cfg)
+	_ = view.Init(core.CloudContext{Provider: "Manual"}, 120, 30, false)
+	if !strings.Contains(view.Render(), "checking") {
+		t.Fatalf("expected initial reachability status, got:\n%s", view.Render())
+	}
+
+	updated, _ := view.Update(hostReachabilityMsg{key: manualHostKey(view.hosts[0]), status: "ssh-ok"})
+	view = updated.(*HostsView)
+	if !strings.Contains(view.Render(), "ssh-ok") {
+		t.Fatalf("expected ssh reachability status, got:\n%s", view.Render())
 	}
 }
 

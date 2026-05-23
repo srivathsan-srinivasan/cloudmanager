@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func TestLoadTerraformStateFileParsesAWSInstance(t *testing.T) {

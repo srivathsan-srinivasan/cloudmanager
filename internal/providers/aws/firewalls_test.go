@@ -6,7 +6,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func TestAWSSecurityGroupRuleToCoreUsesRealRuleID(t *testing.T) {

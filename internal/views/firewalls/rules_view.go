@@ -13,12 +13,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/publicip"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	applog "github.com/vyoogam/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/publicip"
+	"github.com/vyoogam/cloudmanager/internal/ui"
 )
 
 type firewallRulesFetchMsg struct {
@@ -54,6 +54,7 @@ type RulesView struct {
 	descView    viewport.Model
 	searchInput textinput.Model
 	actions     list.Model
+	sortList    list.Model
 	activePane  int
 
 	ruleData       []core.FirewallRule
@@ -82,6 +83,9 @@ type RulesView struct {
 
 	copyableText string
 	detailURL    string
+	sortColumn   string
+	sortAsc      bool
+	sortHeader   ui.HeaderSortState
 }
 
 func NewRules(cfg *config.AppConfig, group core.SecurityGroup) *RulesView {
@@ -105,6 +109,7 @@ func NewRules(cfg *config.AppConfig, group core.SecurityGroup) *RulesView {
 	actionList.Title = "Rule Actions"
 	actionList.SetShowStatusBar(false)
 	actionList.SetFilteringEnabled(false)
+	sortList := ui.NewSortList("Sort Firewall Rules by (Enter to select, Esc to cancel)", firewallRuleSortColumns())
 
 	tbl, cols, _, canScrollLeft, canScrollRight := createFirewallRulesTable(80, 0)
 	return &RulesView{
@@ -112,23 +117,25 @@ func NewRules(cfg *config.AppConfig, group core.SecurityGroup) *RulesView {
 		descView:       descView,
 		searchInput:    searchInput,
 		actions:        actionList,
+		sortList:       sortList,
 		group:          group,
 		cfg:            cfg,
 		activePane:     paneTable,
 		displayCols:    cols,
 		canScrollLeft:  canScrollLeft,
 		canScrollRight: canScrollRight,
+		sortAsc:        true,
 	}
 }
 
 func (v *RulesView) Title() string { return "Firewall Rules" }
 
 func (v *RulesView) ShortHelp() string {
-	return "\u2191\u2193: Nav \u2022 \u2190\u2192: Pan \u2022 a:Add \u2022 i:My IP \u2022 e:Edit \u2022 d:Describe \u2022 ctrl+d:Delete \u2022 Enter:Menu \u2022 /:Search"
+	return "\u2191\u2193: Nav \u2022 ↑ at top: Columns \u2022 \u2190\u2192: Pan \u2022 Enter: Sort/Menu \u2022 a:Add \u2022 i:My IP \u2022 e:Edit \u2022 d:Describe \u2022 /:Search"
 }
 
 func (v *RulesView) IsInputActive() bool {
-	return v.isSearching || v.activePane == paneDescribe || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneEditRule || v.activePane == paneAddRule
+	return v.sortHeader.Active || v.isSearching || v.activePane == paneDescribe || v.activePane == paneActions || v.activePane == paneSortConfig || v.activePane == paneConfirm || v.activePane == paneEditRule || v.activePane == paneAddRule
 }
 
 func (v *RulesView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
@@ -162,6 +169,7 @@ func (v *RulesView) Resize(width, height int, showSidebar bool) {
 	v.descView.Width = width - 4
 	v.descView.Height = height - 4
 	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
+	v.sortList.SetSize(width-4, height-4)
 	if v.activePane == paneEditRule {
 		v.syncEditInputLayout()
 	}
@@ -173,6 +181,9 @@ func (v *RulesView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if v.sortHeader.Active {
+			return v.handleHeaderSortKeys(msg)
+		}
 		if v.isSearching {
 			return v.handleSearchKeys(msg)
 		}
@@ -185,6 +196,8 @@ func (v *RulesView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			_, cmd = v.handleDescribeKeys(msg)
 		case paneActions:
 			_, cmd = v.handleActionKeys(msg)
+		case paneSortConfig:
+			_, cmd = v.handleSortConfigKeys(msg)
 		case paneConfirm:
 			_, cmd = v.handleConfirmKeys(msg)
 		case paneEditRule:
@@ -270,6 +283,9 @@ func (v *RulesView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 	case paneActions:
 		v.actions, cmd = v.actions.Update(msg)
 		cmds = append(cmds, cmd)
+	case paneSortConfig:
+		v.sortList, cmd = v.sortList.Update(msg)
+		cmds = append(cmds, cmd)
 	case paneDescribe:
 		v.descView, cmd = v.descView.Update(msg)
 		cmds = append(cmds, cmd)
@@ -280,7 +296,7 @@ func (v *RulesView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 
 func (v *RulesView) Render() string {
 	header := ui.AppendScrollHint(ui.BreadcrumbStyle.Render(ui.TruncateText(v.breadcrumbs, v.width-2)), v.canScrollLeft, v.canScrollRight, v.width)
-	body := v.rules.View()
+	body := ui.ColorizeOperationalStates(v.rules.View())
 	if v.loading {
 		body = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("Loading firewall rules...")
 	} else if v.isSearching || v.searchInput.Value() != "" {
@@ -295,8 +311,12 @@ func (v *RulesView) Render() string {
 
 	if v.activePane == paneActions {
 		overlay := ui.OverlayStyle.Render(v.actions.View())
-		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(v.rules.View()), overlay)
+		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(ui.ColorizeOperationalStates(v.rules.View())), overlay)
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+	}
+
+	if v.activePane == paneSortConfig {
+		return ui.ClampToWindow(v.sortList.View(), v.width, v.height)
 	}
 
 	if v.activePane == paneConfirm {
@@ -308,7 +328,7 @@ func (v *RulesView) Render() string {
 			"\n", lipgloss.NewStyle().Foreground(ui.Subtle).Render("Enter: Confirm \u2022 Esc: Cancel"),
 		)
 		overlay := confirmStyle.Render(confirmView)
-		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(v.rules.View()), overlay)
+		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(ui.ColorizeOperationalStates(v.rules.View())), overlay)
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 	}
 
@@ -324,7 +344,7 @@ func (v *RulesView) Render() string {
 			}
 			b.WriteString("\n\n" + lipgloss.NewStyle().Foreground(ui.Subtle).Render("Tab/Shift+Tab: Navigate • Enter: Submit • Esc: Cancel"))
 			overlay := ui.OverlayStyle.Copy().Width(50).Padding(1, 2).Render(b.String())
-			body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(v.rules.View()), overlay)
+			body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(ui.ColorizeOperationalStates(v.rules.View())), overlay)
 			return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 		}
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", v.renderEditRuleForm()), v.width, v.height)
@@ -356,6 +376,7 @@ func (v *RulesView) refreshTable() {
 	tbl.SetWidth(ui.TableViewportWidth(availWidth))
 	rows := mapFirewallRulesToRows(v.visibleRules, cols)
 	tbl.SetRows(rows)
+	tbl.SetColumns(ui.DecorateSortColumns(cols, v.sortHeader, v.sortColumn, v.sortAsc))
 	if cursor >= 0 && cursor < len(rows) {
 		tbl.SetCursor(cursor)
 	}
@@ -464,6 +485,14 @@ func (v *RulesView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 	case "/":
 		v.isSearching = true
 		v.searchInput.Focus()
+	case "S":
+		v.sortHeader.Activate(v.displayCols)
+		v.refreshTable()
+	case "up":
+		if v.rules.Cursor() == 0 {
+			v.sortHeader.Activate(v.displayCols)
+			v.refreshTable()
+		}
 	case "left", "h":
 		if v.columnOffset > 0 {
 			v.columnOffset--
@@ -478,6 +507,48 @@ func (v *RulesView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.loading = true
 		return v, v.fetchRulesCmd()
 	}
+	return v, nil
+}
+
+func (v *RulesView) handleHeaderSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "down":
+		v.sortHeader.Deactivate()
+	case "left", "h":
+		if !v.sortHeader.Move(-1, v.displayCols) && v.columnOffset > 0 {
+			v.columnOffset--
+			v.refreshTable()
+			v.sortHeader.Index = len(v.displayCols) - 1
+		}
+	case "right", "l":
+		if !v.sortHeader.Move(1, v.displayCols) && v.canScrollRight {
+			v.columnOffset++
+			v.sortHeader.Index = 0
+			v.refreshTable()
+		}
+	case "enter":
+		column := v.sortHeader.SelectedColumn(v.displayCols)
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, column)
+	}
+	v.refreshTable()
+	return v, nil
+}
+
+func (v *RulesView) handleSortConfigKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	if msg.String() == "esc" {
+		v.activePane = paneTable
+		return v, nil
+	}
+	if msg.String() != "enter" {
+		return v, nil
+	}
+	selected, ok := v.sortList.SelectedItem().(ui.SortColumnItem)
+	if !ok {
+		return v, nil
+	}
+	v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, selected.Name)
+	v.syncVisibleRows()
+	v.activePane = paneTable
 	return v, nil
 }
 
@@ -1184,6 +1255,9 @@ func orFallback(values ...string) string {
 
 func (v *RulesView) syncVisibleRows() {
 	v.visibleRules = filterFirewallRules(v.ruleData, v.searchInput.Value())
+	ui.SortByColumn(v.visibleRules, v.sortColumn, v.sortAsc, func(rule core.FirewallRule, column string) string {
+		return rule.GetField(column)
+	})
 	rows := mapFirewallRulesToRows(v.visibleRules, v.displayCols)
 	v.rules.SetRows(rows)
 	if len(rows) == 0 {
@@ -1195,6 +1269,18 @@ func (v *RulesView) syncVisibleRows() {
 		v.rules.SetCursor(len(rows) - 1)
 	}
 	v.applySelectionStyle()
+}
+
+func firewallRuleSortColumns() []table.Column {
+	return []table.Column{
+		{Title: "Direction"},
+		{Title: "Protocol"},
+		{Title: "Ports"},
+		{Title: "Source"},
+		{Title: "Destination"},
+		{Title: "Action"},
+		{Title: "Description"},
+	}
 }
 
 func (v *RulesView) visibleRowsSource() []core.FirewallRule {

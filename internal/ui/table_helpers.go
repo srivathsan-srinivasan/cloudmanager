@@ -8,7 +8,7 @@ import (
 )
 
 func DefaultTableStyles() table.Styles {
-	return tableStyles(lipgloss.Color("229"), lipgloss.Color("57"))
+	return tableStyles(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#FDE68A"}, Highlight)
 }
 
 func AlertSelectedTableStyles() table.Styles {
@@ -18,7 +18,7 @@ func AlertSelectedTableStyles() table.Styles {
 func tableStyles(selectedForeground, selectedBackground lipgloss.TerminalColor) table.Styles {
 	styles := table.DefaultStyles()
 	styles.Header = styles.Header.BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")).BorderBottom(true).Bold(true)
+		BorderForeground(Subtle).Foreground(ColumnMeta).BorderBottom(true).Bold(true)
 	styles.Selected = styles.Selected.Foreground(selectedForeground).
 		Background(selectedBackground).Bold(false)
 	return styles

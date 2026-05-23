@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 const (

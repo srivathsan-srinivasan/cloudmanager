@@ -9,8 +9,8 @@ import (
 
 	"google.golang.org/api/compute/v1"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/logging"
 )
 
 // --- CLI Backend ---

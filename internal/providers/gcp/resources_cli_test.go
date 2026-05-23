@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -102,5 +103,56 @@ func TestGCPSecurityGroupsFromNetworkData(t *testing.T) {
 	}
 	if groups[0].AttachedResources != 2 || !groups[0].HasOpenSSH {
 		t.Fatalf("expected attachment count and open ssh audit flag, got %#v", groups[0])
+	}
+}
+
+func TestGCPCloudSQLDisplayStatusUsesActivationPolicy(t *testing.T) {
+	cases := []struct {
+		state            string
+		activationPolicy string
+		want             string
+	}{
+		{state: "RUNNABLE", activationPolicy: "ALWAYS", want: "RUNNING"},
+		{state: "RUNNABLE", activationPolicy: "NEVER", want: "STOPPED"},
+		{state: "SUSPENDED", activationPolicy: "ALWAYS", want: "STOPPED"},
+		{state: "PENDING_CREATE", activationPolicy: "ALWAYS", want: "PENDING_CREATE"},
+	}
+
+	for _, tc := range cases {
+		if got := gcpCloudSQLDisplayStatus(tc.state, tc.activationPolicy); got != tc.want {
+			t.Fatalf("status %s activation %s: got %s want %s", tc.state, tc.activationPolicy, got, tc.want)
+		}
+	}
+}
+
+func TestParseGCPDatabasesCLIUsesActivationPolicy(t *testing.T) {
+	output := []byte(`[
+		{
+			"name": "running-db",
+			"state": "RUNNABLE",
+			"databaseVersion": "POSTGRES_15",
+			"region": "us-central1",
+			"selfLink": "https://sqladmin.googleapis.com/sql/v1/projects/p1/instances/running-db",
+			"settings": {"tier": "db-custom-1-3840", "activationPolicy": "ALWAYS", "userLabels": {"env": "prod"}}
+		},
+		{
+			"name": "stopped-db",
+			"state": "RUNNABLE",
+			"databaseVersion": "POSTGRES_15",
+			"region": "us-central1",
+			"selfLink": "https://sqladmin.googleapis.com/sql/v1/projects/p1/instances/stopped-db",
+			"settings": {"tier": "db-custom-1-3840", "activationPolicy": "NEVER"}
+		}
+	]`)
+
+	var data []gcpDatabaseCLI
+	if err := json.Unmarshal(output, &data); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	if got := gcpCloudSQLDisplayStatus(data[0].State, data[0].Settings.ActivationPolicy); got != "RUNNING" {
+		t.Fatalf("expected running-db to be RUNNING, got %s", got)
+	}
+	if got := gcpCloudSQLDisplayStatus(data[1].State, data[1].Settings.ActivationPolicy); got != "STOPPED" {
+		t.Fatalf("expected stopped-db to be STOPPED, got %s", got)
 	}
 }

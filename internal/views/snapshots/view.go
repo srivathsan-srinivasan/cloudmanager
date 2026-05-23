@@ -13,13 +13,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/clipboard"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/tagging"
+	"github.com/vyoogam/cloudmanager/internal/clipboard"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	applog "github.com/vyoogam/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/views/tagging"
 )
 
 const (
@@ -113,6 +113,7 @@ type SnapshotsView struct {
 	activeCtx      core.CloudContext
 	sortColumn     string
 	sortAsc        bool
+	sortHeader     ui.HeaderSortState
 	columnOffset   int
 	canScrollLeft  bool
 	canScrollRight bool
@@ -211,11 +212,11 @@ func New(cfg *config.AppConfig) *SnapshotsView {
 func (v *SnapshotsView) Title() string { return "Snapshots" }
 
 func (v *SnapshotsView) ShortHelp() string {
-	return "\u2191\u2193: Navigate \u2022 \u2190\u2192: Pan \u2022 t: Tag \u2022 Enter: Actions \u2022 /: Search \u2022 S: Sort \u2022 C: Columns \u2022 r: Refresh"
+	return "\u2191\u2193: Navigate \u2022 ↑ at top: Columns \u2022 \u2190\u2192: Pan \u2022 Enter: Sort/Actions \u2022 t: Tag \u2022 /: Search \u2022 C: Columns \u2022 r: Refresh"
 }
 
 func (v *SnapshotsView) IsInputActive() bool {
-	return v.isSearching || v.activePane == paneCreateDisk || v.activePane == paneTag || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
+	return v.sortHeader.Active || v.isSearching || v.activePane == paneCreateDisk || v.activePane == paneTag || v.activePane == paneColumnConfig || v.activePane == paneSortConfig || v.activePane == paneActions || v.activePane == paneConfirm || v.activePane == paneDescribe
 }
 
 func (v *SnapshotsView) SetSearchQuery(query string) {
@@ -281,6 +282,9 @@ func (v *SnapshotsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		}
 		if v.isSearching {
 			return v.handleSearchKeys(msg)
+		}
+		if v.sortHeader.Active {
+			return v.handleHeaderSortKeys(msg)
 		}
 		if msg.String() == "esc" {
 			switch v.activePane {
@@ -410,7 +414,7 @@ func (v *SnapshotsView) Render() string {
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", msg), v.width, v.height)
 	}
 
-	tableContent := v.snaps.View()
+	tableContent := ui.ColorizeOperationalStates(v.snaps.View())
 
 	if v.loading {
 		tableContent = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("Loading snapshots...")
@@ -510,12 +514,18 @@ func (v *SnapshotsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			v.refreshTable()
 			v.statusMsg = "Scrolled columns right."
 		}
+	case "up":
+		if v.snaps.Cursor() == 0 {
+			v.sortHeader.Activate(v.tableCols)
+			v.refreshTable()
+		}
 	case "r":
 		v.loading = true
 		v.statusMsg = fmt.Sprintf("Refreshing snapshots for %s...", v.activeCtx.DisplayName())
 		return v, v.fetchSnapsCmd(true)
 	case "S":
-		v.activePane = paneSortConfig
+		v.sortHeader.Activate(v.tableCols)
+		v.refreshTable()
 	case "C":
 		v.activePane = paneColumnConfig
 	}
@@ -741,6 +751,7 @@ func (v *SnapshotsView) refreshTable() {
 	newSnaps.SetWidth(ui.TableViewportWidth(v.width))
 	rows := mapSnapsToRows(v.visibleRowsSource(), newCols)
 	newSnaps.SetRows(rows)
+	newSnaps.SetColumns(ui.DecorateSortColumns(newCols, v.sortHeader, v.sortColumn, v.sortAsc))
 	if cursor >= 0 && cursor < len(rows) {
 		newSnaps.SetCursor(cursor)
 	}
@@ -749,6 +760,33 @@ func (v *SnapshotsView) refreshTable() {
 	}
 	v.snaps = newSnaps
 	v.tableCols = newCols
+}
+
+func (v *SnapshotsView) handleHeaderSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "down":
+		v.sortHeader.Deactivate()
+	case "left", "h":
+		if !v.sortHeader.Move(-1, v.tableCols) && v.columnOffset > 0 {
+			v.columnOffset--
+			v.refreshTable()
+			v.sortHeader.Index = len(v.tableCols) - 1
+		}
+	case "right", "l":
+		if !v.sortHeader.Move(1, v.tableCols) && v.canScrollRight {
+			v.columnOffset++
+			v.sortHeader.Index = 0
+			v.refreshTable()
+		}
+	case "enter":
+		column := v.sortHeader.SelectedColumn(v.tableCols)
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, column)
+		sortSnaps(v.snapData, v.sortColumn, v.sortAsc)
+		v.syncVisibleRows()
+		v.statusMsg = fmt.Sprintf("Sorted by %s (%s).", v.sortColumn, ui.SortDirectionLabel(v.sortAsc))
+	}
+	v.refreshTable()
+	return v, nil
 }
 
 func (v *SnapshotsView) syncVisibleRows() {
@@ -836,16 +874,9 @@ func mapSnapsToRows(snaps []core.Snapshot, columns []table.Column) []table.Row {
 }
 
 func sortSnaps(snaps []core.Snapshot, column string, asc bool) {
-	colName := column
-	compare := func(i, j int) bool {
-		valI := snaps[i].GetField(colName)
-		valJ := snaps[j].GetField(colName)
-		if asc {
-			return strings.Compare(valI, valJ) < 0
-		}
-		return strings.Compare(valI, valJ) > 0
-	}
-	sortSlice(snaps, compare)
+	ui.SortByColumn(snaps, column, asc, func(snap core.Snapshot, column string) string {
+		return snap.GetField(column)
+	})
 }
 
 func sortSlice(snaps []core.Snapshot, less func(i, j int) bool) {

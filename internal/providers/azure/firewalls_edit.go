@@ -9,8 +9,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v6"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	applog "github.com/vyoogam/cloudmanager/internal/logging"
 )
 
 func ExecuteFirewallActionSDK(ctx context.Context, action string, rule core.FirewallRule, cloudCtx core.CloudContext) (string, error) {

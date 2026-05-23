@@ -1,0 +1,2097 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudManager — The Multi-Cloud TUI Command Center</title>
+    <meta name="description"
+        content="A gorgeous, unified terminal user interface to index, find, and manage resources across AWS, GCP, Azure, and Kubernetes.">
+    <link rel="icon"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23030508'/%3E%3Cpath d='M16 22h32M16 32h22M16 42h30' stroke='%238b5cf6' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+    <!-- Tailwind CSS v4 CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght=300;400;500;600;700&family=Inter:wght=300;400;500;600;700;800&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: 0;
+            }
+        }
+
+        .cursor-blink {
+            animation: blink 1s step-end infinite;
+        }
+
+        /* Custom scrollbar styling for authentic TUI terminal scroll lists */
+        .custom-scroll::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        .custom-scroll::-webkit-scrollbar-track {
+            background: #020205;
+        }
+
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #201a30;
+            border-radius: 3px;
+        }
+
+        .custom-scroll::-webkit-scrollbar-thumb:hover {
+            background: #8b5cf6;
+        }
+    </style>
+</head>
+
+<body
+    class="bg-[#030508] text-gray-300 min-h-screen antialiased selection:bg-purple-600/30 selection:text-purple-300 transition-colors duration-300">
+
+    <!-- NAVIGATION HEADER -->
+    <header class="border-b border-gray-900 bg-[#030508]/90 backdrop-blur-md fixed top-0 w-full z-50">
+        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div
+                    class="bg-purple-500/10 p-1.5 px-2.5 rounded border border-purple-500/30 text-purple-400 font-bold mono text-xs tracking-tight">
+                    CM
+                </div>
+                <span class="text-white font-bold text-base tracking-tight mono">CloudManager</span>
+            </div>
+            <nav
+                class="hidden md:flex items-center space-x-8 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                <a href="#tui-playground" class="hover:text-purple-400 transition-colors">Interactive TUI Console</a>
+                <a href="#architecture" class="hover:text-purple-400 transition-colors">Architecture</a>
+                <a href="#installation" class="hover:text-purple-400 transition-colors">Installation</a>
+            </nav>
+            <div class="flex items-center space-x-3">
+                <a href="https://github.com/vyoogam/cloudmanager" target="_blank" rel="noreferrer"
+                    class="flex items-center space-x-2 bg-gray-950 border border-gray-800 hover:border-gray-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200">
+                    <i data-lucide="git-branch" class="w-3.5 h-3.5"></i>
+                    <span>View Repository</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- HERO SECTION -->
+    <main class="pt-28 pb-12 px-4 max-w-7xl mx-auto">
+        <div class="text-center max-w-3xl mx-auto mb-12">
+            <div
+                class="inline-flex items-center space-x-2 bg-purple-500/10 border border-purple-500/20 text-purple-400 px-3 py-1 rounded-full text-xs font-medium mono mb-6">
+                <span class="w-1.5 h-1.5 bg-purple-500 rounded-full animate-ping"></span>
+                <span>The Multi-Cloud Asset Discovery Command Center</span>
+            </div>
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-white tracking-tight mb-4 leading-tight">
+                Your entire cloud estate, <br>
+                <span
+                    class="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-indigo-400 mono text-2xl sm:text-4xl">
+                    indexed & searchable instantly.
+                </span>
+            </h1>
+            <p class="text-gray-400 text-sm max-w-2xl mx-auto mb-6 leading-relaxed">
+                An elegant, secure dashboard built for power users. Discover, monitor, and audit resources across AWS,
+                GCP, Azure, and Kubernetes from a lightning-fast terminal user interface.
+            </p>
+
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-lg mx-auto">
+                <div
+                    class="w-full bg-[#07090f] border border-gray-900 rounded-lg p-3 px-4 flex items-center justify-between text-left font-mono text-[11px] sm:text-xs text-gray-300 shadow-xl">
+                    <span class="truncate"><span class="text-purple-500">~ $</span> go install
+                        github.com/vyoogam/cloudmanager@latest</span>
+                    <button
+                        onclick="copyCommandText(this, 'go install github.com/vyoogam/cloudmanager@latest')"
+                        class="text-gray-500 hover:text-white ml-2 transition-colors cursor-pointer"
+                        title="Copy command to clipboard">
+                        <i data-lucide="copy" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- NOTIFICATIONS TOAST -->
+        <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2 pointer-events-none font-mono"></div>
+
+        <!-- HIGH-FIDELITY SIMULATED TERMINAL VIEW (TUI REPLICATION) -->
+        <section id="tui-playground" class="mb-16 scroll-mt-20">
+            <!-- Terminal Window Wrapper -->
+            <div
+                class="bg-[#000000] rounded-xl border border-gray-900 shadow-2xl overflow-hidden max-w-7xl mx-auto text-gray-300 select-none flex flex-col font-mono text-[11px] sm:text-[13px] relative">
+
+                <!-- macOS STYLE WINDOW CONTROL BAR -->
+                <div class="bg-[#0b0c10] px-4 py-2.5 flex items-center justify-between border-b border-gray-900">
+                    <div class="flex items-center space-x-2">
+                        <span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-yellow-500 inline-block"></span>
+                        <span class="w-3 h-3 rounded-full bg-green-500 inline-block"></span>
+                    </div>
+                    <!-- Terminal search simulate bar -->
+                    <div
+                        class="bg-black/60 border border-gray-900 rounded-md px-3 py-1 text-gray-400 text-[10px] w-64 text-center truncate">
+                        Search sessions, agents, files...
+                    </div>
+                    <!-- Right indicator (Anonymized status) -->
+                    <div class="text-[10px] text-purple-500 flex items-center space-x-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse"></span>
+                        <span class="font-bold tracking-wider text-[9px]">SECURE AGENT</span>
+                    </div>
+                </div>
+
+                <!-- TOP TUI TAB BAR -->
+                <div
+                    class="bg-[#020205] px-4 py-2 flex flex-wrap justify-between items-center border-b border-purple-900/30 text-gray-400 font-bold gap-y-2">
+                    <div class="flex flex-wrap gap-1 sm:gap-2" id="tui-tabs">
+                        <button onclick="switchView('overview')" id="tab-overview"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-black bg-purple-500 font-extrabold text-[10px] sm:text-xs">H:Home</button>
+                        <button onclick="switchView('vms')" id="tab-vms"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">1:VMs</button>
+                        <button onclick="switchView('disks')" id="tab-disks"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">2:Disks</button>
+                        <button onclick="switchView('snapshots')" id="tab-snapshots"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">3:Snapshots</button>
+                        <button onclick="switchView('firewalls')" id="tab-firewalls"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">4:Firewalls</button>
+                        <button onclick="switchView('clusters')" id="tab-clusters"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">5:Clusters</button>
+                        <button onclick="switchView('databases')" id="tab-databases"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">6:Databases</button>
+                        <button onclick="switchView('networks')" id="tab-networks"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">7:Networks</button>
+                        <button onclick="switchView('storage')" id="tab-storage"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">8:Storage</button>
+                        <button onclick="switchView('hosts')" id="tab-hosts"
+                            class="px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs">9:Hosts</button>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="triggerFindOverlay()"
+                            class="bg-purple-950/40 hover:bg-purple-900/40 text-purple-400 border border-purple-800/40 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer">
+                            Find [g]
+                        </button>
+                    </div>
+                </div>
+
+                <!-- PANEL WORKSPACE (Split Left Sidebar & Main Grid Workspace) -->
+                <div class="grid grid-cols-12 min-h-[500px]">
+
+                    <!-- LEFT SIDEBAR: Dynamic Contexts Hierarchical Tree Switcher -->
+                    <div
+                        class="col-span-12 md:col-span-3 lg:col-span-2 border-r border-purple-900/15 p-3 bg-[#010103] flex flex-col justify-between max-h-[600px] overflow-y-auto custom-scroll select-none">
+                        <div class="space-y-3">
+                            <div
+                                class="text-white bg-blue-900/60 font-bold px-1.5 py-0.5 inline-block rounded text-[10px] uppercase">
+                                Cloud Contexts
+                            </div>
+                            <!-- Render Tree dynamically -->
+                            <div id="sidebar-context-tree" class="font-mono text-[11px] sm:text-[12px] space-y-2">
+                                <!-- Generated programmatically via renderContextTree() -->
+                            </div>
+                        </div>
+
+                        <!-- Scan Actions -->
+                        <div class="pt-4 mt-4 border-t border-gray-900/50 shrink-0">
+                            <button onclick="triggerBackgroundSweep()"
+                                class="w-full bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 py-1.5 px-1.5 rounded text-[10px] cursor-pointer text-center font-bold">
+                                ⚡ Fetch Live Data
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- CENTRAL WORKSPACE (Full Width) -->
+                    <div
+                        class="col-span-12 md:col-span-9 lg:col-span-10 p-4 bg-[#000000] flex flex-col justify-between relative overflow-hidden">
+
+                        <!-- TABLE VIEW WRAPPER (Full Width) -->
+                        <div class="h-full overflow-hidden">
+
+                            <div class="min-w-0 flex flex-col h-full overflow-y-auto custom-scroll">
+
+                                <!-- SCREEN 1: Overview Dashboard View -->
+                                <div id="panel-overview" class="space-y-4">
+                                    <div class="flex justify-between text-gray-400 border-b border-gray-900 pb-2 mb-2">
+                                        <span class="text-purple-400 font-bold">CloudManager</span>
+                                        <span class="text-gray-400" id="overview-state-summary">225 VMs indexed | Last indexed 20h ago</span>
+                                    </div>
+
+                                    <!-- 17 Lipgloss cards grid layout matching the bubbletea visual look -->
+                                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs" id="overview-cards-container">
+                                        <!-- Rendered dynamically by javascript to support Lipgloss focused state -->
+                                    </div>
+
+                                    <!-- Inventory list area -->
+                                    <div class="space-y-1 pl-1 pt-1 font-mono text-[11px] sm:text-xs">
+                                        <div class="text-[#a855f7] font-bold uppercase tracking-wider text-[11px] mb-2">Inventory</div>
+                                        <div class="text-gray-300">
+                                            <span>VMs running: </span>
+                                            <span class="text-white font-bold" id="inventory-vms-running">167 of 225</span>
+                                            <span class="text-cyan-400 ml-2" id="inventory-vms-progress">[#############-------]</span>
+                                        </div>
+                                        <div class="text-gray-300">VMs by provider: <span class="text-white" id="inventory-vms-provider">AWS 113 | GCP 112</span></div>
+                                        <div class="text-gray-300">Indexed contexts: <span class="text-white" id="inventory-contexts">23</span></div>
+                                        <div class="text-gray-300">K8s worker nodes: <span class="text-white" id="inventory-k8s-nodes">hidden 133 | K to show</span></div>
+                                        <div class="text-gray-300">Databases: <span class="text-white" id="inventory-databases">23 total | 15 ready | 7 down</span></div>
+                                        <div class="text-gray-300">K8s clusters:pools:nodes: <span class="text-white" id="inventory-k8s-pools">22:71:133</span></div>
+                                        <div class="text-gray-300">Disks indexed: <span class="text-white" id="inventory-disks">542</span> | snapshots indexed: <span class="text-white" id="inventory-snapshots">521</span></div>
+                                        <div class="text-gray-300">Networks seen: <span class="text-white" id="inventory-networks">60</span> | subnets seen: <span class="text-white" id="inventory-subnets">342</span> | security groups seen: <span class="text-white" id="inventory-security-groups">326</span></div>
+                                        <div class="text-gray-300">Storage indexed: <span class="text-white" id="inventory-storage">393</span></div>
+                                        <div class="text-gray-300">Terraform-managed: <span class="text-white" id="inventory-terraform">0</span> | manual hosts: <span class="text-white" id="inventory-manual-hosts">0</span></div>
+                                    </div>
+
+                                    <!-- Bottom Action Guides -->
+                                    <div class="pt-4 border-t border-gray-900/60 text-[11px] space-y-1.5">
+                                        <div class="flex flex-wrap gap-x-4 gap-y-1">
+                                            <span><span class="text-purple-400 font-bold">arrows</span> <span class="text-gray-500">select</span></span>
+                                            <span><span class="text-purple-400 font-bold">Enter</span> <span class="text-gray-500">open</span></span>
+                                            <span><span class="text-purple-400 font-bold">g</span> <span class="text-gray-500">find</span></span>
+                                            <span><span class="text-purple-400 font-bold">:index-all</span> <span class="text-gray-500">index all</span></span>
+                                            <span><span class="text-purple-400 font-bold">:summary</span> <span class="text-gray-500">refresh summary</span></span>
+                                            <span><span class="text-purple-400 font-bold">:index</span> <span class="text-gray-500">refresh VMs</span></span>
+                                        </div>
+                                        <div class="flex flex-wrap gap-x-4 gap-y-1">
+                                            <span><span class="text-purple-400 font-bold">:index-db</span> <span class="text-gray-500">refresh DBs</span></span>
+                                            <span><span class="text-purple-400 font-bold">:index-storage</span> <span class="text-gray-500">refresh storage</span></span>
+                                            <span><span class="text-purple-400 font-bold">:login</span> <span class="text-gray-500">provider login</span></span>
+                                            <span><span class="text-purple-400 font-bold">,</span> <span class="text-gray-500">settings</span></span>
+                                            <span><span class="text-purple-400 font-bold">K</span> <span class="text-gray-500">k8s nodes</span></span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- SCREEN 2: 1:VMs View -->
+                                <div id="panel-vms" class="hidden space-y-3">
+                                    <div
+                                        class="text-emerald-400 font-bold text-[10px] sm:text-xs flex justify-between items-center">
+                                        <span id="header-vms">AWS &rsaquo; aws-stg-alpha &rsaquo; ap-south-1</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">Instance ID</th>
+                                                <th class="pb-1.5">Type</th>
+                                                <th class="pb-1.5">State</th>
+                                                <th class="pb-1.5 text-right">Private IP</th>
+                                                <th class="pb-1.5 text-right">Public IP</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="vms-table-body" class="text-gray-300 divide-y divide-gray-950">
+                                            <!-- Managed dynamically by script -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 3: 2:Disks View -->
+                                <div id="panel-disks" class="hidden space-y-3">
+                                    <div class="text-emerald-400 font-bold text-[10px] sm:text-xs">
+                                        <span id="header-disks">AWS &rsaquo; aws-stg-alpha &rsaquo; ap-south-1</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">ID</th>
+                                                <th class="pb-1.5">State</th>
+                                                <th class="pb-1.5 text-center">Size (GB)</th>
+                                                <th class="pb-1.5">Type</th>
+                                                <th class="pb-1.5">Attached To</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="disks-table-body" class="text-gray-300">
+                                            <!-- Managed dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 4: 3:Snapshots View -->
+                                <div id="panel-snapshots" class="hidden space-y-3">
+                                    <div class="text-emerald-400 font-bold text-[10px] sm:text-xs">
+                                        <span id="header-snapshots">AWS &rsaquo; aws-stg-alpha &rsaquo; ap-south-1</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">ID</th>
+                                                <th class="pb-1.5">State</th>
+                                                <th class="pb-1.5 text-center">Size (GB)</th>
+                                                <th class="pb-1.5 text-right">Created At</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="snapshots-table-body" class="text-gray-300">
+                                            <!-- Managed dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 5: 4:Firewalls View -->
+                                <div id="panel-firewalls" class="hidden space-y-3">
+                                    <div class="text-emerald-400 font-bold text-[10px] sm:text-xs">
+                                        <span id="header-firewalls">AWS &rsaquo; aws-stg-alpha &rsaquo; ap-south-1
+                                            &rsaquo; Firewalls</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">ID</th>
+                                                <th class="pb-1.5 text-center">Inbound Rules</th>
+                                                <th class="pb-1.5 text-center">Outbound Rules</th>
+                                                <th class="pb-1.5 text-right pr-2">Description</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="firewalls-table-body" class="text-gray-300">
+                                            <!-- Managed dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 6: 5:Clusters View -->
+                                <div id="panel-clusters" class="hidden space-y-3">
+                                    <div class="text-emerald-400 font-bold text-[10px] sm:text-xs">
+                                        <span id="header-clusters">AWS &rsaquo; aws-stg-alpha &rsaquo; Clusters</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">Location</th>
+                                                <th class="pb-1.5">Status</th>
+                                                <th class="pb-1.5 text-center">Version</th>
+                                                <th class="pb-1.5 text-right pr-2">Nodes</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="clusters-table-body" class="text-gray-300">
+                                            <!-- Managed dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 7: 6:Databases View -->
+                                <div id="panel-databases" class="hidden space-y-3">
+                                    <div class="text-emerald-400 font-bold text-[10px] sm:text-xs">
+                                        <span id="header-databases">AWS &rsaquo; aws-stg-alpha &rsaquo; Databases</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">ID</th>
+                                                <th class="pb-1.5">Provider</th>
+                                                <th class="pb-1.5 text-center">Status</th>
+                                                <th class="pb-1.5 text-right pr-2">Match Specification</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="databases-table-body" class="text-gray-300">
+                                            <!-- Managed dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 8: 7:Networks View -->
+                                <div id="panel-networks" class="hidden space-y-3">
+                                    <div class="text-emerald-400 font-bold text-[10px] sm:text-xs">
+                                        <span id="header-networks">AWS &rsaquo; aws-stg-alpha &rsaquo; ap-south-1
+                                            &rsaquo; Networks</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">ID</th>
+                                                <th class="pb-1.5">CIDR</th>
+                                                <th class="pb-1.5">State</th>
+                                                <th class="pb-1.5 text-right pr-2">Subnets</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="networks-table-body" class="text-gray-300">
+                                            <!-- Managed dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 9: 8:Storage View -->
+                                <div id="panel-storage" class="hidden space-y-3">
+                                    <div class="text-emerald-400 font-bold text-[10px] sm:text-xs">
+                                        <span id="header-storage">AWS &rsaquo; aws-stg-alpha &rsaquo; Storage</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">Provider Type</th>
+                                                <th class="pb-1.5 text-center">Access</th>
+                                                <th class="pb-1.5 text-center">Encrypted</th>
+                                                <th class="pb-1.5 text-right pr-2">Created At</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="storage-table-body" class="text-gray-300">
+                                            <!-- Managed dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 10: 9:Hosts View -->
+                                <div id="panel-hosts" class="hidden space-y-3">
+                                    <div class="text-emerald-400 font-bold text-[10px] sm:text-xs">
+                                        <span id="header-hosts">AWS &rsaquo; aws-stg-alpha &rsaquo; Hosts</span>
+                                    </div>
+                                    <table class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                        <thead>
+                                            <tr class="text-white border-b border-gray-900">
+                                                <th class="pb-1.5 pr-2">Name</th>
+                                                <th class="pb-1.5">Address</th>
+                                                <th class="pb-1.5 text-center">Protocol</th>
+                                                <th class="pb-1.5 text-right pr-2">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="hosts-table-body" class="text-gray-300">
+                                            <!-- Managed dynamically -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- SCREEN 11: Fuzzy Search Result Panel -->
+                                <div id="panel-fuzzy-finder-results" class="hidden space-y-4">
+                                    <div class="border-b border-purple-900/40 pb-2 mb-3">
+                                        <span
+                                            class="text-purple-400 font-bold text-[10px] sm:text-xs flex items-center gap-1.5">
+                                            <span>/ find all resources</span>
+                                        </span>
+                                        <div
+                                            class="mt-2 flex items-center bg-gray-950 px-2 py-1 rounded border border-gray-800">
+                                            <span class="text-purple-500 mr-2 font-bold">&rsaquo;</span>
+                                            <input type="text" id="fuzzy-text-input" oninput="runFuzzyTextSearch()"
+                                                placeholder="Type characters here to search all database items globally..."
+                                                class="bg-transparent text-white outline-none w-full text-xs font-mono">
+                                        </div>
+                                    </div>
+
+                                    <div class="max-h-72 overflow-y-auto custom-scroll">
+                                        <table
+                                            class="w-full text-left font-mono text-[10px] sm:text-xs whitespace-nowrap">
+                                            <thead>
+                                                <tr class="text-white border-b border-gray-900">
+                                                    <th class="pb-1.5 pr-1">Type</th>
+                                                    <th class="pb-1.5 pr-2">Name</th>
+                                                    <th class="pb-1.5 pr-2">ID</th>
+                                                    <th class="pb-1.5">Provider</th>
+                                                    <th class="pb-1.5">Context</th>
+                                                    <th class="pb-1.5">Status</th>
+                                                    <th class="pb-1.5 text-right pr-1">Match Details</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="fuzzy-results-body" class="text-gray-300">
+                                                <!-- Dynamically populated -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="text-[9px] text-gray-500 mt-2 font-mono" id="matches-summary-text">
+                                        Matches found...
+                                    </div>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <!-- ACTIONS POPUP OVERLAY -->
+                        <div id="actions-popup-overlay"
+                            class="absolute top-4 right-4 z-30 hidden w-80 animate-in">
+                            <div id="actions-console-wrapper">
+                                <!-- Dynamically rendered by renderActionsBox -->
+                            </div>
+                        </div>
+
+                        <!-- SCREEN 12: Find Scope Overlay Dialogue -->
+                        <div id="fuzzy-find-menu-overlay"
+                            class="absolute inset-0 bg-black/95 z-40 hidden flex-col justify-between p-6">
+                            <div class="space-y-4">
+                                <div>
+                                    <span
+                                        class="bg-blue-600 text-black px-1.5 font-extrabold text-xs rounded">Find</span>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div class="space-y-3 text-xs font-mono">
+                                        <div onclick="selectFindOverlayScope('vms')" class="cursor-pointer group">
+                                            <div class="text-purple-400 font-bold group-hover:text-purple-300">VMs</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find across indexed virtual
+                                                machines</div>
+                                        </div>
+                                        <div onclick="selectFindOverlayScope('disks')" class="cursor-pointer group">
+                                            <div class="text-gray-300 font-bold group-hover:text-white">Disks</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find across indexed disks
+                                            </div>
+                                        </div>
+                                        <div onclick="selectFindOverlayScope('snapshots')" class="cursor-pointer group">
+                                            <div class="text-gray-300 font-bold group-hover:text-white">Snapshots</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find across indexed snapshots
+                                            </div>
+                                        </div>
+                                        <div onclick="selectFindOverlayScope('databases')" class="cursor-pointer group">
+                                            <div class="text-gray-300 font-bold group-hover:text-white">Databases</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find across indexed databases
+                                            </div>
+                                        </div>
+                                        <div onclick="selectFindOverlayScope('clusters')" class="cursor-pointer group">
+                                            <div class="text-gray-300 font-bold group-hover:text-white">Kubernetes</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find clusters from the local cluster index</div>
+                                        </div>
+                                    </div>
+                                    <div class="space-y-3 text-xs font-mono">
+                                        <div onclick="selectFindOverlayScope('networks')" class="cursor-pointer group">
+                                            <div class="text-gray-300 font-bold group-hover:text-white">Networks</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find indexed VPCs and VNets</div>
+                                        </div>
+                                        <div onclick="selectFindOverlayScope('firewalls')" class="cursor-pointer group">
+                                            <div class="text-gray-300 font-bold group-hover:text-white">Security groups</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find indexed firewalls and security groups</div>
+                                        </div>
+                                        <div onclick="selectFindOverlayScope('storage')" class="cursor-pointer group">
+                                            <div class="text-gray-300 font-bold group-hover:text-white">Storage</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find indexed object storage buckets and accounts</div>
+                                        </div>
+                                        <div onclick="selectFindOverlayScope('hosts')" class="cursor-pointer group">
+                                            <div class="text-gray-300 font-bold group-hover:text-white">Manual hosts</div>
+                                            <div class="text-gray-500 pl-0.5 text-[10px]">Find manually managed SSH/RDP hosts</div>
+                                        </div>
+                                        <div onclick="triggerFuzzyResultsView()"
+                                            class="cursor-pointer group bg-purple-950/20 p-2 rounded border border-purple-900/30">
+                                            <div class="text-purple-400 font-bold">All indexed resources</div>
+                                            <div class="text-purple-400/60 pl-0.5 text-[10px]">Broad fallback across indexed resources</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div
+                                class="border-t border-gray-900 pt-3 text-gray-500 text-xs flex justify-between items-center">
+                                <span>Find Resources • Enter: Choose scope • Esc: Close | Choose what to find. <span
+                                        class="text-purple-400 cursor-blink">█</span></span>
+                                <button onclick="closeFindOverlay()"
+                                    class="text-xs text-gray-400 hover:text-white uppercase font-bold">Close
+                                    [Esc]</button>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- STATUS CHEATSHEET STATUS BAR -->
+                <div
+                    class="bg-[#020205] border-t border-purple-900/30 px-3 py-1.5 flex flex-wrap items-center justify-between text-gray-500 text-[10px] sm:text-xs">
+                    <div class="flex flex-wrap gap-x-2">
+                        <span onclick="executeEnter()" class="cursor-pointer hover:text-white text-gray-300">Enter</span>
+                        <span>•</span>
+                        <span onclick="goHome()" class="cursor-pointer hover:text-white text-gray-300">H:Home</span>
+                        <span>•</span>
+                        <span onclick="triggerToast('Kubernetes context focused', 'info')" class="cursor-pointer hover:text-white text-gray-300">K:K8s nodes</span>
+                        <span>•</span>
+                        <span onclick="triggerFindOverlay()" class="cursor-pointer hover:text-white text-gray-300">g:Search</span>
+                        <span>•</span>
+                        <span onclick="triggerToast('Settings panel', 'info')" class="cursor-pointer hover:text-white text-gray-300">,:Settings</span>
+                        <span>•</span>
+                        <span class="text-gray-700">Tab</span>
+                        <span>•</span>
+                        <span onclick="deselectSelectedResource(); goHome();" class="cursor-pointer hover:text-white text-gray-300">Esc</span>
+                        <span>•</span>
+                        <span onclick="triggerToast('Active debug logs ready', 'info')" class="cursor-pointer hover:text-white text-gray-300">L:Logs</span>
+                        <span>•</span>
+                        <span onclick="triggerToast('Toggled display modes', 'info')" class="cursor-pointer hover:text-white text-gray-300">B:Mode</span>
+                    </div>
+                    <div class="text-gray-400 text-right">
+                        Mode:SDK | CPU:0.0% Mem:67MB | Loaded <span id="indexed-records-footer">2367</span> cached records. | vdev
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECURE ARCHITECTURE OVERVIEW -->
+        <section id="architecture" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16 scroll-mt-20">
+            <div class="border border-gray-900 bg-gray-950/20 p-6 rounded-xl relative overflow-hidden group">
+                <div
+                    class="absolute -right-6 -bottom-6 w-24 h-24 bg-purple-500/5 rounded-full blur-xl group-hover:bg-purple-500/10 transition-all">
+                </div>
+                <div
+                    class="bg-purple-900/20 p-2 rounded-lg border border-purple-800/30 text-purple-400 inline-block mb-4">
+                    <i data-lucide="shield-alert" class="w-5 h-5"></i>
+                </div>
+                <h3 class="text-white text-base font-bold font-mono mb-2">Completely Air-Gapped</h3>
+                <p class="text-gray-400 text-xs leading-relaxed">
+                    CloudManager runs entirely inside your terminal environment. It operates locally with no external
+                    telemetry, SaaS platforms, or third-party web configurations—your credentials never leave your
+                    machine.
+                </p>
+            </div>
+
+            <div class="border border-gray-900 bg-gray-950/20 p-6 rounded-xl relative overflow-hidden group">
+                <div
+                    class="absolute -right-6 -bottom-6 w-24 h-24 bg-purple-500/5 rounded-full blur-xl group-hover:bg-purple-500/10 transition-all">
+                </div>
+                <div
+                    class="bg-purple-900/20 p-2 rounded-lg border border-purple-800/30 text-purple-400 inline-block mb-4">
+                    <i data-lucide="search" class="w-5 h-5"></i>
+                </div>
+                <h3 class="text-white text-base font-bold font-mono mb-2">Local Fuzzy Search Index</h3>
+                <p class="text-gray-400 text-xs leading-relaxed">
+                    Querying public cloud APIs directly on every keystroke causes latency and rate limits. CloudManager
+                    loads resource configurations into local memory, facilitating instant, high-speed matching.
+                </p>
+            </div>
+
+            <div
+                class="border border-gray-900 bg-gray-950/20 p-6 rounded-xl relative overflow-hidden group md:col-span-2 lg:col-span-1">
+                <div
+                    class="absolute -right-6 -bottom-6 w-24 h-24 bg-purple-500/5 rounded-full blur-xl group-hover:bg-purple-500/10 transition-all">
+                </div>
+                <div
+                    class="bg-purple-900/20 p-2 rounded-lg border border-purple-800/30 text-purple-400 inline-block mb-4">
+                    <i data-lucide="combine" class="w-5 h-5"></i>
+                </div>
+                <h3 class="text-white text-base font-bold font-mono mb-2">Multi-Cloud Aggregator</h3>
+                <p class="text-gray-400 text-xs leading-relaxed">
+                    Instantly query AWS, GCP, Azure, and Kubernetes resources within a single tabbed viewport layout.
+                    There's no need to switch browser tabs, log in, or deal with MFA fatigue across various cloud
+                    console pages.
+                </p>
+            </div>
+        </section>
+
+        <!-- INSTALLATION SECTION -->
+        <section id="installation"
+            class="border border-gray-900 rounded-xl bg-gradient-to-b from-gray-950/40 to-transparent p-6 md:p-8 max-w-3xl mx-auto text-center scroll-mt-20">
+            <h2 class="text-lg font-bold font-mono text-white mb-2 flex items-center justify-center gap-2">
+                <i data-lucide="terminal" class="text-purple-400 w-5 h-5"></i>
+                Download & Install
+            </h2>
+            <p class="text-gray-400 text-xs mb-6">Build the Go executable binary on your system with a single
+                installation command.</p>
+
+            <div class="text-left font-mono text-xs max-w-xl mx-auto space-y-4">
+                <div class="bg-black border border-gray-900 p-3.5 rounded relative group">
+                    <div class="text-gray-600 mb-1"># Build and install production binaries</div>
+                    <div class="text-purple-400 flex justify-between items-center">
+                        <span class="truncate">$ go install github.com/vyoogam/cloudmanager@latest</span>
+                        <button
+                            onclick="copyCommandText(this, 'go install github.com/vyoogam/cloudmanager@latest')"
+                            class="text-gray-500 hover:text-white ml-2 transition-colors cursor-pointer"
+                            title="Copy command">
+                            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- FOOTER LINKING -->
+    <footer class="border-t border-gray-950 bg-black/50 py-8 text-xs text-gray-600 mt-16">
+        <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p class="text-center sm:text-left">© 2026 CloudManager Project. Developed under MIT Open-Source Guidelines.
+            </p>
+            <div class="flex space-x-6 font-mono">
+                <a href="https://github.com/vyoogam/cloudmanager" target="_blank"
+                    class="hover:text-gray-300 transition-colors">GitHub Repo</a>
+                <a href="https://github.com/vyoogam" target="_blank"
+                    class="hover:text-gray-300 transition-colors">Developer Profile</a>
+            </div>
+        </div>
+    </footer>
+
+    <!-- INTERACTIVE TERMINAL DATABASE & SIMULATION LOGIC -->
+    <script>
+        const tuiTabs = ['overview', 'vms', 'disks', 'snapshots', 'firewalls', 'clusters', 'databases', 'networks', 'storage', 'hosts', 'fuzzy-finder-results'];
+
+        // Fully Dynamic Anonymized Procedural Database representing AWS, GCP and Azure profiles
+        const mockDatabase = {
+            vms: [],
+            disks: [],
+            snapshots: [],
+            firewalls: [],
+            clusters: [],
+            databases: [],
+            networks: [],
+            storage: [],
+            hosts: []
+        };
+
+        // Cloud provider folders definition mapping semantic groupings: Accounts (AWS), Projects (GCP), Subscriptions (Azure)
+        const providersMeta = [
+            { provider: 'AWS', account: 'prod-core', context: 'aws-prod-core', regions: ['ap-south-1', 'eu-central-1', 'me-central-1', 'us-east-2'] },
+            { provider: 'AWS', account: 'stg-alpha', context: 'aws-stg-alpha', regions: ['ap-south-1'] },
+            { provider: 'AWS', account: 'dev-sandbox', context: 'aws-dev-sandbox', regions: ['us-east-2'] },
+            { provider: 'AWS', account: 'backup-vault', context: 'aws-backup-vault', regions: ['us-east-2'] },
+            { provider: 'GCP', project: 'enterprise-prd', context: 'gcp-enterprise-prd', regions: ['global', 'us-central1'] },
+            { provider: 'GCP', project: 'dev-analytics', context: 'gcp-dev-analytics', regions: ['global'] },
+            { provider: 'GCP', project: 'demo-sandbox', context: 'gcp-demo-sandbox', regions: ['global'] },
+            { provider: 'Azure', subscription: 'cloud-hub', context: 'azure-cloud-hub', regions: ['eastus', 'westeurope'] }
+        ];
+
+        // Collapsible view state tracker for multi-level navigation tree directory
+        const treeCollapseState = {
+            providers: { AWS: false, GCP: true, Azure: true },
+            accounts: {
+                'aws-prod-core': false,
+                'aws-stg-alpha': false,
+                'aws-dev-sandbox': true,
+                'aws-backup-vault': true,
+                'gcp-enterprise-prd': false,
+                'gcp-dev-analytics': true,
+                'gcp-demo-sandbox': true,
+                'azure-cloud-hub': false
+            }
+        };
+
+        // State parameters
+        let activeProvider = 'AWS';
+        let activeContext = 'aws-stg-alpha';
+        let activeRegion = 'ap-south-1';
+        let currentTab = 'overview';
+
+        // Overview / Home Card focused state mapping
+        let selectedHomeCardIndex = 0;
+
+        // Selected row mapping for Actions Overlay popup trigger
+        let selectedResource = null;
+        let selectedResourceType = null;
+        let activeActionIndex = 0;
+        let currentResourceActions = [];
+
+        // Procedural generator to fill database dynamically on trigger or load
+        function generateMockDatabase() {
+            // Reset existing lists
+            mockDatabase.vms = [];
+            mockDatabase.disks = [];
+            mockDatabase.snapshots = [];
+            mockDatabase.firewalls = [];
+            mockDatabase.clusters = [];
+            mockDatabase.databases = [];
+            mockDatabase.networks = [];
+            mockDatabase.storage = [];
+            mockDatabase.hosts = [];
+
+            const randomHex = (len) => Array.from({ length: len }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+            const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+            const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+            const vmNamesPool = ['auth-gateway', 'proxy-node', 'web-server', 'cache-node', 'queue-worker', 'bastion-host', 'api-router', 'ingress-controller', 'monitoring-agent', 'data-pipeline', 'log-stash', 'worker-node', 'microservice-auth', 'scheduler-daemon', 'index-runner', 'media-processor'];
+            const dbNamesPool = ['sql-master', 'replica-db', 'cache-redis', 'nosql-doc-store', 'analytics-warehouse', 'metrics-timeseries'];
+            const diskNamesPool = ['vol-system-boot', 'vol-app-data', 'vol-temp-scratch', 'vol-log-mount', 'vol-docker-cache'];
+            const fwNamesPool = ['sg-allow-all-internal', 'sg-database-access', 'sg-public-ingress', 'sg-admin-only', 'sg-compliance-audit'];
+            const clusterNamesPool = ['k8s-cluster-core', 'k8s-cluster-compute', 'k8s-cluster-edge'];
+            const storageNamesPool = ['s3-asset-archive', 's3-billing-reports', 's3-deploy-artifacts', 'gcs-data-lake', 'az-blob-store'];
+
+            providersMeta.forEach(({ provider, context, regions }) => {
+                regions.forEach(region => {
+                    // Generate Networks
+                    const netCount = randomInt(2, 4);
+                    const nets = [];
+                    for (let i = 0; i < netCount; i++) {
+                        const netId = provider === 'AWS' ? `vpc-${randomHex(17)}` : provider === 'GCP' ? `net-${randomHex(8)}` : `vnet-${randomHex(10)}`;
+                        const netObj = {
+                            provider,
+                            context,
+                            region,
+                            name: `${provider.toLowerCase()}-${region}-vpc-${i + 1}`,
+                            id: netId,
+                            cidr: `10.${randomInt(10, 192)}.${randomInt(0, 128)}.0/16`,
+                            state: 'available',
+                            subnets: randomInt(3, 8)
+                        };
+                        mockDatabase.networks.push(netObj);
+                        nets.push(netObj);
+                    }
+
+                    // Generate VMs
+                    const vmCount = randomInt(4, 14);
+                    for (let i = 0; i < vmCount; i++) {
+                        const vmName = `${pickRandom(vmNamesPool)}-0${i + 1}`;
+                        const vmId = provider === 'AWS' ? `i-${randomHex(17)}` : provider === 'GCP' ? `gcp-inst-${randomHex(10)}` : `vm-${randomHex(12)}`;
+                        const vmType = provider === 'AWS' ? pickRandom(['t3.micro', 't3.small', 't3.medium', 't3a.large', 't3a.xlarge', 'm5.large']) : provider === 'GCP' ? pickRandom(['n2-standard-2', 'n2-standard-4', 'e2-medium']) : pickRandom(['Standard_B2s', 'Standard_D2s_v3']);
+                        const state = Math.random() > 0.3 ? 'running' : 'stopped';
+                        const privateIp = `10.${randomInt(10, 50)}.${randomInt(0, 20)}.${randomInt(2, 254)}`;
+                        const publicIp = state === 'running' && Math.random() > 0.4 ? `${randomInt(185, 220)}.${randomInt(10, 100)}.${randomInt(2, 250)}.${randomInt(2, 254)}` : '-';
+                        const activeNet = pickRandom(nets);
+
+                        const vmObj = {
+                            provider,
+                            context,
+                            region,
+                            name: vmName,
+                            id: vmId,
+                            type: vmType,
+                            state,
+                            privateIp,
+                            publicIp,
+                            network: activeNet ? activeNet.id : '-',
+                            subnet: activeNet ? `subnet-${randomHex(8)}` : '-'
+                        };
+                        mockDatabase.vms.push(vmObj);
+
+                        // Generate Disks attached to VMs
+                        const diskCount = randomInt(1, 2);
+                        for (let d = 0; d < diskCount; d++) {
+                            const diskId = `vol-${randomHex(17)}`;
+                            const diskSize = pickRandom([8, 20, 50, 100, 250, 500]);
+                            mockDatabase.disks.push({
+                                provider,
+                                context,
+                                region,
+                                name: `${pickRandom(diskNamesPool)}-${i + 1}`,
+                                id: diskId,
+                                state: 'in-use',
+                                size: diskSize,
+                                type: provider === 'AWS' ? 'gp3' : 'pd-balanced',
+                                attachedTo: vmObj.id,
+                                zone: `${region}${pickRandom(['a', 'b', 'c'])}`,
+                                encrypted: Math.random() > 0.5 ? 'Yes' : 'No'
+                            });
+
+                            // Generate Snapshots for some disks
+                            if (Math.random() > 0.5) {
+                                mockDatabase.snapshots.push({
+                                    provider,
+                                    context,
+                                    region,
+                                    name: `snap-backup-${randomHex(6)}`,
+                                    id: `snap-${randomHex(17)}`,
+                                    state: 'completed',
+                                    size: diskSize,
+                                    createdAt: new Date(Date.now() - randomInt(1, 100) * 86400000).toISOString().split('T')[0]
+                                });
+                            }
+                        }
+                    }
+
+                    // Generate Firewalls
+                    const fwCount = randomInt(3, 6);
+                    for (let i = 0; i < fwCount; i++) {
+                        const activeNet = pickRandom(nets);
+                        const highRisk = Math.random() > 0.85;
+                        mockDatabase.firewalls.push({
+                            provider,
+                            context,
+                            region,
+                            name: `${pickRandom(fwNamesPool)}-${i + 1}`,
+                            id: `sg-${randomHex(17)}`,
+                            network: activeNet ? activeNet.id : '-',
+                            inbound: randomInt(1, 6),
+                            outbound: randomInt(1, 3),
+                            desc: highRisk ? 'Highly Permissive Rules Detected (All Ports Ingress)' : 'Standard VPC internal group filter rules configuration',
+                            highRisk
+                        });
+                    }
+
+                    // Generate Clusters
+                    if (Math.random() > 0.4) {
+                        const clusterCount = randomInt(1, 2);
+                        for (let i = 0; i < clusterCount; i++) {
+                            mockDatabase.clusters.push({
+                                provider,
+                                context,
+                                region,
+                                name: `${pickRandom(clusterNamesPool)}-0${i + 1}`,
+                                location: region,
+                                status: 'ACTIVE',
+                                version: '1.35',
+                                nodes: `${randomInt(4, 36)} nodes`
+                            });
+                        }
+                    }
+
+                    // Generate Databases
+                    if (Math.random() > 0.3) {
+                        const dbCount = randomInt(1, 3);
+                        for (let i = 0; i < dbCount; i++) {
+                            const dbEngine = pickRandom(['postgres 15.12', 'postgres 13.20', 'mysql 8.0', 'mongodb 6.0']);
+                            mockDatabase.databases.push({
+                                provider,
+                                context,
+                                region,
+                                name: `${pickRandom(dbNamesPool)}-db-${i + 1}`,
+                                id: `arn:aws:rds:${region}:${randomInt(100000000000, 999999999999)}:db/${randomHex(8)}`,
+                                status: Math.random() > 0.1 ? 'available' : 'stopping',
+                                match: `${dbEngine} db.m6g.xlarge`
+                            });
+                        }
+                    }
+
+                    // Generate Storage
+                    const storageCount = randomInt(1, 4);
+                    for (let i = 0; i < storageCount; i++) {
+                        mockDatabase.storage.push({
+                            provider,
+                            context,
+                            region,
+                            name: `${pickRandom(storageNamesPool)}-${randomHex(4)}`,
+                            type: provider === 'AWS' ? 'S3 bucket' : provider === 'GCP' ? 'Cloud Storage' : 'Blob Container',
+                            access: pickRandom(['private', 'public-read', 'unknown']),
+                            encrypted: pickRandom(['AES256', 'KMS', 'unknown']),
+                            createdAt: new Date(Date.now() - randomInt(50, 400) * 86400000).toISOString().split('T')[0]
+                        });
+                    }
+
+                    // Generate Hosts
+                    if (Math.random() > 0.5) {
+                        mockDatabase.hosts.push({
+                            provider,
+                            context,
+                            region,
+                            name: `endpoint-gateway-${randomHex(4)}`,
+                            address: `10.${randomInt(10, 50)}.0.${randomInt(2, 254)}`,
+                            protocol: pickRandom(['SSH', 'RDP']),
+                            status: 'active'
+                        });
+                    }
+                });
+            });
+        }
+
+        // Toggles collapse status of parent directory tree nodes
+        function toggleProviderCollapse(provider) {
+            treeCollapseState.providers[provider] = !treeCollapseState.providers[provider];
+            renderContextTree();
+        }
+
+        function toggleAccountCollapse(context) {
+            treeCollapseState.accounts[context] = !treeCollapseState.accounts[context];
+            renderContextTree();
+        }
+
+        // Dynamically renders the multi-cloud directory tree with proper styling and branch indicators
+        function renderContextTree() {
+            const container = document.getElementById('sidebar-context-tree');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const uniqueProviders = ['AWS', 'GCP', 'Azure'];
+
+            uniqueProviders.forEach(prov => {
+                const isProvCollapsed = treeCollapseState.providers[prov];
+                const provIndicator = isProvCollapsed ? '▶' : '▼';
+                
+                // Count items under this provider
+                const provVms = mockDatabase.vms.filter(v => v.provider === prov).length;
+                const provDbs = mockDatabase.databases.filter(d => d.provider === prov).length;
+                const provCountTotal = provVms + provDbs;
+
+                // Create provider header
+                const provDiv = document.createElement('div');
+                provDiv.className = "space-y-1";
+                
+                let providerTitle = '';
+                if (prov === 'AWS') {
+                    providerTitle = `Accounts (${providersMeta.filter(p=>p.provider==='AWS').length})`;
+                } else if (prov === 'GCP') {
+                    providerTitle = `Projects (${providersMeta.filter(p=>p.provider==='GCP').length})`;
+                } else {
+                    providerTitle = `Subscriptions (${providersMeta.filter(p=>p.provider==='Azure').length})`;
+                }
+
+                provDiv.innerHTML = `
+                    <div onclick="toggleProviderCollapse('${prov}')" class="text-purple-400 font-bold flex items-center justify-between cursor-pointer hover:text-purple-300 py-0.5 select-none">
+                        <span>${provIndicator} ${prov}</span>
+                        <span class="text-gray-600 text-[10px] font-normal">[${provCountTotal} items]</span>
+                    </div>
+                `;
+
+                const provChildrenDiv = document.createElement('div');
+                provChildrenDiv.className = `pl-2 border-l border-purple-950/40 space-y-1.5 ${isProvCollapsed ? 'hidden' : ''}`;
+
+                // Filter contexts matching this provider
+                const matchingMetas = providersMeta.filter(m => m.provider === prov);
+                
+                matchingMetas.forEach((meta, mIdx) => {
+                    const isLastMeta = mIdx === matchingMetas.length - 1;
+                    const metaBranchSymbol = isLastMeta ? '└─' : '├─';
+                    
+                    const isCtxCollapsed = treeCollapseState.accounts[meta.context];
+                    const ctxIndicator = isCtxCollapsed ? '▶' : '▼';
+
+                    // Count assets in this specific account / project context
+                    const ctxVms = mockDatabase.vms.filter(v => v.context === meta.context).length;
+                    
+                    let semanticLabel = '';
+                    if (prov === 'AWS') {
+                        semanticLabel = `Account: ${meta.account}`;
+                    } else if (prov === 'GCP') {
+                        semanticLabel = `Proj: ${meta.project}`;
+                    } else {
+                        semanticLabel = `Sub: ${meta.subscription}`;
+                    }
+
+                    const ctxFolderDiv = document.createElement('div');
+                    ctxFolderDiv.className = "space-y-1";
+                    ctxFolderDiv.innerHTML = `
+                        <div onclick="toggleAccountCollapse('${meta.context}')" class="text-gray-400 font-medium flex items-center justify-between cursor-pointer hover:text-white select-none pl-1">
+                            <span class="truncate pr-1"><span class="text-gray-600 mr-1">${metaBranchSymbol}</span> ${ctxIndicator} ${semanticLabel}</span>
+                            <span class="text-gray-600 text-[9px] shrink-0 font-normal">[${ctxVms} VMs]</span>
+                        </div>
+                    `;
+
+                    const regionsDiv = document.createElement('div');
+                    regionsDiv.className = `pl-6 space-y-1 ${isCtxCollapsed ? 'hidden' : ''}`;
+
+                    meta.regions.forEach((region, rIdx) => {
+                        const isLastRegion = rIdx === meta.regions.length - 1;
+                        const regionBranchSymbol = isLastRegion ? '└─' : '├─';
+                        
+                        const isSelectedRegion = activeProvider === prov && activeContext === meta.context && activeRegion === region;
+                        const regionHighlightClass = isSelectedRegion ? 'text-purple-400 font-bold' : 'text-gray-500 hover:text-white';
+                        
+                        const regItem = document.createElement('div');
+                        regItem.className = `cursor-pointer transition-colors select-none ${regionHighlightClass}`;
+                        regItem.onclick = (e) => {
+                            e.stopPropagation();
+                            selectContext(prov, meta.context, region);
+                        };
+
+                        regItem.innerHTML = `
+                            <span class="text-gray-600 mr-1">${regionBranchSymbol}</span> 🌐 <span class="hover:underline">${region}</span>
+                        `;
+                        regionsDiv.appendChild(regItem);
+                    });
+
+                    ctxFolderDiv.appendChild(regionsDiv);
+                    provChildrenDiv.appendChild(ctxFolderDiv);
+                });
+
+                provDiv.appendChild(provChildrenDiv);
+                container.appendChild(provDiv);
+            });
+        }
+
+        window.onload = function () {
+            // Step 1: Generate Mock database dynamically
+            generateMockDatabase();
+
+            // Step 2: Boot simulation layout engine
+            lucide.createIcons();
+            renderContextTree();
+            renderAllTables();
+            updateContextMetricsCounters();
+            renderHomeCards();
+        };
+
+        // Keyboard & click navigation router
+        function switchView(tabId) {
+            currentTab = tabId;
+            tuiTabs.forEach(tab => {
+                const el = document.getElementById(`panel-${tab}`);
+                const tabBtn = document.getElementById(`tab-${tab}`);
+                if (el) el.classList.add('hidden');
+                if (tabBtn) {
+                    tabBtn.className = "px-2 py-0.5 rounded transition-all cursor-pointer text-gray-400 hover:bg-gray-800 hover:text-white text-[10px] sm:text-xs";
+                }
+            });
+
+            const activePanel = document.getElementById(`panel-${tabId}`);
+            const activeBtn = document.getElementById(`tab-${tabId}`);
+            if (activePanel) activePanel.classList.remove('hidden');
+            if (activeBtn) {
+                activeBtn.className = "px-2 py-0.5 rounded transition-all cursor-pointer text-black bg-purple-500 font-extrabold text-[10px] sm:text-xs";
+            }
+
+            // Unselect previous resource contexts on tab change
+            deselectSelectedResource();
+
+            if (tabId === 'fuzzy-finder-results') {
+                const input = document.getElementById('fuzzy-text-input');
+                if (input) {
+                    input.value = '';
+                    input.focus();
+                }
+                renderFuzzyFinderTable();
+            }
+
+            if (tabId === 'overview') {
+                renderHomeCards();
+            }
+        }
+
+        // Return Home action trigger
+        function goHome() {
+            switchView('overview');
+        }
+
+        // Hierarchy profile context picker logic
+        function selectContext(provider, context, region) {
+            activeProvider = provider;
+            activeContext = context;
+            activeRegion = region;
+
+            selectedResource = null;
+            selectedResourceType = null;
+
+            // Re-render components to propagate selected state changes
+            renderContextTree();
+            renderAllTables();
+            updateContextMetricsCounters();
+            renderHomeCards();
+            triggerToast(`Indexed Context: ${context} Region: ${region}`, 'info');
+        }
+
+        // Global metrics computation & visual progress bar scaling
+        function updateContextMetricsCounters() {
+            const allVms = mockDatabase.vms;
+            const running = allVms.filter(v => v.state === 'running').length;
+            const stopped = allVms.filter(v => v.state === 'stopped').length;
+            const total = allVms.length;
+
+            // Set running vs stopped parameters
+            document.getElementById('inventory-vms-running').innerText = `${running} of ${total}`;
+            
+            // Build visual progress hash bar (20 chars bounds width)
+            const filledCount = Math.round((running / (total || 1)) * 20);
+            const emptyCount = 20 - filledCount;
+            const progressStr = `[${'#'.repeat(filledCount)}${'-'.repeat(emptyCount)}]`;
+            document.getElementById('inventory-vms-progress').innerText = progressStr;
+
+            // Update remaining index counts below cards
+            document.getElementById('inventory-vms-provider').innerText = `AWS ${allVms.filter(v => v.provider === 'AWS').length} | GCP ${allVms.filter(v => v.provider === 'GCP').length} | Azure ${allVms.filter(v => v.provider === 'Azure').length}`;
+            
+            const distinctContexts = new Set(allVms.map(v => v.context)).size;
+            document.getElementById('inventory-contexts').innerText = distinctContexts;
+            
+            // Nodes counts
+            let totalNodes = 0;
+            mockDatabase.clusters.forEach(c => {
+                const parsed = parseInt(c.nodes);
+                if (!isNaN(parsed)) totalNodes += parsed;
+            });
+            document.getElementById('inventory-k8s-nodes').innerText = `hidden ${totalNodes} | K to show`;
+            document.getElementById('inventory-k8s-pools').innerText = `${mockDatabase.clusters.length}:71:${totalNodes}`;
+
+            // Databases
+            const dbsOk = mockDatabase.databases.filter(d => d.status === 'available' || d.status === 'RUNNABLE').length;
+            document.getElementById('inventory-databases').innerText = `${mockDatabase.databases.length} total | ${dbsOk} ready | ${mockDatabase.databases.length - dbsOk} down`;
+
+            // Disks/Snapshots
+            document.getElementById('inventory-disks').innerText = mockDatabase.disks.length;
+            document.getElementById('inventory-snapshots').innerText = mockDatabase.snapshots.length;
+
+            // Networks
+            let totalSubnets = 0;
+            mockDatabase.networks.forEach(n => totalSubnets += n.subnets);
+            document.getElementById('inventory-networks').innerText = mockDatabase.networks.length;
+            document.getElementById('inventory-subnets').innerText = totalSubnets;
+            document.getElementById('inventory-security-groups').innerText = mockDatabase.firewalls.length;
+
+            // Storage / Manual hosts
+            document.getElementById('inventory-storage').innerText = mockDatabase.storage.length;
+            document.getElementById('inventory-manual-hosts').innerText = mockDatabase.hosts.length;
+
+            // Footer count
+            const totalRecords = allVms.length + mockDatabase.disks.length + mockDatabase.snapshots.length + mockDatabase.firewalls.length + mockDatabase.clusters.length + mockDatabase.databases.length + mockDatabase.networks.length + mockDatabase.storage.length + mockDatabase.hosts.length;
+            document.getElementById('indexed-records-footer').innerText = totalRecords;
+
+            // Apply contextual updates inside the sub headers
+            ['vms', 'disks', 'snapshots', 'firewalls', 'clusters', 'databases', 'networks', 'storage', 'hosts'].forEach(id => {
+                const header = document.getElementById(`header-${id}`);
+                if (header) {
+                    header.innerHTML = `<span class="text-purple-400 font-bold">${activeProvider}</span> &rsaquo; <span class="text-purple-300 font-bold">${activeContext}</span> &rsaquo; <span class="text-white">${activeRegion}</span>`;
+                }
+            });
+        }
+
+        // Resolving dynamic TUI metric cards count values on load
+        function getDynamicMetricCount(id) {
+            switch (id) {
+                case 'contexts':
+                    return '12'; // Total regions combinations cross aws, gcp, azure
+                case 'indexed-vms':
+                    return mockDatabase.vms.length.toString();
+                case 'running':
+                    return mockDatabase.vms.filter(v => v.state === 'running').length.toString();
+                case 'stopped':
+                    return mockDatabase.vms.filter(v => v.state === 'stopped').length.toString();
+                case 'public-ips':
+                    return mockDatabase.vms.filter(v => v.publicIp !== '-').length.toString();
+                case 'backend':
+                    return 'SDK';
+                case 'dbs':
+                    const ready = mockDatabase.databases.filter(d => d.status === 'available' || d.status === 'RUNNABLE').length;
+                    return `${mockDatabase.databases.length} (${ready} ok)`;
+                case 'k8s':
+                    let totalNodes = 0;
+                    mockDatabase.clusters.forEach(c => {
+                        const parsed = parseInt(c.nodes);
+                        if (!isNaN(parsed)) totalNodes += parsed;
+                    });
+                    return `${mockDatabase.clusters.length}:71:${totalNodes}`;
+                case 'db-contexts':
+                    const dbCtxs = new Set(mockDatabase.databases.map(d => d.context));
+                    return dbCtxs.size.toString();
+                case 'disks':
+                    return mockDatabase.disks.length.toString();
+                case 'snapshots':
+                    return mockDatabase.snapshots.length.toString();
+                case 'networks':
+                    return mockDatabase.networks.length.toString();
+                case 'subnets':
+                    let totalSubnets = 0;
+                    mockDatabase.networks.forEach(n => totalSubnets += n.subnets);
+                    return totalSubnets.toString();
+                case 'security-groups':
+                    return mockDatabase.firewalls.length.toString();
+                case 'storage':
+                    return mockDatabase.storage.length.toString();
+                case 'terraform':
+                    return '0';
+                case 'manual-hosts':
+                    return mockDatabase.hosts.length.toString();
+                default:
+                    return '0';
+            }
+        }
+
+        // Lipgloss Overview cards render configuration
+        const homeCardsMeta = [
+            { id: 'contexts', title: 'Contexts', countId: 'contexts', type: 'cyan', view: 'overview' },
+            { id: 'indexed-vms', title: 'Indexed VMs', countId: 'indexed-vms', type: 'pink', view: 'vms' },
+            { id: 'running', title: 'Running VMs', countId: 'running', type: 'cyan', view: 'vms' },
+            { id: 'stopped', title: 'Stopped VMs', countId: 'stopped', type: 'pink', view: 'vms' },
+            { id: 'public-ips', title: 'Public IPs', countId: 'public-ips', type: 'cyan', view: 'vms' },
+            { id: 'backend', title: 'Backend', countId: 'backend', type: 'pink', view: 'overview' },
+            { id: 'dbs', title: 'DBs ok / down', countId: 'dbs', type: 'cyan', view: 'databases' },
+            { id: 'k8s', title: 'K8s clusters:pools:n...', countId: 'k8s', type: 'pink', view: 'clusters' },
+            { id: 'db-contexts', title: 'DB contexts indexed', countId: 'db-contexts', type: 'cyan', view: 'databases' },
+            { id: 'disks', title: 'Disks indexed', countId: 'disks', type: 'pink', view: 'disks' },
+            { id: 'snapshots', title: 'Snapshots indexed', countId: 'snapshots', type: 'cyan', view: 'snapshots' },
+            { id: 'networks', title: 'Networks seen', countId: 'networks', type: 'pink', view: 'networks' },
+            { id: 'subnets', title: 'Subnets seen', countId: 'subnets', type: 'cyan', view: 'networks' },
+            { id: 'security-groups', title: 'Security groups seen', countId: 'security-groups', type: 'pink', view: 'firewalls' },
+            { id: 'storage', title: 'Storage indexed', countId: 'storage', type: 'cyan', view: 'storage' },
+            { id: 'terraform', title: 'Terraform managed', countId: 'terraform', type: 'pink', view: 'overview' },
+            { id: 'manual-hosts', title: 'Manual hosts', countId: 'manual-hosts', type: 'cyan', view: 'hosts' }
+        ];
+
+        function renderHomeCards() {
+            const container = document.getElementById('overview-cards-container');
+            if (!container) return;
+            container.innerHTML = '';
+
+            homeCardsMeta.forEach((card, idx) => {
+                const isFocused = idx === selectedHomeCardIndex;
+                const borderClass = isFocused ? 'border-purple-500 bg-purple-950/20 ring-1 ring-purple-500' : 'border-[#1e1b4b] bg-[#0c0f16]';
+                const countColor = card.type === 'cyan' ? 'text-cyan-400' : 'text-pink-400';
+                
+                // Get randomized dynamic count
+                const countValue = getDynamicMetricCount(card.countId);
+
+                const cardDiv = document.createElement('div');
+                cardDiv.className = `border p-3 rounded cursor-pointer transition-all ${borderClass}`;
+                cardDiv.onclick = () => {
+                    selectedHomeCardIndex = idx;
+                    renderHomeCards();
+                    if (card.view !== 'overview') {
+                        switchView(card.view);
+                    }
+                };
+
+                cardDiv.innerHTML = `
+                    <div class="text-xl font-extrabold ${countColor}">${countValue}</div>
+                    <div class="text-gray-500 text-[10px] mt-1 truncate leading-tight">${card.title}</div>
+                `;
+                container.appendChild(cardDiv);
+            });
+        }
+
+        // Render lists tables dynamically
+        function renderAllTables() {
+            renderVMsTable();
+            renderDisksTable();
+            renderSnapshotsTable();
+            renderFirewallsTable();
+            renderClustersTable();
+            renderDatabasesTable();
+            renderNetworksTable();
+            renderStorageTable();
+            renderHostsTable();
+            renderFuzzyFinderTable();
+        }
+
+        // VMs list
+        function renderVMsTable() {
+            const body = document.getElementById('vms-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.vms.filter(v => v.context === activeContext && v.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="6" class="text-gray-600 text-center py-4 font-mono">No virtual machines indexed under this scope context.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(vm => {
+                const isSelected = selectedResource && selectedResource.id === vm.id;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(vm, 'vm');
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-purple-400 font-bold flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${vm.name}
+                    </td>
+                    <td class="py-2 text-gray-500 font-mono">${vm.id}</td>
+                    <td class="py-2">${vm.type}</td>
+                    <td class="py-2">
+                        <span class="${vm.state === 'running' ? 'text-emerald-400' : 'text-rose-400'} font-bold">${vm.state}</span>
+                    </td>
+                    <td class="py-2 text-right text-gray-400">${vm.privateIp}</td>
+                    <td class="py-2 text-right text-purple-400">${vm.publicIp}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Disks list
+        function renderDisksTable() {
+            const body = document.getElementById('disks-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.disks.filter(d => d.context === activeContext && d.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="6" class="text-gray-600 text-center py-4 font-mono">No disk resources indexed under this scope context.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(d => {
+                const isSelected = selectedResource && selectedResource.id === d.id;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(d, 'disk');
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-purple-400 flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${d.name}
+                    </td>
+                    <td class="py-2 text-gray-500 font-mono">${d.id}</td>
+                    <td class="py-2 text-emerald-400">${d.state}</td>
+                    <td class="py-2 text-center text-gray-300">${d.size}</td>
+                    <td class="py-2 text-gray-400">${d.type}</td>
+                    <td class="py-2 text-purple-300 max-w-[120px] truncate" title="${d.attachedTo}">${d.attachedTo || '-'}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Snapshots
+        function renderSnapshotsTable() {
+            const body = document.getElementById('snapshots-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.snapshots.filter(s => s.context === activeContext && s.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="5" class="text-gray-600 text-center py-4 font-mono">No backup snapshot blocks indexed.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(s => {
+                const isSelected = selectedResource && selectedResource.id === s.id;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(s, 'snapshot');
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-purple-400 flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${s.name}
+                    </td>
+                    <td class="py-2 text-gray-400 font-mono">${s.id}</td>
+                    <td class="py-2 text-emerald-400">${s.state}</td>
+                    <td class="py-2 text-center text-gray-300">${s.size}</td>
+                    <td class="py-2 text-right text-gray-500">${s.createdAt}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Firewalls
+        function renderFirewallsTable() {
+            const body = document.getElementById('firewalls-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.firewalls.filter(fw => fw.context === activeContext && fw.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="5" class="text-gray-600 text-center py-4 font-mono">No security group firewalls indexed.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(fw => {
+                const isSelected = selectedResource && selectedResource.id === fw.id;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(fw, 'firewall');
+
+                let highlightClass = 'hover:bg-purple-950/10';
+                if (isSelected) {
+                    highlightClass = 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500';
+                } else if (fw.highRisk) {
+                    highlightClass = 'bg-rose-950/60 text-rose-300 font-semibold border-b border-rose-900/30';
+                }
+
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${highlightClass}`;
+                tr.innerHTML = `
+                    <td class="py-2 pl-2 pr-2 text-purple-400 flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${fw.name}
+                    </td>
+                    <td class="py-2 text-gray-500 font-mono">${fw.id}</td>
+                    <td class="py-2 text-center font-bold">${fw.inbound}</td>
+                    <td class="py-2 text-center font-bold">${fw.outbound}</td>
+                    <td class="py-2 text-right pr-2 text-gray-400 max-w-[200px] truncate" title="${fw.desc}">${fw.desc}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Clusters
+        function renderClustersTable() {
+            const body = document.getElementById('clusters-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.clusters.filter(c => c.context === activeContext && c.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="5" class="text-gray-600 text-center py-4 font-mono">No active kubernetes nodes or clusters found here.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(c => {
+                const isSelected = selectedResource && selectedResource.name === c.name;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(c, 'cluster');
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-purple-400 flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${c.name}
+                    </td>
+                    <td class="py-2 text-gray-400">${c.location}</td>
+                    <td class="py-2 text-emerald-400 font-bold">${c.status}</td>
+                    <td class="py-2 text-center text-gray-300">${c.version}</td>
+                    <td class="py-2 text-right pr-2 text-gray-400">${c.nodes}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Databases renderer
+        function renderDatabasesTable() {
+            const body = document.getElementById('databases-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.databases.filter(db => db.context === activeContext && db.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="5" class="text-gray-600 text-center py-4 font-mono">No relational databases found inside active context.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(db => {
+                const isSelected = selectedResource && selectedResource.name === db.name;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(db, 'database');
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-purple-400 font-bold flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${db.name}
+                    </td>
+                    <td class="py-2 text-gray-500 max-w-[150px] truncate" title="${db.id}">${db.id}</td>
+                    <td class="py-2 text-gray-300">${db.provider}</td>
+                    <td class="py-2 text-center text-emerald-400 font-bold">${db.status}</td>
+                    <td class="py-2 text-right pr-2 text-purple-300">${db.match}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Networks
+        function renderNetworksTable() {
+            const body = document.getElementById('networks-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.networks.filter(n => n.context === activeContext && n.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="5" class="text-gray-600 text-center py-4 font-mono">No VPC or VNet configurations active.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(n => {
+                const isSelected = selectedResource && selectedResource.id === n.id;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(n, 'network');
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-purple-400 flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${n.name}
+                    </td>
+                    <td class="py-2 text-gray-500 font-mono">${n.id}</td>
+                    <td class="py-2 text-purple-300 font-bold">${n.cidr}</td>
+                    <td class="py-2 text-emerald-400">${n.state}</td>
+                    <td class="py-2 text-right pr-2 text-gray-400">${n.subnets}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Storage
+        function renderStorageTable() {
+            const body = document.getElementById('storage-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.storage.filter(s => s.context === activeContext && s.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="5" class="text-gray-600 text-center py-4 font-mono">No cloud object storage buckets indexed.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(s => {
+                const isSelected = selectedResource && selectedResource.name === s.name;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(s, 'storage');
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-purple-400 flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${s.name}
+                    </td>
+                    <td class="py-2 text-gray-400">${s.type}</td>
+                    <td class="py-2 text-purple-300 font-bold text-center">${s.access}</td>
+                    <td class="py-2 text-gray-500 text-center">${s.encrypted}</td>
+                    <td class="py-2 text-right pr-2 text-gray-400">${s.createdAt}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Hosts list renderer
+        function renderHostsTable() {
+            const body = document.getElementById('hosts-table-body');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const filtered = mockDatabase.hosts.filter(h => h.context === activeContext && h.region === activeRegion);
+            
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="4" class="text-gray-600 text-center py-4 font-mono">No manual host endpoints registered.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(host => {
+                const isSelected = selectedResource && selectedResource.name === host.name;
+                const tr = document.createElement('tr');
+                tr.onclick = () => selectResource(host, 'host');
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-950/40 text-white font-bold border-l-2 border-purple-500' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 pr-2 text-purple-400 flex items-center">
+                        <span class="w-4 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${host.name}
+                    </td>
+                    <td class="py-2 text-gray-400">${host.address}</td>
+                    <td class="py-2 text-center text-purple-300 font-bold">${host.protocol}</td>
+                    <td class="py-2 text-right pr-2 text-emerald-400 font-bold">${host.status}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        // Selected table row highlight triggers actions console loading
+        function selectResource(item, type) {
+            selectedResource = item;
+            selectedResourceType = type;
+            activeActionIndex = 0; // reset selected index item inside the actions console box
+
+            // Re-render table lists to highlight the selected row item
+            renderAllTables();
+
+            // Render specific actions schema matching selected resource type
+            renderActionsBox();
+        }
+
+        // Actions definitions
+        const actionsDefinitions = {
+            vm: [
+                { title: 'Start', desc: 'Start the virtual machine' },
+                { title: 'Stop', desc: 'Gracefully stop the virtual machine' },
+                { title: 'Restart', desc: 'Reboot the virtual machine' },
+                { title: 'Terminate', desc: 'Permanently delete the virtual machine' },
+                { title: 'View Firewalls', desc: 'Open related firewalls or security groups for this node' },
+                { title: 'Describe', desc: 'Show full resource details' },
+                { title: 'Open Console', desc: 'Open this VM in the provider console' },
+                { title: 'Cost', desc: 'Fetch on-demand cost report for this VM' },
+                { title: 'FinOps', desc: 'Get Gemini AI cost & architecture recommendations' },
+                { title: 'SSH', desc: 'Connect to the instance via SSH' }
+            ],
+            disk: [
+                { title: 'Attach', desc: 'Link this storage block to an available VM compute node' },
+                { title: 'Detach', desc: 'Unlink volume from current active node safely' },
+                { title: 'Create Snapshot', desc: 'Generate immediate incremental block level backup snapshot' },
+                { title: 'Resize', desc: 'Expand disk volume allocation bounds' },
+                { title: 'Purge Volume', desc: 'Permanently destroy disk block and wipe remaining files' }
+            ],
+            firewall: [
+                { title: 'Edit Inbound Rules', desc: 'Manage ingress rules and modify security group bindings' },
+                { title: 'Edit Outbound Rules', desc: 'Configure allowed network communication outputs' },
+                { title: 'Analyze Vulnerabilities', desc: 'Scan ports for public exposure indicators' },
+                { title: 'Delete Security Group', desc: 'Remove firewall configurations entirely' }
+            ],
+            snapshot: [
+                { title: 'Restore', desc: 'Provision VM or disk using snap context state data' },
+                { title: 'Delete Backup', desc: 'Delete incremental storage record' }
+            ],
+            cluster: [
+                { title: 'Get kubeconfig', desc: 'Download local context credential file configuration profile' },
+                { title: 'Scale Nodes', desc: 'Modify nodes boundaries size within active worker group pools' }
+            ],
+            network: [
+                { title: 'Describe Subnets', desc: 'Inspect CIDR subnets metadata and active address bindings' }
+            ],
+            storage: [
+                { title: 'Audit ACL Policy', desc: 'Validate bucket access controls policy status permissions' },
+                { title: 'Calculate Capacity', desc: 'Scan folder items count to calculate size footprint' }
+            ]
+        };
+
+        function renderActionsBox() {
+            const overlay = document.getElementById('actions-popup-overlay');
+            const container = document.getElementById('actions-console-wrapper');
+            if (!container || !overlay) return;
+
+            if (!selectedResource) {
+                overlay.classList.add('hidden');
+                container.innerHTML = '';
+                return;
+            }
+
+            // Show popup
+            overlay.classList.remove('hidden');
+
+            // Bind actions list matching selected type
+            currentResourceActions = actionsDefinitions[selectedResourceType] || [{ title: 'Describe', desc: 'Show full resource details' }];
+
+            let actionsListHTML = '';
+            currentResourceActions.forEach((act, idx) => {
+                const isFocused = idx === activeActionIndex;
+                actionsListHTML += `
+                    <div onclick="executeAction(${idx})" onmouseenter="focusAction(${idx})" class="cursor-pointer px-2 py-1 transition-all rounded ${isFocused ? 'bg-purple-600 text-white font-bold' : 'hover:bg-purple-950/20'}">
+                        <div class="${isFocused ? 'text-white' : 'text-[#f472b6]'} text-[11px] font-bold leading-tight flex items-center">
+                            <span class="w-3.5 inline-block">${isFocused ? '▶' : ''}</span>
+                            ${act.title}
+                        </div>
+                        <div class="${isFocused ? 'text-purple-200' : 'text-gray-500'} text-[9px] pl-3.5 leading-tight truncate">
+                            ${act.desc}
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = `
+                <div class="border border-[#5c40bc]/60 rounded-md bg-[#0a0a12] overflow-hidden flex flex-col justify-between max-h-[480px] shadow-2xl shadow-purple-900/30">
+                    <div>
+                        <!-- Header Banner -->
+                        <div class="bg-[#5c40bc] text-white px-2 py-1 text-[10px] uppercase font-bold tracking-wider flex items-center justify-between">
+                            <span>Actions: ${selectedResource.name}</span>
+                            <button onclick="deselectSelectedResource()" class="text-white/70 hover:text-white text-[10px] cursor-pointer">✕</button>
+                        </div>
+                        
+                        <!-- List Wrapper -->
+                        <div class="p-2 space-y-1 overflow-y-auto max-h-[380px] custom-scroll">
+                            ${actionsListHTML}
+                        </div>
+                    </div>
+
+                    <!-- Footer Cheatsheet Bar -->
+                    <div class="bg-black/90 py-1.5 px-2 text-[9px] text-gray-500 font-bold border-t border-gray-900 flex justify-between items-center shrink-0">
+                        <span>↑/k up • ↓/j down • q quit</span>
+                        <span class="text-[8px] text-purple-400/60">${selectedResourceType.toUpperCase()}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function focusAction(index) {
+            activeActionIndex = index;
+            renderActionsBox();
+        }
+
+        // Simulate Action Executions on resources
+        function executeAction(index) {
+            const action = currentResourceActions[index];
+            if (!action) return;
+
+            if (action.title === 'Stop' && selectedResourceType === 'vm') {
+                selectedResource.state = 'stopped';
+                renderAllTables();
+                updateContextMetricsCounters();
+                triggerToast(`Graceful shutdown triggered for ${selectedResource.name}`, 'success');
+            } else if (action.title === 'Start' && selectedResourceType === 'vm') {
+                selectedResource.state = 'running';
+                renderAllTables();
+                updateContextMetricsCounters();
+                triggerToast(`Successfully started instance: ${selectedResource.name}`, 'success');
+            } else {
+                triggerToast(`Simulation triggered: ${action.title} on ${selectedResource.name}`, 'info');
+            }
+            renderActionsBox();
+        }
+
+        function deselectSelectedResource() {
+            selectedResource = null;
+            selectedResourceType = null;
+            renderAllTables();
+            renderActionsBox();
+            // Hide the popup overlay
+            const overlay = document.getElementById('actions-popup-overlay');
+            if (overlay) overlay.classList.add('hidden');
+        }
+
+        // GLOBAL FUZZY SEARCH SCANNER LOOKUP
+        function renderFuzzyFinderTable(filterQuery = '') {
+            const body = document.getElementById('fuzzy-results-body');
+            const summary = document.getElementById('matches-summary-text');
+            if (!body) return;
+            body.innerHTML = '';
+
+            const query = filterQuery.toLowerCase().trim();
+
+            // Unified searchable resource list compiled on-the-fly
+            let consolidatedIndices = [];
+
+            mockDatabase.vms.forEach(vm => {
+                consolidatedIndices.push({
+                    type: 'DB', // Standardized visual tag
+                    name: vm.name,
+                    id: vm.id,
+                    provider: vm.provider,
+                    context: vm.context,
+                    status: vm.state,
+                    details: `${vm.type} | ${vm.privateIp} | ${vm.region}`
+                });
+            });
+
+            mockDatabase.disks.forEach(d => {
+                consolidatedIndices.push({
+                    type: 'DISK',
+                    name: d.name,
+                    id: d.id,
+                    provider: d.provider,
+                    context: d.context,
+                    status: d.state,
+                    details: `${d.size} GB | ${d.type} attached`
+                });
+            });
+
+            mockDatabase.firewalls.forEach(fw => {
+                consolidatedIndices.push({
+                    type: 'FW',
+                    name: fw.name,
+                    id: fw.id,
+                    provider: fw.provider,
+                    context: fw.context,
+                    status: fw.highRisk ? 'HIGH-RISK' : 'OK',
+                    details: fw.desc
+                });
+            });
+
+            mockDatabase.databases.forEach(db => {
+                consolidatedIndices.push({
+                    type: 'DB',
+                    name: db.name,
+                    id: db.id,
+                    provider: db.provider,
+                    context: db.context,
+                    status: db.status,
+                    details: db.match
+                });
+            });
+
+            const filtered = consolidatedIndices.filter(item => {
+                if (!query) return true;
+                return (
+                    item.name.toLowerCase().includes(query) ||
+                    item.id.toLowerCase().includes(query) ||
+                    item.type.toLowerCase().includes(query) ||
+                    item.provider.toLowerCase().includes(query) ||
+                    item.details.toLowerCase().includes(query)
+                );
+            });
+
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="7" class="text-gray-600 text-center py-4">No matched results found.</td></tr>`;
+                if (summary) summary.innerText = `Matched 0 elements across local memory cache indices.`;
+                return;
+            }
+
+            filtered.forEach((r, idx) => {
+                const tr = document.createElement('tr');
+                const isSelected = selectedResource && selectedResource.id === r.id;
+
+                tr.onclick = () => selectResource(r, r.type === 'DB' ? 'vm' : r.type.toLowerCase());
+                tr.className = `cursor-pointer transition-all border-b border-gray-950/50 ${isSelected ? 'bg-purple-900/60 text-white font-bold' : 'hover:bg-purple-950/10'}`;
+
+                tr.innerHTML = `
+                    <td class="py-2 text-gray-500 font-bold pl-1 flex items-center">
+                        <span class="w-3 inline-block text-purple-500">${isSelected ? '▶' : ''}</span>
+                        ${r.type}
+                    </td>
+                    <td class="py-2 text-purple-400 font-bold">${r.name}</td>
+                    <td class="py-2 text-gray-400 font-mono text-[10px] max-w-[120px] truncate">${r.id}</td>
+                    <td class="py-2 text-gray-300">${r.provider}</td>
+                    <td class="py-2 text-gray-500 max-w-[100px] truncate" title="${r.context}">${r.context}</td>
+                    <td class="py-2">
+                        <span class="${r.status === 'running' || r.status === 'ACTIVE' || r.status === 'RUNNING' || r.status === 'available' || r.status === 'READY' || r.status === 'OK' || r.status === 'in-use' ? 'text-emerald-400' : 'text-rose-400'} font-bold">${r.status}</span>
+                    </td>
+                    <td class="py-2 text-right pr-1 text-purple-300 font-semibold">${r.details}</td>
+                `;
+                body.appendChild(tr);
+            });
+
+            if (summary) {
+                summary.innerHTML = `&rsaquo; matched ${filtered.length} resources of ${consolidatedIndices.length} total local configuration cache items.`;
+            }
+        }
+
+        function runFuzzyTextSearch() {
+            const input = document.getElementById('fuzzy-text-input');
+            if (input) {
+                renderFuzzyFinderTable(input.value);
+            }
+        }
+
+        function triggerFindOverlay() {
+            const overlay = document.getElementById('fuzzy-find-menu-overlay');
+            if (overlay) overlay.classList.remove('hidden');
+        }
+
+        function closeFindOverlay() {
+            const overlay = document.getElementById('fuzzy-find-menu-overlay');
+            if (overlay) overlay.classList.add('hidden');
+        }
+
+        function selectFindOverlayScope(scopeTabId) {
+            closeFindOverlay();
+            switchView(scopeTabId);
+        }
+
+        function triggerFuzzyResultsView() {
+            closeFindOverlay();
+            switchView('fuzzy-finder-results');
+            setTimeout(() => {
+                const inp = document.getElementById('fuzzy-text-input');
+                if (inp) inp.focus();
+            }, 100);
+        }
+
+        function triggerBackgroundSweep() {
+            // Re-trigger procedural random database index generator on click
+            generateMockDatabase();
+            renderContextTree();
+            renderAllTables();
+            updateContextMetricsCounters();
+            renderHomeCards();
+
+            triggerToast('Multi-cloud cache index regenerated successfully!', 'success');
+        }
+
+        function executeEnter() {
+            if (currentTab === 'overview') {
+                const targetView = homeCardsMeta[selectedHomeCardIndex].view;
+                if (targetView !== 'overview') {
+                    switchView(targetView);
+                }
+            } else if (selectedResource) {
+                executeAction(activeActionIndex);
+            }
+        }
+
+        // Command copy mechanism
+        function copyCommandText(button, text) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+
+            let ok = false;
+            try {
+                ok = document.execCommand('copy');
+            } catch (err) {
+                console.error("Clipboard write error fallback", err);
+            }
+            document.body.removeChild(ta);
+
+            if (ok) {
+                triggerToast('Copied execution script command!', 'success');
+            } else {
+                triggerToast('Clipboard access denied', 'error');
+            }
+        }
+
+        function triggerToast(msg, type = 'info') {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+
+            const toast = document.createElement('div');
+            toast.className = `mono text-xs px-4 py-2.5 rounded-lg border shadow-xl flex items-center space-x-2 transition-all duration-300 transform translate-y-2 opacity-0 pointer-events-auto`;
+
+            let bg, border, text, icon;
+            if (type === 'success') {
+                bg = 'bg-[#0f1d15]';
+                border = 'border-emerald-700/60';
+                text = 'text-emerald-300';
+                icon = 'check-circle';
+            } else if (type === 'error') {
+                bg = 'bg-rose-950/95';
+                border = 'border-rose-700/60';
+                text = 'text-rose-300';
+                icon = 'alert-triangle';
+            } else {
+                bg = 'bg-[#050508]/95';
+                border = 'border-purple-900/50';
+                text = 'text-purple-300';
+                icon = 'info';
+            }
+
+            toast.classList.add(bg, border, text);
+            toast.innerHTML = `<i data-lucide="${icon}" class="w-4 h-4 shrink-0"></i> <span>${msg}</span>`;
+
+            container.appendChild(toast);
+            lucide.createIcons();
+
+            setTimeout(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            }, 50);
+
+            setTimeout(() => {
+                toast.classList.add('translate-y-2', 'opacity-0');
+                setTimeout(() => {
+                    toast.remove();
+                }, 300);
+            }, 3000);
+        }
+
+        // Global keydown listeners for keyboard simulation feel!
+        document.addEventListener('keydown', function (event) {
+            // Check if user is typing inside search filter input
+            if (document.activeElement.id === 'fuzzy-text-input') {
+                if (event.key === 'Escape') {
+                    document.activeElement.blur();
+                    goHome();
+                }
+                return;
+            }
+
+            // Keyboard navigation inside Home view cards
+            if (currentTab === 'overview') {
+                if (event.key === 'ArrowRight') {
+                    event.preventDefault();
+                    selectedHomeCardIndex = (selectedHomeCardIndex + 1) % 17;
+                    renderHomeCards();
+                    return;
+                } else if (event.key === 'ArrowLeft') {
+                    event.preventDefault();
+                    selectedHomeCardIndex = (selectedHomeCardIndex - 1 + 17) % 17;
+                    renderHomeCards();
+                    return;
+                } else if (event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    if (selectedHomeCardIndex < 5) {
+                        selectedHomeCardIndex += 5;
+                    } else if (selectedHomeCardIndex < 10) {
+                        selectedHomeCardIndex += 5;
+                    } else if (selectedHomeCardIndex < 15) {
+                        selectedHomeCardIndex = (selectedHomeCardIndex === 14) ? 16 : 15;
+                    } else {
+                        selectedHomeCardIndex = selectedHomeCardIndex - 15;
+                    }
+                    renderHomeCards();
+                    return;
+                } else if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    if (selectedHomeCardIndex >= 15) {
+                        selectedHomeCardIndex = selectedHomeCardIndex === 15 ? 10 : 11;
+                    } else if (selectedHomeCardIndex >= 5) {
+                        selectedHomeCardIndex -= 5;
+                    } else {
+                        selectedHomeCardIndex = selectedHomeCardIndex === 0 ? 15 : 16;
+                    }
+                    renderHomeCards();
+                    return;
+                }
+            }
+
+            // Keyboard actions navigator inside selected resources action menus (j/k key binds)
+            if (selectedResource) {
+                if (event.key === 'ArrowDown' || event.key === 'j' || event.key === 'J') {
+                    event.preventDefault();
+                    activeActionIndex = (activeActionIndex + 1) % currentResourceActions.length;
+                    renderActionsBox();
+                } else if (event.key === 'ArrowUp' || event.key === 'k' || event.key === 'K') {
+                    event.preventDefault();
+                    activeActionIndex = (activeActionIndex - 1 + currentResourceActions.length) % currentResourceActions.length;
+                    renderActionsBox();
+                } else if (event.key === 'Enter') {
+                    event.preventDefault();
+                    executeAction(activeActionIndex);
+                } else if (event.key === 'q' || event.key === 'Escape') {
+                    event.preventDefault();
+                    deselectSelectedResource();
+                }
+                return;
+            }
+
+            // Tab shortcuts (0 to 9 key binds)
+            if (event.key >= '0' && event.key <= '9') {
+                event.preventDefault();
+                const tabMap = ['overview', 'vms', 'disks', 'snapshots', 'firewalls', 'clusters', 'databases', 'networks', 'storage', 'hosts'];
+                switchView(tabMap[parseInt(event.key)]);
+                return;
+            }
+
+            // Global trigger keys
+            if (event.key === 'g' || event.key === 'G') {
+                event.preventDefault();
+                triggerFindOverlay();
+            }
+            if (event.key === 'h' || event.key === 'H') {
+                event.preventDefault();
+                goHome();
+            }
+            if (event.key === 'Escape') {
+                closeFindOverlay();
+                goHome();
+            }
+        });
+    </script>
+</body>
+
+</html>

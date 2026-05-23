@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/logging"
 )
 
 func FetchClustersSDK(ctx context.Context, project string) ([]core.Cluster, error) {

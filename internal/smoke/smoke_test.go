@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func TestPreviewCommandsAWS(t *testing.T) {

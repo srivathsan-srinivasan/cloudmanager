@@ -46,7 +46,7 @@ snapshot:
 # Release configuration
 release:
   github:
-    owner: srivathsan-srinivasan
+    owner: vyoogam
     name: cloudmanager
   draft: false
   prerelease: auto

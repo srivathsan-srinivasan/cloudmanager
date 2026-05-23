@@ -1,51 +1,101 @@
-# Contributing to CloudManager
+# Contributing To CloudManager
 
-First off, thank you for considering contributing to CloudManager. It's people like you that make CloudManager such a great tool.
+CloudManager is a terminal control plane for cloud operators. Contributions are
+welcome, but the bar is practical: keep the core fast, provider-aware, local by
+default, and safe under pressure.
 
-### 1. Where do I go from here?
+## Start Here
 
-If you've noticed a bug or have a feature request, make sure to check our [Issues](https://github.com/yourusername/cloudmanager/issues) page to see if someone else has already created a ticket. If not, go ahead and [create one](https://github.com/yourusername/cloudmanager/issues/new)!
+Before opening a large PR, check:
 
-### 2. Fork & create a branch
+- [Issues](https://github.com/vyoogam/cloudmanager/issues)
+- [Roadmap](docs/ROADMAP.md)
+- [Provider Guide](docs/PROVIDER_GUIDE.md)
 
-If this is something you think you can fix, then [fork CloudManager](https://github.com/yourusername/cloudmanager/fork) and create a branch with a descriptive name.
+For small fixes, open the PR directly. For larger provider, component, storage,
+or UI changes, open an issue first so the shape is clear.
 
-```bash
-git checkout -b fix-aws-parser
-```
-
-### 3. Get the test suite running
-
-Currently, we are in the process of building out our test suite. Ensure your code compiles locally and run standard go tools:
-
-```bash
-go build -o cloudmanager
-go fmt ./...
-go vet ./...
-```
-
-Make sure any new files or features added have proper comments and conform to standard Go idioms.
-
-### 4. Implement your fix or feature
-
-At this point, you're ready to make your changes. Please review the [roadmap](tasks.md) before undertaking major structural changes. We are actively working through phases and want to avoid duplicating effort.
-
-### 5. Make a Pull Request
-
-At this point, you should switch back to your master branch and make sure it's up to date with CloudManager's master branch:
+## Development Setup
 
 ```bash
-git remote add upstream git@github.com:yourusername/cloudmanager.git
-git checkout master
-git pull upstream master
+git clone https://github.com/vyoogam/cloudmanager.git
+cd cloudmanager
+go test ./...
+go run .
 ```
 
-Then update your feature branch from your local copy of master, and push it!
+CloudManager uses native provider CLIs where useful. You do not need every cloud
+CLI installed to work on the project, but provider-specific manual testing
+requires the relevant tool:
+
+- AWS: `aws`
+- GCP: `gcloud`
+- Azure: `az`
+- DigitalOcean: `doctl`
+- Kubernetes: `kubectl`, optional `k9s`
+
+## Branches And PRs
+
+Use focused branches:
 
 ```bash
-git checkout fix-aws-parser
-git rebase master
-git push --set-upstream origin fix-aws-parser
+git checkout -b fix/gcp-vm-location
+git checkout -b feature/storage-index
+git checkout -b docs/pages-refresh
 ```
 
-Finally, go to GitHub and [make a Pull Request](https://github.com/yourusername/cloudmanager/compare) :D
+Keep PRs scoped. A provider fetcher fix should not also redesign the dashboard.
+A docs update should not carry unrelated generated files.
+
+## Validation
+
+Run the narrow tests first, then the full suite:
+
+```bash
+GOCACHE=/tmp/go-build-cache go test ./internal/providers/gcp ./internal/ui -count=1
+GOCACHE=/tmp/go-build-cache go test ./...
+git diff --check
+```
+
+For UI behavior, add focused tests around the view or helper being changed.
+For provider behavior, prefer parser/mapping tests over live cloud calls unless
+the change specifically requires live verification.
+
+## Contribution Areas
+
+- New provider resource fetchers
+- Provider-aware actions and guardrails
+- Local SQLite inventory, FTS, and search
+- CloudManager-local tags and annotations
+- Manual host access and reachability checks
+- Documentation and GitHub Pages
+- Release packaging and installability
+- Optional components for DNS, queues, WAF, IAM, load balancers, secrets, and
+  incident-response views
+
+## Design Rules
+
+- Keep the core small; broad service depth belongs in components.
+- Do not mutate cloud resources silently.
+- Make provider-specific actions explicit.
+- Keep local tags local unless the user chooses provider sync.
+- Prefer indexed local search for speed.
+- Preserve keyboard-first TUI workflows.
+- Log failures clearly enough for operators to act.
+
+## Release Changes
+
+Release changes should update all install paths together:
+
+- `VERSION`
+- README pinned `go install` command
+- `Formula/cloudmanager.rb`
+- `.goreleaser.yaml` when ownership or release targets change
+- `.github/workflows/release.yml` when release automation changes
+
+Manual releases can be started from GitHub Actions with **Run workflow** on the
+release workflow.
+
+## Code Of Conduct
+
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).

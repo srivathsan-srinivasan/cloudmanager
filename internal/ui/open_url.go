@@ -5,7 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/browseropen"
+	"github.com/vyoogam/cloudmanager/internal/browseropen"
 )
 
 type BrowserOpenMsg struct {

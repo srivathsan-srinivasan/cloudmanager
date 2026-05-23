@@ -5,8 +5,8 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 // Provider is the main interface for interacting with cloud resources.

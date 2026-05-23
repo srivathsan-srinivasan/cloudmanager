@@ -11,7 +11,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func FetchVMMetricsSDK(ctx context.Context, project, zone, instanceID string, period time.Duration) (*core.VMMetrics, error) {

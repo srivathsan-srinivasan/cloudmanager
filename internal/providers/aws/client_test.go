@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func TestGetSSHCmdCLIUsesAccountAuthProfile(t *testing.T) {

@@ -12,12 +12,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/clipboard"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/views/vms"
+	"github.com/vyoogam/cloudmanager/internal/clipboard"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/views/vms"
 )
 
 const (
@@ -26,6 +26,7 @@ const (
 	paneDescribe
 	paneSubnets
 	paneSubnetActions
+	paneSortConfig
 )
 
 type networkFetchMsg struct {
@@ -58,6 +59,7 @@ type NetworksView struct {
 	subnets       table.Model
 	actions       list.Model
 	subnetActions list.Model
+	sortList      list.Model
 	descView      viewport.Model
 	searchInput   textinput.Model
 	activePane    int
@@ -80,6 +82,12 @@ type NetworksView struct {
 	subnetSearch   string
 	copyableText   string
 	detailURL      string
+	sortColumn     string
+	sortAsc        bool
+	subnetSortCol  string
+	subnetSortAsc  bool
+	sortHeader     ui.HeaderSortState
+	subnetHeader   ui.HeaderSortState
 }
 
 func New(cfg *config.AppConfig) *NetworksView {
@@ -103,6 +111,8 @@ func New(cfg *config.AppConfig) *NetworksView {
 	subnetActions.Title = "Subnet Actions"
 	subnetActions.SetShowStatusBar(false)
 	subnetActions.SetFilteringEnabled(false)
+
+	sortList := ui.NewSortList("Sort Networks by (Enter to select, Esc to cancel)", networkSortColumns())
 
 	descView := viewport.New(80, 20)
 	descView.Style = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).
@@ -141,11 +151,14 @@ func New(cfg *config.AppConfig) *NetworksView {
 		subnets:       subTbl,
 		actions:       actions,
 		subnetActions: subnetActions,
+		sortList:      sortList,
 		descView:      descView,
 		searchInput:   searchInput,
 		activePane:    paneTable,
 		cfg:           cfg,
 		breadcrumbs:   "Select a context to view networks",
+		sortAsc:       true,
+		subnetSortAsc: true,
 	}
 }
 
@@ -153,13 +166,13 @@ func (v *NetworksView) Title() string { return "Networks" }
 
 func (v *NetworksView) ShortHelp() string {
 	if v.activePane == paneSubnets {
-		return "\u2191\u2193: Navigate \u2022 Enter: Actions \u2022 Esc: Back"
+		return "\u2191\u2193: Navigate \u2022 ↑ at top: Columns \u2022 Enter: Sort/Actions \u2022 Esc: Back"
 	}
-	return "\u2191\u2193: Navigate \u2022 Enter: Actions \u2022 /: Search \u2022 r: Refresh"
+	return "\u2191\u2193: Navigate \u2022 ↑ at top: Columns \u2022 Enter: Sort/Actions \u2022 /: Search \u2022 r: Refresh"
 }
 
 func (v *NetworksView) IsInputActive() bool {
-	return v.isSearching || v.activePane == paneActions || v.activePane == paneDescribe
+	return v.sortHeader.Active || v.subnetHeader.Active || v.isSearching || v.activePane == paneActions || v.activePane == paneDescribe || v.activePane == paneSortConfig
 }
 
 func (v *NetworksView) SetSearchQuery(query string) {
@@ -213,6 +226,7 @@ func (v *NetworksView) Resize(width, height int, showSidebar bool) {
 	v.subnets.SetHeight(ui.TableHeight(height))
 	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
 	v.subnetActions.SetSize(50, ui.ActionListHeight(len(v.subnetActions.Items()), height))
+	v.sortList.SetSize(width-4, height-4)
 	v.descView.Width = width - 4
 	v.descView.Height = height - 4
 }
@@ -223,12 +237,15 @@ func (v *NetworksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if v.sortHeader.Active || v.subnetHeader.Active {
+			return v.handleHeaderSortKeys(msg)
+		}
 		if v.isSearching {
 			return v.handleSearchKeys(msg)
 		}
 		if msg.String() == "esc" {
 			switch v.activePane {
-			case paneActions, paneDescribe:
+			case paneActions, paneDescribe, paneSortConfig:
 				v.activePane = paneTable
 				return v, nil
 			case paneSubnetActions:
@@ -256,6 +273,8 @@ func (v *NetworksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		switch v.activePane {
 		case paneActions, paneSubnetActions:
 			_, cmd = v.handleActionKeys(msg)
+		case paneSortConfig:
+			_, cmd = v.handleSortConfigKeys(msg)
 		case paneSubnets:
 			_, cmd = v.handleSubnetTableKeys(msg)
 		default:
@@ -302,6 +321,9 @@ func (v *NetworksView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 	case paneDescribe:
 		v.descView, cmd = v.descView.Update(msg)
 		cmds = append(cmds, cmd)
+	case paneSortConfig:
+		v.sortList, cmd = v.sortList.Update(msg)
+		cmds = append(cmds, cmd)
 	case paneSubnets:
 		v.subnets, cmd = v.subnets.Update(msg)
 		cmds = append(cmds, cmd)
@@ -327,9 +349,9 @@ func (v *NetworksView) Render() string {
 	} else {
 		switch v.activePane {
 		case paneSubnets:
-			body = v.subnets.View()
+			body = ui.ColorizeOperationalStates(v.subnets.View())
 		default:
-			body = v.networks.View()
+			body = ui.ColorizeOperationalStates(v.networks.View())
 			if v.isSearching || v.searchInput.Value() != "" {
 				body = lipgloss.JoinVertical(lipgloss.Left,
 					lipgloss.NewStyle().Padding(1, 2).Render(v.searchInput.View()),
@@ -348,6 +370,8 @@ func (v *NetworksView) Render() string {
 		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
 	case paneDescribe:
 		return ui.ClampToWindow(v.descView.View(), v.width, v.height)
+	case paneSortConfig:
+		return ui.ClampToWindow(v.sortList.View(), v.width, v.height)
 	default:
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
 	}
@@ -365,6 +389,14 @@ func (v *NetworksView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 	case "r":
 		v.loading = true
 		return v, v.fetchNetworksCmd()
+	case "S":
+		v.sortHeader.Activate(networkColumns())
+		v.syncVisibleRows()
+	case "up":
+		if v.networks.Cursor() == 0 {
+			v.sortHeader.Activate(networkColumns())
+			v.syncVisibleRows()
+		}
 	}
 	return v, nil
 }
@@ -375,7 +407,68 @@ func (v *NetworksView) handleSubnetTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) 
 		if v.subnets.SelectedRow() != nil {
 			v.activePane = paneSubnetActions
 		}
+	case "S":
+		v.subnetHeader.Activate(subnetColumns())
+		v.syncVisibleSubnets()
+	case "up":
+		if v.subnets.Cursor() == 0 {
+			v.subnetHeader.Activate(subnetColumns())
+			v.syncVisibleSubnets()
+		}
 	}
+	return v, nil
+}
+
+func (v *NetworksView) handleHeaderSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	if v.subnetHeader.Active {
+		cols := subnetColumns()
+		switch msg.String() {
+		case "esc", "down":
+			v.subnetHeader.Deactivate()
+		case "left", "h":
+			v.subnetHeader.Move(-1, cols)
+		case "right", "l":
+			v.subnetHeader.Move(1, cols)
+		case "enter":
+			column := v.subnetHeader.SelectedColumn(cols)
+			v.subnetSortCol, v.subnetSortAsc = ui.ToggleSortColumn(v.subnetSortCol, v.subnetSortAsc, column)
+		}
+		v.syncVisibleSubnets()
+		return v, nil
+	}
+	cols := networkColumns()
+	switch msg.String() {
+	case "esc", "down":
+		v.sortHeader.Deactivate()
+	case "left", "h":
+		v.sortHeader.Move(-1, cols)
+	case "right", "l":
+		v.sortHeader.Move(1, cols)
+	case "enter":
+		column := v.sortHeader.SelectedColumn(cols)
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, column)
+	}
+	v.syncVisibleRows()
+	return v, nil
+}
+
+func (v *NetworksView) handleSortConfigKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	if msg.String() != "enter" {
+		return v, nil
+	}
+	selected, ok := v.sortList.SelectedItem().(ui.SortColumnItem)
+	if !ok {
+		return v, nil
+	}
+	if v.filterVPCID != "" || strings.Contains(v.sortList.Title, "Subnets") {
+		v.subnetSortCol, v.subnetSortAsc = ui.ToggleSortColumn(v.subnetSortCol, v.subnetSortAsc, selected.Name)
+		v.syncVisibleSubnets()
+		v.activePane = paneSubnets
+		return v, nil
+	}
+	v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, selected.Name)
+	v.syncVisibleRows()
+	v.activePane = paneTable
 	return v, nil
 }
 
@@ -505,11 +598,15 @@ func (v *NetworksView) syncVisibleRows() {
 		}
 	}
 	v.visibleRows = filtered
+	ui.SortByColumn(v.visibleRows, v.sortColumn, v.sortAsc, func(n core.Network, column string) string {
+		return networkField(n, column)
+	})
 	var rows []table.Row
-	for _, n := range filtered {
+	for _, n := range v.visibleRows {
 		rows = append(rows, table.Row{n.Name, n.ID, n.CIDRBlock, n.State, fmt.Sprintf("%d", n.SubnetCount), n.Region})
 	}
 	v.networks.SetRows(rows)
+	v.networks.SetColumns(ui.DecorateSortColumns(networkColumns(), v.sortHeader, v.sortColumn, v.sortAsc))
 }
 
 func (v *NetworksView) syncVisibleSubnets() {
@@ -524,11 +621,83 @@ func (v *NetworksView) syncVisibleSubnets() {
 		}
 	}
 	v.visibleSubnets = filtered
+	ui.SortByColumn(v.visibleSubnets, v.subnetSortCol, v.subnetSortAsc, func(s core.Subnet, column string) string {
+		return subnetField(s, column)
+	})
 	var rows []table.Row
-	for _, s := range filtered {
+	for _, s := range v.visibleSubnets {
 		rows = append(rows, table.Row{s.Name, s.ID, s.CIDRBlock, s.AvailabilityZone, s.NetworkName, fmt.Sprintf("%d", s.AvailableIPs)})
 	}
 	v.subnets.SetRows(rows)
+	v.subnets.SetColumns(ui.DecorateSortColumns(subnetColumns(), v.subnetHeader, v.subnetSortCol, v.subnetSortAsc))
+}
+
+func networkSortColumns() []table.Column {
+	return networkColumns()
+}
+
+func subnetSortColumns() []table.Column {
+	return subnetColumns()
+}
+
+func networkColumns() []table.Column {
+	return []table.Column{
+		{Title: "Name", Width: 20},
+		{Title: "ID", Width: 18},
+		{Title: "CIDR", Width: 18},
+		{Title: "State", Width: 10},
+		{Title: "Subnets", Width: 8},
+		{Title: "Region", Width: 12},
+	}
+}
+
+func subnetColumns() []table.Column {
+	return []table.Column{
+		{Title: "Name", Width: 20},
+		{Title: "ID", Width: 18},
+		{Title: "CIDR", Width: 18},
+		{Title: "AZ", Width: 12},
+		{Title: "Network", Width: 15},
+		{Title: "Available IPs", Width: 12},
+	}
+}
+
+func networkField(n core.Network, column string) string {
+	switch column {
+	case "Name":
+		return n.Name
+	case "ID":
+		return n.ID
+	case "CIDR":
+		return n.CIDRBlock
+	case "State":
+		return n.State
+	case "Subnets":
+		return fmt.Sprintf("%d", n.SubnetCount)
+	case "Region":
+		return n.Region
+	default:
+		return ""
+	}
+}
+
+func subnetField(s core.Subnet, column string) string {
+	switch column {
+	case "Name":
+		return s.Name
+	case "ID":
+		return s.ID
+	case "CIDR":
+		return s.CIDRBlock
+	case "AZ":
+		return s.AvailabilityZone
+	case "Network":
+		return s.NetworkName
+	case "Available IPs":
+		return fmt.Sprintf("%d", s.AvailableIPs)
+	default:
+		return ""
+	}
 }
 
 func copyTextCmd(text string) tea.Cmd {

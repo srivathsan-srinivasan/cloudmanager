@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/api/compute/v1"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func FetchSecurityGroupsSDK(ctx context.Context, project string) ([]core.SecurityGroup, error) {

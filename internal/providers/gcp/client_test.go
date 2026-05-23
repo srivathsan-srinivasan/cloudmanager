@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func TestGetSSHCmdCLIUsesProjectAndZone(t *testing.T) {
@@ -79,5 +79,18 @@ func TestResolveGCPVMZoneReportsDiscoveryFailure(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestGCPInstanceToVMNormalizesZone(t *testing.T) {
+	vm := gcpInstanceToVM(gcpInstance{
+		Name:        "vm-1",
+		Id:          "123",
+		MachineType: "https://www.googleapis.com/compute/v1/projects/project-1/zones/us-central1-a/machineTypes/e2-medium",
+		Status:      "RUNNING",
+		Zone:        "https://www.googleapis.com/compute/v1/projects/project-1/zones/us-central1-a",
+	})
+	if vm.Zone != "us-central1-a" {
+		t.Fatalf("expected normalized zone, got %q", vm.Zone)
 	}
 }

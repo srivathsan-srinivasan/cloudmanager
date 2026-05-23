@@ -12,12 +12,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/clipboard"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	applog "github.com/srivathsan-srinivasan/cloudmanager/internal/logging"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/clipboard"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	applog "github.com/vyoogam/cloudmanager/internal/logging"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/ui"
 )
 
 const (
@@ -94,6 +94,7 @@ type FirewallsView struct {
 	displayColumns []table.Column
 	sortColumn     string
 	sortAsc        bool
+	sortHeader     ui.HeaderSortState
 	columnOffset   int
 	canScrollLeft  bool
 	canScrollRight bool
@@ -185,11 +186,11 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 func (v *FirewallsView) Title() string { return "Firewalls" }
 
 func (v *FirewallsView) ShortHelp() string {
-	return "\u2191\u2193: Navigate \u2022 \u2190\u2192: Pan \u2022 Enter: Actions \u2022 /: Search \u2022 S: Sort \u2022 C: Columns \u2022 r: Refresh"
+	return "\u2191\u2193: Navigate \u2022 ↑ at top: Columns \u2022 \u2190\u2192: Pan \u2022 Enter: Sort/Actions \u2022 /: Search \u2022 C: Columns \u2022 r: Refresh"
 }
 
 func (v *FirewallsView) IsInputActive() bool {
-	return v.isSearching || v.activePane == paneActions || v.activePane == paneDescribe || v.activePane == paneColumnConfig || v.activePane == paneSortConfig
+	return v.sortHeader.Active || v.isSearching || v.activePane == paneActions || v.activePane == paneDescribe || v.activePane == paneColumnConfig || v.activePane == paneSortConfig
 }
 
 func (v *FirewallsView) SetSearchQuery(query string) {
@@ -254,6 +255,9 @@ func (v *FirewallsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		}
 		if v.isSearching {
 			return v.handleSearchKeys(msg)
+		}
+		if v.sortHeader.Active {
+			return v.handleHeaderSortKeys(msg)
 		}
 		if msg.String() == "esc" {
 			switch v.activePane {
@@ -335,7 +339,7 @@ func (v *FirewallsView) Render() string {
 		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", msg), v.width, v.height)
 	}
 
-	body := v.groups.View()
+	body := ui.ColorizeOperationalStates(v.groups.View())
 	if v.loading {
 		body = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("Loading security groups...")
 	} else if v.isSearching || v.searchInput.Value() != "" {
@@ -384,8 +388,14 @@ func (v *FirewallsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			v.columnOffset++
 			v.refreshTable()
 		}
+	case "up":
+		if v.groups.Cursor() == 0 {
+			v.sortHeader.Activate(v.displayColumns)
+			v.refreshTable()
+		}
 	case "S":
-		v.activePane = paneSortConfig
+		v.sortHeader.Activate(v.displayColumns)
+		v.refreshTable()
 	case "C":
 		v.activePane = paneColumnConfig
 	case "r":
@@ -545,6 +555,7 @@ func (v *FirewallsView) refreshTable() {
 	v.canScrollRight = canScrollRight
 	rows := mapSecurityGroupsToRows(v.visibleRowsSource(), cols)
 	tbl.SetRows(rows)
+	tbl.SetColumns(ui.DecorateSortColumns(cols, v.sortHeader, v.sortColumn, v.sortAsc))
 	tbl.SetHeight(ui.TableHeight(v.height))
 	tbl.SetWidth(ui.TableViewportWidth(v.width))
 	if cursor >= 0 && cursor < len(rows) {
@@ -556,6 +567,32 @@ func (v *FirewallsView) refreshTable() {
 	v.groups = tbl
 	v.displayColumns = cols
 	v.applySelectionStyle()
+}
+
+func (v *FirewallsView) handleHeaderSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "down":
+		v.sortHeader.Deactivate()
+	case "left", "h":
+		if !v.sortHeader.Move(-1, v.displayColumns) && v.columnOffset > 0 {
+			v.columnOffset--
+			v.refreshTable()
+			v.sortHeader.Index = len(v.displayColumns) - 1
+		}
+	case "right", "l":
+		if !v.sortHeader.Move(1, v.displayColumns) && v.canScrollRight {
+			v.columnOffset++
+			v.sortHeader.Index = 0
+			v.refreshTable()
+		}
+	case "enter":
+		column := v.sortHeader.SelectedColumn(v.displayColumns)
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, column)
+		sortSecurityGroups(v.groupData, v.sortColumn, v.sortAsc)
+		v.syncVisibleRows()
+	}
+	v.refreshTable()
+	return v, nil
 }
 
 func (v *FirewallsView) syncVisibleRows() {
@@ -699,11 +736,9 @@ func matchesSecurityGroupFilters(group core.SecurityGroup, filters []string) boo
 }
 
 func sortSecurityGroups(groups []core.SecurityGroup, column string, asc bool) {
-	for i := 1; i < len(groups); i++ {
-		for j := i; j > 0 && compareSecurityGroups(groups[j], groups[j-1], column, asc); j-- {
-			groups[j], groups[j-1] = groups[j-1], groups[j]
-		}
-	}
+	ui.SortByColumn(groups, column, asc, func(group core.SecurityGroup, column string) string {
+		return group.GetField(column)
+	})
 }
 
 func copyTextCmd(text string) tea.Cmd {
@@ -718,28 +753,4 @@ func (v *FirewallsView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
 		return v, nil
 	}
 	return v, ui.OpenURLCmd(consoleURL)
-}
-
-func compareSecurityGroups(left, right core.SecurityGroup, column string, asc bool) bool {
-	leftValue, rightValue := securityGroupSortValue(left, column), securityGroupSortValue(right, column)
-	if leftValue != rightValue {
-		if asc {
-			return leftValue < rightValue
-		}
-		return leftValue > rightValue
-	}
-	return strings.ToLower(left.Name) < strings.ToLower(right.Name)
-}
-
-func securityGroupSortValue(group core.SecurityGroup, column string) string {
-	switch column {
-	case "Inbound Rules":
-		return fmt.Sprintf("%06d", group.InboundRuleCount)
-	case "Outbound Rules":
-		return fmt.Sprintf("%06d", group.OutboundRuleCount)
-	case "Attached":
-		return fmt.Sprintf("%06d", group.AttachedResources)
-	default:
-		return strings.ToLower(group.GetField(column))
-	}
 }

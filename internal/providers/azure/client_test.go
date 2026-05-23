@@ -8,7 +8,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v6"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 func TestGetSSHCmdCLIUsesSubscriptionAndResourceGroup(t *testing.T) {
@@ -23,6 +23,27 @@ func TestGetSSHCmdCLIUsesSubscriptionAndResourceGroup(t *testing.T) {
 	want := []string{"az", "ssh", "vm", "--name", "vm-1", "--resource-group", "rg-main", "--subscription", "sub-123"}
 	if !reflect.DeepEqual(cmd.Args, want) {
 		t.Fatalf("unexpected ssh command args:\nwant %#v\ngot  %#v", want, cmd.Args)
+	}
+}
+
+func TestAzureVMOutputToVMPreservesLocation(t *testing.T) {
+	inst := azureVMOutput{
+		Name:          "vm-1",
+		Id:            "/subscriptions/sub-123/resourceGroups/rg-main/providers/Microsoft.Compute/virtualMachines/vm-1",
+		ResourceGroup: "rg-main",
+		Location:      "eastus",
+		PowerState:    "VM running",
+		PrivateIps:    "10.0.0.4",
+		PublicIps:     "52.1.2.3",
+	}
+	inst.HardwareProfile.VmSize = "Standard_B2s"
+
+	got := azureVMOutputToVM(inst)
+	if got.Zone != "eastus" {
+		t.Fatalf("expected Azure VM location to be preserved as Zone, got %q", got.Zone)
+	}
+	if got.State != "running" {
+		t.Fatalf("expected power state to be normalized, got %q", got.State)
 	}
 }
 

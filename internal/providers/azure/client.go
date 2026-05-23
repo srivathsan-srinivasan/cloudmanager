@@ -12,7 +12,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v6"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/core"
 )
 
 // --- CLI Backend ---
@@ -21,6 +21,7 @@ type azureVMOutput struct {
 	Name            string `json:"name"`
 	Id              string `json:"id"`
 	ResourceGroup   string `json:"resourceGroup"`
+	Location        string `json:"location"`
 	HardwareProfile struct {
 		VmSize string `json:"vmSize"`
 	} `json:"hardwareProfile"`
@@ -43,23 +44,28 @@ func FetchVMsCLI(subscription string) ([]core.VM, error) {
 	}
 	var vms []core.VM
 	for _, inst := range data {
-		status := inst.PowerState
-		if strings.HasPrefix(status, "VM ") {
-			status = strings.TrimPrefix(status, "VM ")
-		}
-		var lp []string
-		for k, v := range inst.Tags {
-			lp = append(lp, fmt.Sprintf("%s=%s", k, v))
-		}
-		vms = append(vms, core.VM{
-			Name: inst.Name, ID: inst.Id,
-			Type: inst.HardwareProfile.VmSize, State: status,
-			PrivateIP: orDash(inst.PrivateIps), PublicIP: orDash(inst.PublicIps),
-			ResourceGroup: inst.ResourceGroup,
-			Network:       "-", Subnet: "-", Labels: strings.Join(lp, ", "),
-		})
+		vms = append(vms, azureVMOutputToVM(inst))
 	}
 	return vms, nil
+}
+
+func azureVMOutputToVM(inst azureVMOutput) core.VM {
+	status := inst.PowerState
+	if strings.HasPrefix(status, "VM ") {
+		status = strings.TrimPrefix(status, "VM ")
+	}
+	var lp []string
+	for k, v := range inst.Tags {
+		lp = append(lp, fmt.Sprintf("%s=%s", k, v))
+	}
+	return core.VM{
+		Name: inst.Name, ID: inst.Id,
+		Type: inst.HardwareProfile.VmSize, State: status,
+		PrivateIP: orDash(inst.PrivateIps), PublicIP: orDash(inst.PublicIps),
+		Zone:          orDash(inst.Location),
+		ResourceGroup: inst.ResourceGroup,
+		Network:       "-", Subnet: "-", Labels: strings.Join(lp, ", "),
+	}
 }
 
 func ExecuteActionCLI(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error) {
@@ -167,6 +173,7 @@ func FetchVMsSDK(ctx context.Context, subscriptionID string) ([]core.VM, error) 
 				Name: name, ID: id, Type: vmSize, State: status,
 				PrivateIP:      networkDetails.privateIP,
 				PublicIP:       networkDetails.publicIP,
+				Zone:           orPtr(vm.Location),
 				ResourceGroup:  rg,
 				Network:        networkDetails.network,
 				Subnet:         networkDetails.subnet,

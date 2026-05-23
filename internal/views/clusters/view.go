@@ -11,11 +11,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/config"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/core"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/iac"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/providers"
-	"github.com/srivathsan-srinivasan/cloudmanager/internal/ui"
+	"github.com/vyoogam/cloudmanager/internal/config"
+	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/iac"
+	"github.com/vyoogam/cloudmanager/internal/providers"
+	"github.com/vyoogam/cloudmanager/internal/ui"
+)
+
+const (
+	paneTable = iota
+	paneActions
+	paneSortConfig
 )
 
 type actionItem struct {
@@ -41,10 +47,12 @@ type k9sReadyMsg struct {
 type ClustersView struct {
 	table          table.Model
 	actions        list.Model
+	sortList       list.Model
 	activePane     int
 	selectedItem   core.Cluster
 	activeCtx      core.CloudContext
 	clustersData   []core.Cluster
+	visibleRows    []core.Cluster
 	tableCols      []table.Column
 	cfg            *config.AppConfig
 	width, height  int
@@ -55,6 +63,9 @@ type ClustersView struct {
 	canScrollLeft  bool
 	canScrollRight bool
 	columnOffset   int
+	sortColumn     string
+	sortAsc        bool
+	sortHeader     ui.HeaderSortState
 }
 
 func New(cfg *config.AppConfig) *ClustersView {
@@ -69,17 +80,23 @@ func New(cfg *config.AppConfig) *ClustersView {
 	actionList.SetShowStatusBar(false)
 	actionList.SetFilteringEnabled(false)
 
+	sortList := ui.NewSortList("Sort Clusters by (Enter to select, Esc to cancel)", clusterSortColumns())
+
 	return &ClustersView{
-		actions: actionList,
-		cfg:     cfg,
+		actions:  actionList,
+		sortList: sortList,
+		cfg:      cfg,
+		sortAsc:  true,
 	}
 }
 
 func (v *ClustersView) Title() string { return "Clusters" }
 func (v *ClustersView) ShortHelp() string {
-	return "↑↓: Navigate • Enter: Actions • r: Refresh"
+	return "↑↓: Navigate • ↑ at top: Columns • Enter: Sort/Actions • r: Refresh"
 }
-func (v *ClustersView) IsInputActive() bool { return v.activePane == 1 }
+func (v *ClustersView) IsInputActive() bool {
+	return v.sortHeader.Active || v.activePane == paneActions || v.activePane == paneSortConfig
+}
 
 func (v *ClustersView) SetSearchQuery(query string) {
 	v.searchQuery = strings.TrimSpace(query)
@@ -87,7 +104,7 @@ func (v *ClustersView) SetSearchQuery(query string) {
 }
 
 func (v *ClustersView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
-	v.activePane = 0
+	v.activePane = paneTable
 	v.activeCtx = ctx
 	v.width = width
 	v.height = height
@@ -103,6 +120,7 @@ func (v *ClustersView) Resize(width, height int, showSidebar bool) {
 	v.height = height
 	v.refreshTable()
 	v.actions.SetSize(50, ui.ActionListHeight(len(v.actions.Items()), height))
+	v.sortList.SetSize(width-4, height-4)
 }
 
 func (v *ClustersView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
@@ -110,17 +128,24 @@ func (v *ClustersView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.String() == "esc" && v.activePane == 1 {
-			v.activePane = 0
+		if v.sortHeader.Active {
+			return v.handleHeaderSortKeys(msg)
+		}
+		if msg.String() == "esc" && (v.activePane == paneActions || v.activePane == paneSortConfig) {
+			v.activePane = paneTable
 			return v, nil
 		}
 
-		if v.activePane == 1 {
+		if v.activePane == paneSortConfig {
+			return v.handleSortConfigKeys(msg)
+		}
+
+		if v.activePane == paneActions {
 			switch msg.String() {
 			case "enter":
 				action := v.actions.SelectedItem().(actionItem)
 				if action.TitleStr == "Jump to k9s" {
-					v.activePane = 0
+					v.activePane = paneTable
 					v.statusMsg = fmt.Sprintf("Preparing k9s for %s...", v.selectedItem.Name)
 					return v, v.prepareK9sCmd(v.selectedItem)
 				}
@@ -137,10 +162,20 @@ func (v *ClustersView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		case "enter":
 			if v.table.SelectedRow() != nil {
 				cursor := v.table.Cursor()
-				if cursor >= 0 && cursor < len(v.clustersData) {
-					v.selectedItem = v.clustersData[cursor]
-					v.activePane = 1
+				if cursor >= 0 && cursor < len(v.visibleRows) {
+					v.selectedItem = v.visibleRows[cursor]
+					v.activePane = paneActions
 				}
+			}
+		case "S":
+			v.sortHeader.Activate(v.tableCols)
+			v.refreshTable()
+			return v, nil
+		case "up":
+			if v.table.Cursor() == 0 {
+				v.sortHeader.Activate(v.tableCols)
+				v.refreshTable()
+				return v, nil
 			}
 		}
 		v.table, cmd = v.table.Update(msg)
@@ -182,16 +217,19 @@ func (v *ClustersView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 }
 
 func (v *ClustersView) Render() string {
-	content := v.table.View()
+	content := ui.ColorizeOperationalStates(v.table.View())
 	if v.loading {
 		content = lipgloss.NewStyle().Padding(2).Foreground(ui.Subtle).Render("Loading clusters...")
 	}
 	header := ui.BreadcrumbStyle.Render(fmt.Sprintf("%s \u203A %s \u203A Clusters", v.activeCtx.Provider, v.activeCtx.DisplayName()))
 
-	if v.activePane == 1 {
+	if v.activePane == paneActions {
 		overlay := ui.OverlayStyle.Render(v.actions.View())
 		return ui.ClampToWindow(lipgloss.Place(v.width, v.height-6, lipgloss.Center, lipgloss.Center, overlay,
 			lipgloss.WithWhitespaceChars(" ")), v.width, v.height)
+	}
+	if v.activePane == paneSortConfig {
+		return ui.ClampToWindow(v.sortList.View(), v.width, v.height)
 	}
 
 	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", content), v.width, v.height)
@@ -211,24 +249,90 @@ func (v *ClustersView) refreshTable() {
 	for _, c := range columnNames {
 		cols = append(cols, table.Column{Title: c, Width: 15})
 	}
-	tbl, _, _, _, _ := ui.NewResourceTable(cols, v.width, 0, "Name")
+	tbl, visibleCols, _, _, _ := ui.NewResourceTable(cols, v.width, 0, "Name")
+	ui.SortByColumn(v.clustersData, v.sortColumn, v.sortAsc, func(cluster core.Cluster, column string) string {
+		return cluster.GetField(column)
+	})
 
 	var rows []table.Row
+	v.visibleRows = v.visibleRows[:0]
 	for _, cluster := range v.clustersData {
 		if !clusterMatchesQuery(cluster, v.searchQuery) {
 			continue
 		}
+		v.visibleRows = append(v.visibleRows, cluster)
 		var row []string
-		for _, col := range cols {
+		for _, col := range visibleCols {
 			row = append(row, ui.TruncateText(cluster.GetField(col.Title), col.Width))
 		}
 		rows = append(rows, table.Row(row))
 	}
 	tbl.SetRows(rows)
+	tbl.SetColumns(ui.DecorateSortColumns(visibleCols, v.sortHeader, v.sortColumn, v.sortAsc))
 	tbl.SetHeight(ui.TableHeight(v.height))
 	tbl.SetWidth(ui.TableViewportWidth(v.width))
 	v.table = tbl
-	v.tableCols = cols
+	v.tableCols = visibleCols
+}
+
+func (v *ClustersView) handleHeaderSortKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "down":
+		v.sortHeader.Deactivate()
+	case "left", "h":
+		v.sortHeader.Move(-1, v.tableCols)
+	case "right", "l":
+		v.sortHeader.Move(1, v.tableCols)
+	case "enter":
+		column := v.sortHeader.SelectedColumn(v.tableCols)
+		v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, column)
+		v.statusMsg = fmt.Sprintf("Sorted by %s (%s).", v.sortColumn, ui.SortDirectionLabel(v.sortAsc))
+	}
+	v.refreshTable()
+	return v, nil
+}
+
+func (v *ClustersView) handleSortConfigKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
+	if msg.String() != "enter" {
+		var cmd tea.Cmd
+		v.sortList, cmd = v.sortList.Update(msg)
+		return v, cmd
+	}
+	selected, ok := v.sortList.SelectedItem().(ui.SortColumnItem)
+	if !ok {
+		return v, nil
+	}
+	v.sortColumn, v.sortAsc = ui.ToggleSortColumn(v.sortColumn, v.sortAsc, selected.Name)
+	ui.SortByColumn(v.clustersData, v.sortColumn, v.sortAsc, func(cluster core.Cluster, column string) string {
+		return cluster.GetField(column)
+	})
+	v.refreshTable()
+	v.activePane = paneTable
+	v.statusMsg = fmt.Sprintf("Sorted by %s (%s).", v.sortColumn, ui.SortDirectionLabel(v.sortAsc))
+	return v, nil
+}
+
+func (v *ClustersView) visibleOrDefaultColumns() []table.Column {
+	if len(v.tableCols) > 0 {
+		return v.tableCols
+	}
+	return clusterSortColumns()
+}
+
+func clusterSortColumns() []table.Column {
+	cols := make([]table.Column, 0, len(core.DefaultClusterColumns))
+	for _, col := range core.DefaultClusterColumns {
+		cols = append(cols, table.Column{Title: col})
+	}
+	return cols
+}
+
+func clusterSortItems(columns []table.Column) []list.Item {
+	items := make([]list.Item, 0, len(columns))
+	for _, col := range columns {
+		items = append(items, ui.SortColumnItem{Name: col.Title})
+	}
+	return items
 }
 
 func clusterMatchesQuery(cluster core.Cluster, query string) bool {
