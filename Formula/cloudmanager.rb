@@ -2,8 +2,8 @@ class Cloudmanager < Formula
   desc "Fast terminal control plane for cloud operations"
   homepage "https://github.com/vyoogam/cloudmanager"
   url "https://github.com/vyoogam/cloudmanager.git",
-      tag: "v1.0.1"
-  version "1.0.1"
+      tag: "v1.0.0"
+  version "1.0.0"
   license "MIT"
   head "https://github.com/vyoogam/cloudmanager.git",
        branch: "release/v1.0.0"

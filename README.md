@@ -142,7 +142,7 @@ go install github.com/vyoogam/cloudmanager@latest
 `go install ...@version`. To pin this release:
 
 ```bash
-go install github.com/vyoogam/cloudmanager@v1.0.1
+go install github.com/vyoogam/cloudmanager@v1.0.0
 ```
 
 From source:
