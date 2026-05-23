@@ -13,6 +13,7 @@ class Cloudmanager < Formula
   def install
     build_time = Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     ldflags = "-s -w -X main.Version=#{version} -X main.BuildTime=#{build_time}"
+    ENV["CGO_ENABLED"] = "0"
     system "go", "build", "-trimpath", "-ldflags", ldflags, "-o", bin/"cloudmanager", "."
   end
 

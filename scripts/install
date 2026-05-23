@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="${CLOUDMANAGER_REPO:-vyoogam/cloudmanager}"
+version="${CLOUDMANAGER_VERSION:-v1.0.0}"
+mode="${CLOUDMANAGER_INSTALL_MODE:-auto}"
+bin_dir="${CLOUDMANAGER_INSTALL_DIR:-}"
+install_go=0
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/install [options]
+
+Installs CloudManager from a GitHub Release artifact when available, then falls
+back to a source build with go install.
+
+Options:
+  --version v1.0.0       Version to install. Default: v1.0.0
+  --bin-dir DIR          Install directory. Default: Homebrew bin, /usr/local/bin, or ~/.local/bin
+  --binary               Require a prebuilt release artifact
+  --source               Build from source with go install
+  --install-go           If Go is missing and Homebrew is available, install Go
+  -h, --help             Show this help
+
+Environment:
+  CLOUDMANAGER_VERSION
+  CLOUDMANAGER_INSTALL_DIR
+  CLOUDMANAGER_INSTALL_MODE=auto|binary|source
+USAGE
+}
+
+log() {
+  printf 'cloudmanager-install: %s\n' "$*"
+}
+
+die() {
+  printf 'cloudmanager-install: %s\n' "$*" >&2
+  exit 1
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      [[ $# -ge 2 ]] || die "--version requires a value"
+      version="$2"
+      shift 2
+      ;;
+    --bin-dir)
+      [[ $# -ge 2 ]] || die "--bin-dir requires a value"
+      bin_dir="$2"
+      shift 2
+      ;;
+    --binary)
+      mode="binary"
+      shift
+      ;;
+    --source)
+      mode="source"
+      shift
+      ;;
+    --install-go)
+      install_go=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+case "$mode" in
+  auto|binary|source) ;;
+  *) die "CLOUDMANAGER_INSTALL_MODE must be auto, binary, or source" ;;
+esac
+
+case "$version" in
+  v*) ;;
+  *) version="v${version}" ;;
+esac
+
+if [[ -z "$bin_dir" ]]; then
+  if have brew; then
+    bin_dir="$(brew --prefix)/bin"
+  elif [[ -d /usr/local/bin ]]; then
+    bin_dir="/usr/local/bin"
+  else
+    bin_dir="${HOME}/.local/bin"
+  fi
+fi
+
+tmp="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+install_file() {
+  local src="$1"
+  local dst="${bin_dir}/cloudmanager"
+
+  mkdir -p "$bin_dir" 2>/dev/null || true
+  if [[ -w "$bin_dir" ]]; then
+    install -m 0755 "$src" "$dst"
+  elif have sudo; then
+    log "using sudo to install ${dst}"
+    sudo mkdir -p "$bin_dir"
+    sudo install -m 0755 "$src" "$dst"
+  else
+    die "${bin_dir} is not writable and sudo is unavailable; pass --bin-dir"
+  fi
+
+  log "installed ${dst}"
+}
+
+detect_archive() {
+  local os arch
+
+  case "$(uname -s)" in
+    Darwin) os="Darwin" ;;
+    Linux) os="Linux" ;;
+    *) return 1 ;;
+  esac
+
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x86_64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *) return 1 ;;
+  esac
+
+  printf 'cloudmanager_%s_%s.tar.gz\n' "$os" "$arch"
+}
+
+verify_checksum() {
+  local archive="$1"
+  local checksum_file="${tmp}/checksums.txt"
+  local expected="${tmp}/expected-checksum.txt"
+  local url="https://github.com/${repo}/releases/download/${version}/checksums.txt"
+
+  curl -fsSL "$url" -o "$checksum_file" || return 1
+  grep "  ${archive}$" "$checksum_file" > "$expected" || return 1
+
+  (
+    cd "$tmp"
+    if have sha256sum; then
+      sha256sum -c "$expected"
+    else
+      shasum -a 256 -c "$expected"
+    fi
+  )
+}
+
+install_binary_release() {
+  local archive archive_url archive_path extract_dir
+
+  archive="$(detect_archive)" || return 1
+  archive_url="https://github.com/${repo}/releases/download/${version}/${archive}"
+  archive_path="${tmp}/${archive}"
+  extract_dir="${tmp}/extract"
+
+  log "downloading ${archive_url}"
+  curl -fL --retry 3 "$archive_url" -o "$archive_path" || return 1
+  verify_checksum "$archive" || die "checksum verification failed for ${archive}"
+
+  mkdir -p "$extract_dir"
+  tar -xzf "$archive_path" -C "$extract_dir"
+  [[ -x "${extract_dir}/cloudmanager" ]] || die "release archive did not contain cloudmanager binary"
+  install_file "${extract_dir}/cloudmanager"
+}
+
+install_go_if_requested() {
+  if have go; then
+    return
+  fi
+
+  if [[ "$install_go" -eq 1 ]] && have brew; then
+    log "Go not found; installing Go with Homebrew"
+    brew install go
+    return
+  fi
+
+  die "Go is required for source build. Install Go or rerun with --install-go if Homebrew is available."
+}
+
+install_from_source() {
+  local gobin="${tmp}/bin"
+  install_go_if_requested
+  mkdir -p "$gobin"
+  log "building github.com/${repo}@${version}"
+  GOBIN="$gobin" go install "github.com/${repo}@${version}"
+  [[ -x "${gobin}/cloudmanager" ]] || die "go install did not produce cloudmanager"
+  install_file "${gobin}/cloudmanager"
+}
+
+case "$mode" in
+  binary)
+    install_binary_release || die "prebuilt release artifact is not available for this platform/version"
+    ;;
+  source)
+    install_from_source
+    ;;
+  auto)
+    if ! install_binary_release; then
+      log "prebuilt artifact unavailable; falling back to source build"
+      install_from_source
+    fi
+    ;;
+esac
+
+if have cloudmanager; then
+  cloudmanager --version || true
+else
+  log "add ${bin_dir} to PATH if cloudmanager is not found"
+fi

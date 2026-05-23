@@ -2,6 +2,15 @@
 
 ## 2026-05-23
 
+### Update
+
+- Added `scripts/install` as the curl-friendly installer for CloudManager.
+- Installer prefers prebuilt GitHub Release artifacts, verifies `checksums.txt`, installs to Homebrew bin, `/usr/local/bin`, or `~/.local/bin`, and falls back to `go install` when artifacts are unavailable.
+- Installer supports `--source`, `--binary`, `--version`, `--bin-dir`, and `--install-go`; Go is only installed automatically when the user explicitly passes `--install-go` and Homebrew is available.
+- Reset release pinning to `v1.0.0` in `VERSION`, README examples, and the Homebrew formula.
+- Updated the Homebrew formula to set `CGO_ENABLED=0` while still declaring `go` as a build dependency, so Brew installs Go if missing and does not require Clang for this build path.
+- Validation: `bash -n scripts/install`; `scripts/install --help`; `bash -n scripts/release`; `ruby -c Formula/cloudmanager.rb`; `GOCACHE=/tmp/go-build-cache go test ./...`; `git diff --check`.
+
 ### User Request Handled
 
 - Prepare CloudManager for the moved `vyoogam/cloudmanager` repo, improve public docs, and add a manual GitHub Actions release path.

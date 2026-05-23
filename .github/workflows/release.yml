@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Stable semver tag to release, for example v1.0.2'
+        description: 'Stable semver tag to release, for example v1.0.0'
         required: true
         type: string
       skip_tests:
@@ -43,7 +43,7 @@ jobs:
           version="${raw#v}"
           tag="v${version}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "version must be stable semver like v1.0.2" >&2
+            echo "version must be stable semver like v1.0.0" >&2
             exit 2
           fi
           if git ls-remote --tags origin "refs/tags/${tag}" | grep -q "${tag}"; then

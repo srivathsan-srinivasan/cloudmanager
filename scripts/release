@@ -6,8 +6,8 @@ usage() {
 Usage: scripts/release <version> [--no-push] [--skip-tests]
 
 Examples:
-  scripts/release v1.0.2
-  scripts/release 1.0.2 --no-push
+  scripts/release v1.0.0
+  scripts/release 1.0.0 --no-push
 
 This script:
   - requires a clean worktree
@@ -65,7 +65,7 @@ version="${raw_version#v}"
 tag="v${version}"
 
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "release: version must be stable semver like v1.0.2" >&2
+  echo "release: version must be stable semver like v1.0.0" >&2
   exit 2
 fi
 

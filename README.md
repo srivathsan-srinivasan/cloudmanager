@@ -132,18 +132,29 @@ terminal workflow, active context, audit path, and provider-aware guardrails.
 
 ## Installation
 
-Ensure you have [Go](https://golang.org/doc/install) 1.25 or newer installed.
+Fast install:
 
 ```bash
-go install github.com/vyoogam/cloudmanager@latest
+curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.0/scripts/install | sh
 ```
 
-`go get` is no longer the right way to install Go binaries on modern Go. Use
-`go install ...@version`. To pin this release:
+The installer prefers a prebuilt GitHub Release artifact. If no artifact exists
+for the requested OS/architecture yet, it falls back to `go install`.
+
+To force a source build and let Homebrew install Go when Go is missing:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.0/scripts/install | sh -s -- --source --install-go
+```
+
+Go install fallback:
 
 ```bash
 go install github.com/vyoogam/cloudmanager@v1.0.0
 ```
+
+`go install` builds from source using the user's Go toolchain. It does not use
+prebuilt GitHub Release artifacts.
 
 From source:
 
@@ -160,6 +171,10 @@ brew tap vyoogam/cloudmanager https://github.com/vyoogam/cloudmanager
 brew install cloudmanager
 ```
 
+The Homebrew formula builds from source with Homebrew-managed Go. If Go is not
+installed, Homebrew installs it as a build dependency. The formula sets
+`CGO_ENABLED=0` so users do not need Clang just to build CloudManager.
+
 ### Release Automation
 
 Releases can be created from GitHub Actions:
@@ -167,7 +182,7 @@ Releases can be created from GitHub Actions:
 1. Open **Actions** in GitHub.
 2. Select **Release Go Module**.
 3. Click **Run workflow**.
-4. Enter a stable version such as `v1.0.2`.
+4. Enter a stable version such as `v1.0.0`.
 5. Run it from the release branch.
 
 The workflow runs tests, updates `VERSION`, the README install pin, and the
@@ -177,7 +192,7 @@ publishes GitHub release artifacts with GoReleaser.
 Local releases are also supported:
 
 ```bash
-scripts/release v1.0.2
+scripts/release v1.0.0
 ```
 
 The script requires a clean worktree, runs `go test ./...`, updates `VERSION`,
