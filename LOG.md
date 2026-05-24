@@ -4,6 +4,10 @@
 
 ### Update
 
+- Fixed release workflow GoReleaser action mismatch: `.goreleaser.yaml` is version 2, so the workflow now uses `goreleaser/goreleaser-action@v6` with `version: '~> v2'` instead of v1 `latest`.
+
+### Update
+
 - Replaced the overbuilt GoReleaser config with a v1.0.0-ready config focused on Linux/macOS artifacts, checksums, `.deb`/`.rpm` packages, and generated Homebrew formula updates in the main repo.
 - Removed Windows from the release matrix for now because `internal/sysusage` does not cross-compile on Windows.
 - Fixed Homebrew generated formula test command to use `cloudmanager --version`.
