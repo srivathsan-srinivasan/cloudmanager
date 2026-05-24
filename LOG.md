@@ -4,6 +4,16 @@
 
 ### Update
 
+- Replaced the overbuilt GoReleaser config with a v1.0.0-ready config focused on Linux/macOS artifacts, checksums, `.deb`/`.rpm` packages, and generated Homebrew formula updates in the main repo.
+- Removed Windows from the release matrix for now because `internal/sysusage` does not cross-compile on Windows.
+- Fixed Homebrew generated formula test command to use `cloudmanager --version`.
+- Verified the generated Homebrew formula now includes macOS universal plus Linux amd64/arm64 artifact URLs.
+- Added `/dist/` to `.gitignore` for local GoReleaser snapshot output.
+- Added optional React Web UI to the roadmap for setup, cached inventory browsing, component/plugin management, and install diagnostics.
+- Validation: `go mod verify`; `GOCACHE=/tmp/go-build-cache go test ./...`; `go run github.com/goreleaser/goreleaser/v2@latest check`; `go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=before`.
+
+### Update
+
 - Added `scripts/install` as the curl-friendly installer for CloudManager.
 - Installer prefers prebuilt GitHub Release artifacts, verifies `checksums.txt`, installs to Homebrew bin, `/usr/local/bin`, or `~/.local/bin`, and falls back to `go install` when artifacts are unavailable.
 - Installer supports `--source`, `--binary`, `--version`, `--bin-dir`, and `--install-go`; Go is only installed automatically when the user explicitly passes `--install-go` and Homebrew is available.

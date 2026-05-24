@@ -1,49 +1,114 @@
-# .goreleaser.yaml
-# Build customization
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+before:
+  hooks:
+    - go mod verify
+    - go test ./...
+
 builds:
-  - env:
+  - id: cloudmanager
+    main: ./main.go
+    binary: cloudmanager
+    env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X main.Version={{ .Version }} -X main.BuildTime={{ .Date }}
+      - -s -w
+      - -X main.Version={{ .Version }}
+      - -X main.BuildTime={{ .Date }}
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
-    main: ./main.go
-    binary: cloudmanager
+    mod_timestamp: "{{ .CommitTimestamp }}"
 
-# Archive customization
+universal_binaries:
+  - id: cloudmanager-darwin-universal
+    ids:
+      - cloudmanager
+    replace: true
+
 archives:
-  - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of `uname`.
+  - id: default
+    ids:
+      - cloudmanager
+      - cloudmanager-darwin-universal
+    formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
+      {{- else if eq .Arch "arm64" }}arm64
       {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-      - goos: windows
-        format: zip
+    files:
+      - README.md
+      - LICENSE
 
-# Changelog configuration
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+nfpms:
+  - id: linux-packages
+    package_name: cloudmanager
+    ids:
+      - cloudmanager
+    vendor: vyoogam
+    homepage: https://github.com/vyoogam/cloudmanager
+    maintainer: vyoogam
+    description: Manage your cloud resources from the terminal.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+
+brews:
+  - name: cloudmanager
+    ids:
+      - default
+    repository:
+      owner: vyoogam
+      name: cloudmanager
+      branch: release/v1.0.0
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/vyoogam/cloudmanager
+    description: Manage your cloud resources from the terminal.
+    license: MIT
+    install: |
+      bin.install "cloudmanager"
+    test: |
+      system "#{bin}/cloudmanager", "--version"
+
 changelog:
+  use: github
   sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
   filters:
     exclude:
       - '^docs:'
       - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
 
-# Snapshot configuration
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next+{{ .ShortCommit }}"
 
-# Release configuration
 release:
   github:
     owner: vyoogam
@@ -51,3 +116,30 @@ release:
   draft: false
   prerelease: auto
   mode: replace
+  header: |
+    ## cloudmanager {{ .Version }}
+
+    ### Install
+
+    **macOS / Linux - Homebrew**
+
+    ```sh
+    brew tap vyoogam/cloudmanager https://github.com/vyoogam/cloudmanager
+    brew install cloudmanager
+    ```
+
+    **Linux - apt / yum**
+
+    Download the `.deb` or `.rpm` from the assets below.
+
+    **Direct download**
+
+    Grab the archive for your OS and architecture, extract it, and move the binary to your `$PATH`.
+
+    **Verify**
+
+    ```sh
+    sha256sum -c checksums.txt
+    ```
+  footer: |
+    **Full changelog**: https://github.com/vyoogam/cloudmanager/compare/{{ .PreviousTag }}...{{ .Tag }}

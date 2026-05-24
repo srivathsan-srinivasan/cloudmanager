@@ -209,6 +209,22 @@ Remaining build order:
   - Read-only inventory providers and action providers.
 - Plugins must declare capabilities, permissions, and mutation risk clearly.
 
+### React Web UI
+
+- Add an optional React UI for CloudManager setup and local inventory browsing.
+- Keep the TUI as the primary operator runtime; the React UI is for onboarding,
+  configuration, cached inventory review, plugin/component management, and docs.
+- Serve from a local CloudManager process first, backed by the same local SQLite
+  inventory and config paths.
+- Do not expose cloud credentials or provider mutations through the web UI
+  without explicit local-only binding and approval gates.
+- Initial views:
+  - setup and prerequisite checks
+  - provider/context login status
+  - cached resources and public endpoints
+  - component/plugin registry
+  - release/install diagnostics
+
 ### Component System
 
 CloudManager should support optional installable components, similar in spirit
