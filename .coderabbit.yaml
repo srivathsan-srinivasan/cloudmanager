@@ -1,0 +1,45 @@
+language: "en-US"
+
+reviews:
+  profile: "assertive"
+
+  request_changes_workflow: false
+
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+
+  auto_review:
+    enabled: true
+
+  path_filters:
+    - "!vendor/**"
+    - "!dist/**"
+    - "!node_modules/**"
+    - "!coverage/**"
+    - "!*.lock"
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+
+early_access: false
+
+tone_instructions: >
+  Prioritize:
+  - security issues
+  - infrastructure risks
+  - Terraform mistakes
+  - Kubernetes anti-patterns
+  - observability gaps
+  - Docker image bloat
+  - race conditions
+  - shell scripting safety
+  - GitHub Actions security
+
+  Avoid nitpicks unless they affect maintainability.
+
+  Focus on production reliability and DevOps best practices.
