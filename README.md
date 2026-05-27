@@ -185,9 +185,9 @@ Releases can be created from GitHub Actions:
 4. Enter a stable version such as `v1.0.0`.
 5. Run it from the release branch.
 
-The workflow runs tests, updates `VERSION`, the README install pin, and the
-Homebrew formula, commits the release bump, creates the tag, pushes it, and
-publishes GitHub release artifacts with GoReleaser.
+The workflow runs tests, updates `VERSION`, the README install pins,
+`scripts/install`, and the Homebrew formula, commits the release bump, creates
+the tag, pushes it, and publishes GitHub release artifacts with GoReleaser.
 
 Local releases are also supported:
 
@@ -196,9 +196,9 @@ scripts/release v1.0.0
 ```
 
 The script requires a clean worktree, runs `go test ./...`, updates `VERSION`,
-the pinned Go install command, and the Homebrew formula, commits the release
-bump, creates an annotated tag, then pushes the branch and tag. Pushing the tag
-triggers GoReleaser to publish GitHub release artifacts.
+the README install pins, `scripts/install`, and the Homebrew formula, commits
+the release bump, creates an annotated tag, then pushes the branch and tag.
+Pushing the tag triggers GoReleaser to publish GitHub release artifacts.
 
 ### Prerequisites
 CloudManager wraps the native CLI tools for the respective cloud providers. Ensure you have the following installed and authenticated if you intend to manage resources in those clouds:

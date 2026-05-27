@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/vyoogam/cloudmanager/internal/config"
 	"github.com/vyoogam/cloudmanager/internal/core"
 	"github.com/vyoogam/cloudmanager/internal/providers"
@@ -109,6 +110,33 @@ func TestKubernetesNodesCanBeShownWithToggle(t *testing.T) {
 	}
 	if !strings.Contains(next.statusMsg, "Showing Kubernetes") {
 		t.Fatalf("expected toggle status, got %q", next.statusMsg)
+	}
+}
+
+func TestRenderColorizesUnselectedVMStatuses(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previousProfile) })
+
+	cfg := config.AppConfig{VMColumns: []string{"Name", "State"}}
+	view := New(&cfg)
+	view.width = 100
+	view.height = 30
+	view.vmData = []core.VM{
+		{Name: "api", State: "running"},
+		{Name: "worker", State: "stopped"},
+		{Name: "old", State: "terminated"},
+	}
+
+	view.refreshTable()
+	view.syncVisibleRows()
+	view.vms.SetCursor(1)
+
+	rendered := view.Render()
+	for _, status := range []string{"running", "terminated"} {
+		if rendered == strings.ReplaceAll(rendered, ui.RenderStatus(status), status) {
+			t.Fatalf("expected rendered table to include colorized %s status, got:\n%q", status, rendered)
+		}
 	}
 }
 

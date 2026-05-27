@@ -56,10 +56,11 @@ jobs:
             GOCACHE="${GOCACHE:-/tmp/go-build-cache}" go test ./...
           fi
           printf '%s\n' "$version" > VERSION
-          VERSION="$version" perl -0pi -e 's/go install github\.com\/vyoogam\/cloudmanager\@v[0-9]+\.[0-9]+\.[0-9]+/go install github.com\/vyoogam\/cloudmanager\@v$ENV{VERSION}/g' README.md
+          VERSION="$version" perl -0pi -e 's#raw\.githubusercontent\.com/vyoogam/cloudmanager/v[0-9]+\.[0-9]+\.[0-9]+/scripts/install#raw.githubusercontent.com/vyoogam/cloudmanager/v$ENV{VERSION}/scripts/install#g; s#go install github\.com/vyoogam/cloudmanager\@v[0-9]+\.[0-9]+\.[0-9]+#go install github.com/vyoogam/cloudmanager@v$ENV{VERSION}#g' README.md
+          VERSION="$version" perl -0pi -e 's#CLOUDMANAGER_VERSION:-v[0-9]+\.[0-9]+\.[0-9]+#CLOUDMANAGER_VERSION:-v$ENV{VERSION}#g; s#--version v[0-9]+\.[0-9]+\.[0-9]+#--version v$ENV{VERSION}#g; s#Default: v[0-9]+\.[0-9]+\.[0-9]+#Default: v$ENV{VERSION}#g' scripts/install
           VERSION="$version" perl -0pi -e 's/tag:\s*"v[0-9]+\.[0-9]+\.[0-9]+"/tag: "v$ENV{VERSION}"/g; s/version\s+"[0-9]+\.[0-9]+\.[0-9]+"/version "$ENV{VERSION}"/g' Formula/cloudmanager.rb
           git diff --check
-          git add VERSION README.md Formula/cloudmanager.rb
+          git add VERSION README.md scripts/install Formula/cloudmanager.rb
           if ! git diff --cached --quiet; then
             git commit -m "release: ${tag}"
           fi
