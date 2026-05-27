@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   goreleaser:
@@ -55,22 +56,16 @@ jobs:
           if [[ "${{ inputs.skip_tests }}" != "true" ]]; then
             GOCACHE="${GOCACHE:-/tmp/go-build-cache}" go test ./...
           fi
-          printf '%s\n' "$version" > VERSION
-          VERSION="$version" perl -0pi -e 's#raw\.githubusercontent\.com/vyoogam/cloudmanager/v[0-9]+\.[0-9]+\.[0-9]+/scripts/install#raw.githubusercontent.com/vyoogam/cloudmanager/v$ENV{VERSION}/scripts/install#g; s#go install github\.com/vyoogam/cloudmanager\@v[0-9]+\.[0-9]+\.[0-9]+#go install github.com/vyoogam/cloudmanager@v$ENV{VERSION}#g' README.md
-          VERSION="$version" perl -0pi -e 's#CLOUDMANAGER_VERSION:-v[0-9]+\.[0-9]+\.[0-9]+#CLOUDMANAGER_VERSION:-v$ENV{VERSION}#g; s#--version v[0-9]+\.[0-9]+\.[0-9]+#--version v$ENV{VERSION}#g; s#Default: v[0-9]+\.[0-9]+\.[0-9]+#Default: v$ENV{VERSION}#g' scripts/install
-          VERSION="$version" perl -0pi -e 's/tag:\s*"v[0-9]+\.[0-9]+\.[0-9]+"/tag: "v$ENV{VERSION}"/g; s/version\s+"[0-9]+\.[0-9]+\.[0-9]+"/version "$ENV{VERSION}"/g' Formula/cloudmanager.rb
-          git diff --check
-          git add VERSION README.md scripts/install Formula/cloudmanager.rb
-          if ! git diff --cached --quiet; then
-            git commit -m "release: ${tag}"
-          fi
+          test "$(cat VERSION)" = "$version"
+          grep -q "raw.githubusercontent.com/vyoogam/cloudmanager/${tag}/scripts/install" README.md
+          grep -q "go install github.com/vyoogam/cloudmanager@${tag}" README.md
+          grep -q "CLOUDMANAGER_VERSION:-${tag}" scripts/install
+          grep -q -- "--version ${tag}" scripts/install
           git tag -a "$tag" -m "$tag"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
           git push origin "$tag"
 
-      # The Homebrew formula in this repository is bumped by scripts/release or
-      # by the manual workflow before the tag is created. A separate generated
-      # tap can be added later if we split packaging into vyoogam/homebrew-cloudmanager.
+      # The Homebrew formula needs release artifact checksums, so GoReleaser
+      # opens a formula PR instead of pushing to the protected release branch.
 
       # TODO(packaging): Add Apt / Debian package repository configuration
       # Setup NFPM in .goreleaser.yaml to generate .deb, then push to PPA or custom repo
@@ -81,10 +76,11 @@ jobs:
       # TODO(packaging): Add Snapcraft publishing configuration
 
       - name: Run GoReleaser
+        if: github.event_name == 'push'
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
-          version: '~> v2'
+          version: 'v2.9.0'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

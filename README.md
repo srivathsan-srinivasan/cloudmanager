@@ -135,7 +135,7 @@ terminal workflow, active context, audit path, and provider-aware guardrails.
 Fast install:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.0/scripts/install | sh
+curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.2/scripts/install | sh
 ```
 
 The installer prefers a prebuilt GitHub Release artifact. If no artifact exists
@@ -144,13 +144,13 @@ for the requested OS/architecture yet, it falls back to `go install`.
 To force a source build and let Homebrew install Go when Go is missing:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.0/scripts/install | sh -s -- --source --install-go
+curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.2/scripts/install | sh -s -- --source --install-go
 ```
 
 Go install fallback:
 
 ```bash
-go install github.com/vyoogam/cloudmanager@v1.0.0
+go install github.com/vyoogam/cloudmanager@v1.0.2
 ```
 
 `go install` builds from source using the user's Go toolchain. It does not use
@@ -177,28 +177,25 @@ installed, Homebrew installs it as a build dependency. The formula sets
 
 ### Release Automation
 
-Releases can be created from GitHub Actions:
+Protected release branches use a two-step release:
 
-1. Open **Actions** in GitHub.
-2. Select **Release Go Module**.
-3. Click **Run workflow**.
-4. Enter a stable version such as `v1.0.0`.
-5. Run it from the release branch.
+1. Prepare a release PR from a branch:
 
-The workflow runs tests, updates `VERSION`, the README install pins,
-`scripts/install`, and the Homebrew formula, commits the release bump, creates
-the tag, pushes it, and publishes GitHub release artifacts with GoReleaser.
+   ```bash
+   scripts/release v1.0.2 --push
+   ```
 
-Local releases are also supported:
+2. Merge the PR into the protected release branch.
+3. Open **Actions** in GitHub.
+4. Select **Release Go Module**.
+5. Click **Run workflow**.
+6. Enter the same stable version, such as `v1.0.2`.
+7. Run it from the protected release branch.
 
-```bash
-scripts/release v1.0.0
-```
-
-The script requires a clean worktree, runs `go test ./...`, updates `VERSION`,
-the README install pins, `scripts/install`, and the Homebrew formula, commits
-the release bump, creates an annotated tag, then pushes the branch and tag.
-Pushing the tag triggers GoReleaser to publish GitHub release artifacts.
+The workflow runs tests, verifies the merged release pins, creates the annotated
+tag, and pushes only the tag. The tag push triggers GoReleaser to publish
+GitHub release artifacts. GoReleaser opens a PR for the generated Homebrew
+formula because that file needs release artifact checksums.
 
 ### Prerequisites
 CloudManager wraps the native CLI tools for the respective cloud providers. Ensure you have the following installed and authenticated if you intend to manage resources in those clouds:

@@ -3,19 +3,21 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/release <version> [--no-push] [--skip-tests]
+Usage: scripts/release <version> [--push] [--no-push] [--skip-tests]
 
 Examples:
-  scripts/release v1.0.0
-  scripts/release 1.0.0 --no-push
+  scripts/release v1.0.2
+  scripts/release 1.0.2 --push
 
 This script:
   - requires a clean worktree
   - runs go test ./...
-  - updates VERSION, README install pins, scripts/install default, and Formula/cloudmanager.rb
+  - updates VERSION, README install pins, and scripts/install default
   - commits the release bump
-  - creates an annotated tag
-  - pushes the current branch and tag unless --no-push is passed
+  - optionally pushes the current branch for a pull request
+
+After the release prep PR is merged, run the Release Go Module workflow from the
+protected release branch. It validates the pins and creates the tag.
 USAGE
 }
 
@@ -25,7 +27,7 @@ if [[ $# -lt 1 ]]; then
 fi
 
 raw_version=""
-push_release=1
+push_release=0
 run_tests=1
 
 for arg in "$@"; do
@@ -36,6 +38,9 @@ for arg in "$@"; do
       ;;
     --no-push)
       push_release=0
+      ;;
+    --push)
+      push_release=1
       ;;
     --skip-tests)
       run_tests=0
@@ -70,19 +75,14 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 if [[ -n "$(git status --porcelain)" ]]; then
-  echo "release: worktree must be clean before cutting ${tag}" >&2
+  echo "release: worktree must be clean before preparing ${tag}" >&2
   git status --short
-  exit 1
-fi
-
-if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-  echo "release: local tag ${tag} already exists" >&2
   exit 1
 fi
 
 branch="$(git branch --show-current)"
 if [[ -z "$branch" ]]; then
-  echo "release: cannot release from detached HEAD" >&2
+  echo "release: cannot prepare release from detached HEAD" >&2
   exit 1
 fi
 
@@ -94,18 +94,18 @@ printf '%s\n' "$version" > VERSION
 
 VERSION="$version" perl -0pi -e 's#raw\.githubusercontent\.com/vyoogam/cloudmanager/v[0-9]+\.[0-9]+\.[0-9]+/scripts/install#raw.githubusercontent.com/vyoogam/cloudmanager/v$ENV{VERSION}/scripts/install#g; s#go install github\.com/vyoogam/cloudmanager\@v[0-9]+\.[0-9]+\.[0-9]+#go install github.com/vyoogam/cloudmanager@v$ENV{VERSION}#g' README.md
 VERSION="$version" perl -0pi -e 's#CLOUDMANAGER_VERSION:-v[0-9]+\.[0-9]+\.[0-9]+#CLOUDMANAGER_VERSION:-v$ENV{VERSION}#g; s#--version v[0-9]+\.[0-9]+\.[0-9]+#--version v$ENV{VERSION}#g; s#Default: v[0-9]+\.[0-9]+\.[0-9]+#Default: v$ENV{VERSION}#g' scripts/install
-VERSION="$version" perl -0pi -e 's/tag:\s*"v[0-9]+\.[0-9]+\.[0-9]+"/tag: "v$ENV{VERSION}"/g; s/version\s+"[0-9]+\.[0-9]+\.[0-9]+"/version "$ENV{VERSION}"/g' Formula/cloudmanager.rb
 
 git diff --check
-git add VERSION README.md scripts/install Formula/cloudmanager.rb
-git commit -m "release: ${tag}"
-git tag -a "$tag" -m "$tag"
+git add VERSION README.md scripts/install
+if git diff --cached --quiet; then
+  echo "release: ${tag} pins are already prepared"
+else
+  git commit -m "release: ${tag}"
+fi
 
 if [[ "$push_release" -eq 1 ]]; then
   git push origin "$branch"
-  git push origin "$tag"
 else
-  echo "release: created ${tag} locally; push with:"
+  echo "release: prepared ${tag}; push the PR branch with:"
   echo "  git push origin ${branch}"
-  echo "  git push origin ${tag}"
 fi
