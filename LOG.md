@@ -2,6 +2,16 @@
 
 ## 2026-05-27
 
+### Update
+
+- Adapted the v1.0.2 release path for protected release branches after GitHub rejected the workflow's direct push to `release/v1.0.0`.
+- The manual release workflow now validates already-merged version pins and pushes only the annotated tag; GoReleaser runs only on the tag workflow.
+- GoReleaser now opens a Homebrew formula PR from `formula/cloudmanager-{{ .Version }}` instead of pushing formula updates directly to the protected release branch.
+- The workflow pins GoReleaser to `v2.9.0` so the existing formula publisher remains valid; newer v2 releases now fail `check` on deprecated `brews`.
+- `scripts/release` is now a release-prep helper for PR branches: it updates `VERSION`, README install pins, and `scripts/install`, commits them, and optionally pushes the PR branch.
+- Bumped the release-prep pins to `v1.0.2`; left `Formula/cloudmanager.rb` at `v1.0.0` because generated formula checksums must come from GoReleaser after artifacts exist.
+- Validation: `bash -n scripts/release`; `bash -n scripts/install`; `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".goreleaser.yaml"); puts "yaml ok"'`; `git diff --check`; `go run github.com/goreleaser/goreleaser/v2@v2.9.0 check`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
 ### User Request Handled
 
 - Prepare the next release path for `v1.0.2` after confirming the installed `v1.0.1` binary does not include VM status colorization.
