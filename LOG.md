@@ -1,5 +1,30 @@
 # LOG
 
+## 2026-05-27
+
+### User Request Handled
+
+- Prepare the next release path for `v1.0.2` after confirming the installed `v1.0.1` binary does not include VM status colorization.
+
+### Key Code And Release Changes
+
+1. Added a VM viewport regression test proving unselected `running` and `terminated` rows render with status colors when terminal color output is enabled.
+2. Fixed release automation so `scripts/release` and the manual GitHub Actions workflow update README curl pins plus `scripts/install`, not only the Go install pin and formula.
+3. Updated release docs to mention the installer default is part of release pinning.
+
+### Validation Performed
+
+- `bash -n scripts/release`
+- `bash -n scripts/install`
+- `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); puts "workflow yaml ok"'`
+- `git diff --check`
+- `GOCACHE=/tmp/go-build-cache go test ./...`
+
+### Remaining Risks Or Follow-Up
+
+1. Open and merge the PR from `release/v1.0.2-prep`.
+2. After merge, run the manual **Release Go Module** workflow with `v1.0.2` from the release branch so the tag and real GoReleaser artifacts/checksums are created.
+
 ## 2026-05-23
 
 ### Update
