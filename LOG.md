@@ -13,6 +13,7 @@
 - Added first-run regressions for manual profile add and discovery import creating `.cloudmanager.json` and selecting the current context.
 - Cleaned profile/discovery list descriptions so first-run GCP profiles no longer show empty boilerplate like `auth=-`, `tenant=-`, or `regions=global`; plain GCP native CLI contexts now render as `native CLI`.
 - Polished profile onboarding/editing: the footer no longer advertises Azure-specific import as a primary action, the add/edit form is provider-aware, new profiles no longer default to AWS/us-east-1, GCP shows only project basics, AWS shows profile/regions, Azure shows tenant, and hidden auth mode/persistence are preserved when editing.
+- Added `scripts/check-credentials` for lightweight provider credential checks, including GCP CLI token, ADC token, active project access, and optional CloudManager smoke tests.
 - Validation: `bash -n scripts/release`; `bash -n scripts/install`; `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".goreleaser.yaml"); puts "yaml ok"'`; `git diff --check`; `go run github.com/goreleaser/goreleaser/v2@v2.9.0 check`; `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
 
 ### Update

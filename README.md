@@ -228,6 +228,21 @@ scripts/install-prereqs --install --core --cloud
 scripts/install-prereqs --update --all
 ```
 
+To check whether installed provider credentials are still usable:
+
+```bash
+scripts/check-credentials --gcp
+scripts/check-credentials --gcp --smoke
+```
+
+For GCP, CLI mode uses the active `gcloud` account. SDK mode first uses
+Application Default Credentials, then falls back to the active `gcloud` token
+where supported. If SDK mode keeps asking you to log in, refresh ADC:
+
+```bash
+gcloud auth application-default login
+```
+
 The script supports Homebrew first-class on macOS and best-effort `apt` installs
 on Linux. It never runs login flows; authenticate through CloudManager `:login`
 or the native CLIs after installation.
