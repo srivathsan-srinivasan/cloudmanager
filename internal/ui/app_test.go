@@ -1700,6 +1700,56 @@ func TestAddProviderCommandOpensManagedContextForm(t *testing.T) {
 	}
 }
 
+func TestCredentialDescriptionsOmitEmptyBoilerplate(t *testing.T) {
+	gcp := credentialItem{ctx: config.SanitizeManagedCloudContext(config.ManagedCloudContext{
+		ContextName: "augment1",
+		Provider:    "GCP",
+		AccountID:   "augment1",
+		AccountName: "augment1",
+		Regions:     []string{"global"},
+	})}
+	if got := gcp.Description(); got != "native CLI" {
+		t.Fatalf("expected compact GCP description, got %q", got)
+	}
+
+	aws := credentialItem{ctx: config.SanitizeManagedCloudContext(config.ManagedCloudContext{
+		ContextName:       "prod",
+		Provider:          "AWS",
+		AccountID:         "1111",
+		AccountName:       "Production",
+		CredentialProfile: "prod-admin",
+		Regions:           []string{"us-east-1", "global", "us-west-2"},
+	})}
+	got := aws.Description()
+	for _, want := range []string{"target=1111 (Production)", "auth=prod-admin", "regions=us-east-1,us-west-2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in AWS description %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"tenant=-", "auth=-", "regions=global", "mode=native-cli", "persist=native-cli"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("did not expect %q in AWS description %q", unwanted, got)
+		}
+	}
+}
+
+func TestDiscoveryDescriptionsOmitEmptyBoilerplate(t *testing.T) {
+	item := discoveryContextItem{ctx: core.CloudContext{
+		Provider:    "GCP",
+		ContextName: "augment1",
+		AccountID:   "augment1",
+		AccountName: "augment1",
+		Region:      "global",
+	}}
+	got := item.Description()
+	if got != "account=augment1" {
+		t.Fatalf("expected compact discovery description, got %q", got)
+	}
+	if strings.Contains(got, "tenant=-") || strings.Contains(got, "auth=-") || strings.Contains(got, "region=global") {
+		t.Fatalf("description still has empty boilerplate: %q", got)
+	}
+}
+
 func TestCredentialEditSavesAuthModeAndPersistence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

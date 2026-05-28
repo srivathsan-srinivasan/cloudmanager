@@ -340,17 +340,33 @@ func (i credentialItem) Title() string {
 	return fmt.Sprintf("%s %s  %s", current, strings.TrimSpace(i.ctx.Provider), name)
 }
 func (i credentialItem) Description() string {
-	auth := strings.TrimSpace(i.ctx.CredentialProfile)
-	if auth == "" {
-		auth = "-"
+	var parts []string
+	name := strings.TrimSpace(i.ctx.ContextName)
+	target := managedContextLabel(i.ctx)
+	if target != "" && target != "unnamed" && !strings.EqualFold(target, name) {
+		parts = append(parts, "target="+target)
 	}
 	mode := config.SanitizeAuthMode(i.ctx.AuthMode)
 	persistence := config.SanitizeCredentialPersistence(i.ctx.CredentialPersistence, mode)
-	regions := strings.Join(i.ctx.Regions, ",")
-	if regions == "" {
-		regions = "-"
+	if mode != config.AuthModeNativeCLI {
+		parts = append(parts, "mode="+mode)
 	}
-	return fmt.Sprintf("target=%s mode=%s persist=%s auth=%s tenant=%s regions=%s", managedContextLabel(i.ctx), mode, persistence, auth, orFallback(i.ctx.Tenant, "-"), regions)
+	if persistence != config.CredentialPersistenceNativeCLI {
+		parts = append(parts, "persist="+persistence)
+	}
+	if auth := strings.TrimSpace(i.ctx.CredentialProfile); auth != "" {
+		parts = append(parts, "auth="+auth)
+	}
+	if tenant := strings.TrimSpace(i.ctx.Tenant); tenant != "" {
+		parts = append(parts, "tenant="+tenant)
+	}
+	if regions := meaningfulRegions(i.ctx.Regions); regions != "" {
+		parts = append(parts, "regions="+regions)
+	}
+	if len(parts) == 0 {
+		return "native CLI"
+	}
+	return strings.Join(parts, " ")
 }
 func (i credentialItem) FilterValue() string { return i.Title() + " " + i.Description() }
 
@@ -396,7 +412,26 @@ func (i discoveryContextItem) Title() string {
 	return fmt.Sprintf("%s %s  %s%s", marker, i.ctx.Provider, i.ctx.DisplayName(), existing)
 }
 func (i discoveryContextItem) Description() string {
-	return fmt.Sprintf("context=%s account=%s tenant=%s region=%s auth=%s", orFallback(i.ctx.ContextName, "-"), orFallback(i.ctx.AccountID, "-"), orFallback(i.ctx.Tenant, "-"), orFallback(i.ctx.Region, "-"), orFallback(i.ctx.AuthRef(), "-"))
+	var parts []string
+	if contextName := strings.TrimSpace(i.ctx.ContextName); contextName != "" && !strings.EqualFold(contextName, i.ctx.DisplayName()) {
+		parts = append(parts, "context="+contextName)
+	}
+	if account := strings.TrimSpace(i.ctx.AccountID); account != "" {
+		parts = append(parts, "account="+account)
+	}
+	if tenant := strings.TrimSpace(i.ctx.Tenant); tenant != "" {
+		parts = append(parts, "tenant="+tenant)
+	}
+	if region := strings.TrimSpace(i.ctx.Region); region != "" && !strings.EqualFold(region, "global") {
+		parts = append(parts, "region="+region)
+	}
+	if auth := strings.TrimSpace(i.ctx.CredentialProfile); auth != "" {
+		parts = append(parts, "auth="+auth)
+	}
+	if len(parts) == 0 {
+		return "native CLI"
+	}
+	return strings.Join(parts, " ")
 }
 func (i discoveryContextItem) FilterValue() string {
 	return strings.Join([]string{i.ctx.Provider, i.ctx.ContextName, i.ctx.AccountName, i.ctx.AccountID, i.ctx.Tenant, i.ctx.Region, i.ctx.AuthRef()}, " ")
@@ -4163,6 +4198,18 @@ func managedContextLabel(ctx config.ManagedCloudContext) string {
 		return ctx.AccountName
 	}
 	return "unnamed"
+}
+
+func meaningfulRegions(regions []string) string {
+	var kept []string
+	for _, region := range regions {
+		region = strings.TrimSpace(region)
+		if region == "" || strings.EqualFold(region, "global") {
+			continue
+		}
+		kept = append(kept, region)
+	}
+	return strings.Join(kept, ",")
 }
 
 func (a App) handleGlobalSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

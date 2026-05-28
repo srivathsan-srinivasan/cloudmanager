@@ -11,6 +11,7 @@
 - Added `docs/RELEASE.md` with the branch model, patch release flow, branch protection rules, and one-time `release/v1` creation step.
 - Fixed first-run profile/discovery persistence by resetting Viper before each config load, preventing stale in-process config state from leaking across homes/config paths.
 - Added first-run regressions for manual profile add and discovery import creating `.cloudmanager.json` and selecting the current context.
+- Cleaned profile/discovery list descriptions so first-run GCP profiles no longer show empty boilerplate like `auth=-`, `tenant=-`, or `regions=global`; plain GCP native CLI contexts now render as `native CLI`.
 - Validation: `bash -n scripts/release`; `bash -n scripts/install`; `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".goreleaser.yaml"); puts "yaml ok"'`; `git diff --check`; `go run github.com/goreleaser/goreleaser/v2@v2.9.0 check`; `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
 
 ### Update
