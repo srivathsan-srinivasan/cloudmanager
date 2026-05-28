@@ -2139,7 +2139,7 @@ func (a App) renderCredentialsView() string {
 		body = a.renderCredentialForm()
 	}
 	mainView := a.renderShellPane(body, true)
-	keys := "a:Add e:Edit u:Use l:Login z:Azure d:Remove r:Discover b:Backup Esc:Back"
+	keys := "r:Discover a:Add e:Edit u:Use l:Login d:Remove p:Provider login b:Backup Esc:Back"
 	if a.confirmCredentialDelete {
 		keys = "y:Confirm remove n/Esc:Cancel"
 	}
@@ -2189,17 +2189,61 @@ func (a App) renderHostFormView() string {
 }
 
 func (a App) renderCredentialForm() string {
-	labels := []string{"Context Name", "Provider", "Account ID", "Account Name", "Tenant", "Auth Mode", "Persistence", "Credential Ref", "Regions"}
-	lines := []string{TitleStyle.Render("Managed Context")}
-	for i, input := range a.credentialInputs {
+	labels := credentialFormLabels(a.credentialFormProvider())
+	lines := []string{TitleStyle.Render(credentialFormTitle(a.credentialEditIndex))}
+	for _, i := range a.visibleCredentialFieldIndices() {
+		if i < 0 || i >= len(a.credentialInputs) {
+			continue
+		}
+		input := a.credentialInputs[i]
 		label := labels[i]
 		if i == a.credentialInputFocus {
 			label = lipgloss.NewStyle().Foreground(Special).Bold(true).Render(label)
 		}
 		lines = append(lines, fmt.Sprintf("%s\n%s", label, input.View()))
 	}
-	lines = append(lines, StatusLineStyle.Render("Tab/Shift+Tab: Field • Enter: Save • Esc: Cancel"))
+	lines = append(lines,
+		lipgloss.NewStyle().Foreground(Subtle).Render(credentialFormHint(a.credentialFormProvider())),
+		StatusLineStyle.Render("Tab/Shift+Tab: Field • Enter: Save • Esc: Cancel"),
+	)
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(lines, "\n\n"))
+}
+
+func credentialFormTitle(index int) string {
+	if index >= 0 {
+		return "Edit Profile"
+	}
+	return "Add Profile"
+}
+
+func credentialFormLabels(provider string) []string {
+	switch providers.NormalizeProviderName(provider) {
+	case "AWS":
+		return []string{"Name", "Provider", "AWS Account ID", "Account Name", "Tenant", "AWS Profile", "Regions"}
+	case "Azure":
+		return []string{"Name", "Provider", "Subscription ID", "Subscription Name", "Tenant", "Credential Ref", "Regions"}
+	case "GCP":
+		return []string{"Name", "Provider", "Project ID", "Project Name", "Tenant", "Credential Ref", "Regions"}
+	case "DigitalOcean":
+		return []string{"Name", "Provider", "Account ID", "Account Name", "Tenant", "Credential Ref", "Regions"}
+	default:
+		return []string{"Name", "Provider", "Account / Project / Subscription ID", "Display Name", "Tenant", "Credential Ref", "Regions"}
+	}
+}
+
+func credentialFormHint(provider string) string {
+	switch providers.NormalizeProviderName(provider) {
+	case "GCP":
+		return "GCP SDK uses ADC; CLI mode uses the active gcloud account."
+	case "AWS":
+		return "AWS profile is optional; leave blank to use the default AWS chain."
+	case "Azure":
+		return "Azure subscriptions are easiest via Discover or Import Azure subscriptions."
+	case "DigitalOcean":
+		return "DigitalOcean uses doctl auth for native CLI credentials."
+	default:
+		return "Provider examples: AWS, GCP, Azure, DigitalOcean."
+	}
 }
 
 func (a App) renderGlobalSearchView() string {
@@ -3679,10 +3723,8 @@ func (a *App) startCredentialEdit(index int) {
 	a.credentialEditIndex = index
 	a.credentialInputFocus = 0
 	ctx := config.ManagedCloudContext{
-		Provider:              "AWS",
 		AuthMode:              config.AuthModeNativeCLI,
 		CredentialPersistence: config.CredentialPersistenceNativeCLI,
-		Regions:               []string{"us-east-1"},
 	}
 	if index >= 0 && index < len(a.cfg.CloudContexts) {
 		ctx = config.SanitizeManagedCloudContext(a.cfg.CloudContexts[index])
@@ -3693,20 +3735,16 @@ func (a *App) startCredentialEdit(index int) {
 		ctx.AccountID,
 		ctx.AccountName,
 		ctx.Tenant,
-		config.SanitizeAuthMode(ctx.AuthMode),
-		config.SanitizeCredentialPersistence(ctx.CredentialPersistence, ctx.AuthMode),
 		ctx.CredentialProfile,
 		strings.Join(ctx.Regions, ","),
 	}
 	placeholders := []string{
-		"eng",
+		"prod, augment1, dreamr2",
 		"AWS/GCP/Azure/DigitalOcean",
-		"account/project/subscription id",
+		"project/subscription/account id",
 		"display name",
-		"tenant id or domain",
-		"native-cli | jit-session | awsume | vault | manual",
-		"memory | keychain | native-cli | vault | none",
-		"profile/auth reference",
+		"Azure tenant id or domain",
+		"AWS profile or provider auth ref",
 		"us-east-1,us-west-2",
 	}
 	a.credentialInputs = make([]textinput.Model, len(values))
@@ -3720,7 +3758,12 @@ func (a *App) startCredentialEdit(index int) {
 		}
 		a.credentialInputs[i] = input
 	}
-	a.statusMsg = "Editing managed context. Auth modes: native-cli, jit-session, awsume, vault, manual."
+	a.normalizeCredentialFocus()
+	if index >= 0 {
+		a.statusMsg = "Editing profile. Only provider-relevant fields are shown."
+	} else {
+		a.statusMsg = "Adding profile. Tip: :discover is usually faster for cloud contexts."
+	}
 }
 
 func (a App) handleCredentialFormKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -3740,6 +3783,7 @@ func (a App) handleCredentialFormKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	a.credentialInputs[a.credentialInputFocus], cmd = a.credentialInputs[a.credentialInputFocus].Update(msg)
+	a.normalizeCredentialFocus()
 	return a, cmd
 }
 
@@ -3747,22 +3791,77 @@ func (a *App) moveCredentialFocus(delta int) {
 	if len(a.credentialInputs) == 0 {
 		return
 	}
+	visible := a.visibleCredentialFieldIndices()
+	if len(visible) == 0 {
+		return
+	}
+	current := 0
+	for i, idx := range visible {
+		if idx == a.credentialInputFocus {
+			current = i
+			break
+		}
+	}
 	a.credentialInputs[a.credentialInputFocus].Blur()
-	a.credentialInputFocus = (a.credentialInputFocus + delta + len(a.credentialInputs)) % len(a.credentialInputs)
+	a.credentialInputFocus = visible[(current+delta+len(visible))%len(visible)]
 	a.credentialInputs[a.credentialInputFocus].Focus()
 }
 
+func (a *App) normalizeCredentialFocus() {
+	if len(a.credentialInputs) == 0 {
+		return
+	}
+	visible := a.visibleCredentialFieldIndices()
+	for _, idx := range visible {
+		if idx == a.credentialInputFocus {
+			return
+		}
+	}
+	a.credentialInputs[a.credentialInputFocus].Blur()
+	a.credentialInputFocus = visible[0]
+	a.credentialInputs[a.credentialInputFocus].Focus()
+}
+
+func (a App) visibleCredentialFieldIndices() []int {
+	base := []int{0, 1, 2, 3}
+	switch providers.NormalizeProviderName(a.credentialFormProvider()) {
+	case "AWS":
+		return append(base, 5, 6)
+	case "Azure":
+		return append(base, 4)
+	default:
+		return base
+	}
+}
+
+func (a App) credentialFormProvider() string {
+	if len(a.credentialInputs) > 1 {
+		return strings.TrimSpace(a.credentialInputs[1].Value())
+	}
+	if a.credentialEditIndex >= 0 && a.credentialEditIndex < len(a.cfg.CloudContexts) {
+		return a.cfg.CloudContexts[a.credentialEditIndex].Provider
+	}
+	return ""
+}
+
 func (a App) saveCredentialEdit() (App, tea.Cmd) {
+	authMode := config.AuthModeNativeCLI
+	persistence := config.CredentialPersistenceNativeCLI
+	if a.credentialEditIndex >= 0 && a.credentialEditIndex < len(a.cfg.CloudContexts) {
+		existing := config.SanitizeManagedCloudContext(a.cfg.CloudContexts[a.credentialEditIndex])
+		authMode = existing.AuthMode
+		persistence = existing.CredentialPersistence
+	}
 	managed := config.ManagedCloudContext{
 		ContextName:           strings.TrimSpace(a.credentialInputs[0].Value()),
 		Provider:              strings.TrimSpace(a.credentialInputs[1].Value()),
 		AccountID:             strings.TrimSpace(a.credentialInputs[2].Value()),
 		AccountName:           strings.TrimSpace(a.credentialInputs[3].Value()),
 		Tenant:                strings.TrimSpace(a.credentialInputs[4].Value()),
-		AuthMode:              strings.TrimSpace(a.credentialInputs[5].Value()),
-		CredentialPersistence: strings.TrimSpace(a.credentialInputs[6].Value()),
-		CredentialProfile:     strings.TrimSpace(a.credentialInputs[7].Value()),
-		Regions:               splitCSV(a.credentialInputs[8].Value()),
+		AuthMode:              authMode,
+		CredentialPersistence: persistence,
+		CredentialProfile:     strings.TrimSpace(a.credentialInputs[5].Value()),
+		Regions:               splitCSV(a.credentialInputs[6].Value()),
 	}
 	managed = config.SanitizeManagedCloudContext(managed)
 	if managed.Provider == "" || (managed.AccountID == "" && managed.AccountName == "") {

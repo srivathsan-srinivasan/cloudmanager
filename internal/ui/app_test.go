@@ -27,6 +27,18 @@ type mockView struct {
 	searchQuery      string
 }
 
+func equalInts(left, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *mockView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
 	m.Resize(width, height, showSidebar)
 	return nil
@@ -1668,7 +1680,7 @@ func TestCredentialEditBacksUpAndUpdatesManagedContext(t *testing.T) {
 	app.openCredentials()
 	app.startCredentialEdit(0)
 	app.credentialInputs[3].SetValue("prod")
-	app.credentialInputs[7].SetValue("prod-profile")
+	app.credentialInputs[5].SetValue("prod-profile")
 
 	updated, _ := app.saveCredentialEdit()
 
@@ -1692,11 +1704,34 @@ func TestAddProviderCommandOpensManagedContextForm(t *testing.T) {
 	if !updated.showCredentials || !updated.editCredential {
 		t.Fatalf("expected add-provider to open credential form, showCredentials=%t edit=%t", updated.showCredentials, updated.editCredential)
 	}
-	if len(updated.credentialInputs) != 9 {
-		t.Fatalf("expected auth-aware provider form, got %d inputs", len(updated.credentialInputs))
+	if len(updated.credentialInputs) != 7 {
+		t.Fatalf("expected simplified provider form, got %d inputs", len(updated.credentialInputs))
 	}
-	if got := updated.credentialInputs[5].Value(); got != config.AuthModeNativeCLI {
-		t.Fatalf("expected native-cli default auth mode, got %q", got)
+	if got := strings.Join(credentialFormLabels("GCP"), "|"); !strings.Contains(got, "Project ID") {
+		t.Fatalf("expected provider-aware labels, got %q", got)
+	}
+}
+
+func TestCredentialFormShowsOnlyProviderRelevantFields(t *testing.T) {
+	app := NewApp(config.AppConfig{}, "1.0.0", "today")
+	app.startCredentialEdit(-1)
+	if got := app.visibleCredentialFieldIndices(); !equalInts(got, []int{0, 1, 2, 3}) {
+		t.Fatalf("expected unknown provider to show basics, got %+v", got)
+	}
+
+	app.credentialInputs[1].SetValue("GCP")
+	if got := app.visibleCredentialFieldIndices(); !equalInts(got, []int{0, 1, 2, 3}) {
+		t.Fatalf("expected GCP to show project basics only, got %+v", got)
+	}
+
+	app.credentialInputs[1].SetValue("AWS")
+	if got := app.visibleCredentialFieldIndices(); !equalInts(got, []int{0, 1, 2, 3, 5, 6}) {
+		t.Fatalf("expected AWS to show profile and regions, got %+v", got)
+	}
+
+	app.credentialInputs[1].SetValue("Azure")
+	if got := app.visibleCredentialFieldIndices(); !equalInts(got, []int{0, 1, 2, 3, 4}) {
+		t.Fatalf("expected Azure to show tenant, got %+v", got)
 	}
 }
 
@@ -1750,24 +1785,31 @@ func TestDiscoveryDescriptionsOmitEmptyBoilerplate(t *testing.T) {
 	}
 }
 
-func TestCredentialEditSavesAuthModeAndPersistence(t *testing.T) {
+func TestCredentialEditPreservesHiddenAuthModeAndPersistence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	cfg := config.AppConfig{Backend: "cli"}
+	cfg := config.AppConfig{
+		Backend: "cli",
+		CloudContexts: []config.ManagedCloudContext{{
+			ContextName:           "prod-aws",
+			Provider:              "AWS",
+			AccountID:             "1111",
+			AccountName:           "prod",
+			AuthMode:              config.AuthModeAWSume,
+			CredentialPersistence: config.CredentialPersistenceMemory,
+			CredentialProfile:     "prod-admin",
+			Regions:               []string{"us-east-1"},
+		}},
+	}
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 
 	app := NewApp(cfg, "1.0.0", "today")
-	app.startCredentialEdit(-1)
-	app.credentialInputs[0].SetValue("prod-aws")
-	app.credentialInputs[1].SetValue("AWS")
-	app.credentialInputs[2].SetValue("1111")
-	app.credentialInputs[3].SetValue("prod")
-	app.credentialInputs[5].SetValue(config.AuthModeAWSume)
-	app.credentialInputs[6].SetValue(config.CredentialPersistenceMemory)
-	app.credentialInputs[7].SetValue("prod-admin")
-	app.credentialInputs[8].SetValue("us-east-1")
+	app.startCredentialEdit(0)
+	app.credentialInputs[3].SetValue("prod-renamed")
+	app.credentialInputs[5].SetValue("prod-admin-2")
+	app.credentialInputs[6].SetValue("us-east-1,us-west-2")
 
 	updated, _ := app.saveCredentialEdit()
 
@@ -1776,7 +1818,10 @@ func TestCredentialEditSavesAuthModeAndPersistence(t *testing.T) {
 	}
 	got := updated.cfg.CloudContexts[0]
 	if got.AuthMode != config.AuthModeAWSume || got.CredentialPersistence != config.CredentialPersistenceMemory {
-		t.Fatalf("expected awsume/memory auth metadata, got %+v", got)
+		t.Fatalf("expected hidden awsume/memory auth metadata to be preserved, got %+v", got)
+	}
+	if got.CredentialProfile != "prod-admin-2" || strings.Join(got.Regions, ",") != "us-east-1,us-west-2" {
+		t.Fatalf("expected visible fields to update, got %+v", got)
 	}
 }
 
@@ -1791,8 +1836,8 @@ func TestFirstRunCredentialEditCreatesConfigAndCurrentContext(t *testing.T) {
 	app.credentialInputs[1].SetValue("AWS")
 	app.credentialInputs[2].SetValue("1111")
 	app.credentialInputs[3].SetValue("prod")
-	app.credentialInputs[7].SetValue("prod-admin")
-	app.credentialInputs[8].SetValue("us-east-1")
+	app.credentialInputs[5].SetValue("prod-admin")
+	app.credentialInputs[6].SetValue("us-east-1")
 
 	updated, _ := app.saveCredentialEdit()
 	loaded := config.Load()
