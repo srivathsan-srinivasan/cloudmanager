@@ -1730,6 +1730,34 @@ func TestCredentialEditSavesAuthModeAndPersistence(t *testing.T) {
 	}
 }
 
+func TestFirstRunCredentialEditCreatesConfigAndCurrentContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := config.Load()
+
+	app := NewApp(cfg, "1.0.0", "today")
+	app.startCredentialEdit(-1)
+	app.credentialInputs[0].SetValue("prod-aws")
+	app.credentialInputs[1].SetValue("AWS")
+	app.credentialInputs[2].SetValue("1111")
+	app.credentialInputs[3].SetValue("prod")
+	app.credentialInputs[7].SetValue("prod-admin")
+	app.credentialInputs[8].SetValue("us-east-1")
+
+	updated, _ := app.saveCredentialEdit()
+	loaded := config.Load()
+
+	if len(updated.cfg.CloudContexts) != 1 || len(loaded.CloudContexts) != 1 {
+		t.Fatalf("expected first-run profile to persist, updated=%+v loaded=%+v", updated.cfg.CloudContexts, loaded.CloudContexts)
+	}
+	if updated.cfg.CurrentContext != "prod-aws" || loaded.CurrentContext != "prod-aws" {
+		t.Fatalf("expected first-run profile to become current, updated=%q loaded=%q", updated.cfg.CurrentContext, loaded.CurrentContext)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cloudmanager.json")); err != nil {
+		t.Fatalf("expected first-run config file to be created: %v", err)
+	}
+}
+
 func TestUseSelectedCredentialSetsCurrentContext(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -1935,6 +1963,37 @@ func TestDiscoveryPickerDefaultsUnselectedAndImportsOnlySelected(t *testing.T) {
 	}
 	if updated.cfg.CloudContexts[1].AccountID != "project-new" {
 		t.Fatalf("expected project-new import, got %+v", updated.cfg.CloudContexts[1])
+	}
+}
+
+func TestFirstRunDiscoveryImportCreatesConfigAndCurrentContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := config.Load()
+	app := NewApp(cfg, "1.0.0", "today")
+	app.showContextDiscovery = true
+	app.discoveryList.SetItems([]list.Item{
+		discoveryContextItem{
+			selected: true,
+			ctx: core.CloudContext{
+				Provider:          "AWS",
+				ContextName:       "prod-admin",
+				AccountID:         "1111",
+				AccountName:       "prod",
+				Region:            "us-east-1",
+				CredentialProfile: "prod-admin",
+			},
+		},
+	})
+
+	updated, _ := app.importSelectedDiscoveredContexts()
+	loaded := config.Load()
+
+	if len(updated.cfg.CloudContexts) != 1 || len(loaded.CloudContexts) != 1 {
+		t.Fatalf("expected first-run discovery import to persist, updated=%+v loaded=%+v", updated.cfg.CloudContexts, loaded.CloudContexts)
+	}
+	if updated.cfg.CurrentContext != "prod-admin" || loaded.CurrentContext != "prod-admin" {
+		t.Fatalf("expected imported context to become current, updated=%q loaded=%q", updated.cfg.CurrentContext, loaded.CurrentContext)
 	}
 }
 

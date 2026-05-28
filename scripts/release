@@ -11,13 +11,14 @@ Examples:
 
 This script:
   - requires a clean worktree
+  - runs from a dev/* branch
   - runs go test ./...
   - updates VERSION, README install pins, and scripts/install default
   - commits the release bump
   - optionally pushes the current branch for a pull request
 
 After the release prep PR is merged, run the Release Go Module workflow from the
-protected release branch. It validates the pins and creates the tag.
+protected release/v1 branch. It validates the pins and creates the tag.
 USAGE
 }
 
@@ -82,8 +83,13 @@ fi
 
 branch="$(git branch --show-current)"
 if [[ -z "$branch" ]]; then
-  echo "release: cannot prepare release from detached HEAD" >&2
-  exit 1
+	echo "release: cannot prepare release from detached HEAD" >&2
+	exit 1
+fi
+if [[ ! "$branch" =~ ^dev/ ]]; then
+	echo "release: prepare releases from a dev/* branch, not ${branch}" >&2
+	echo "release: example: git switch -c dev/release-${tag}" >&2
+	exit 1
 fi
 
 if [[ "$run_tests" -eq 1 ]]; then
@@ -106,6 +112,7 @@ fi
 if [[ "$push_release" -eq 1 ]]; then
   git push origin "$branch"
 else
-  echo "release: prepared ${tag}; push the PR branch with:"
-  echo "  git push origin ${branch}"
+	echo "release: prepared ${tag}; push the PR branch with:"
+	echo "  git push origin ${branch}"
+	echo "then open a PR into release/v1"
 fi

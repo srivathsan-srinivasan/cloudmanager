@@ -177,25 +177,41 @@ installed, Homebrew installs it as a build dependency. The formula sets
 
 ### Release Automation
 
-Protected release branches use a two-step release:
+Release branches are simple:
 
-1. Prepare a release PR from a branch:
+- develop on `dev/*`
+- merge release PRs into `release/v1`
+- publish exact versions as tags, such as `v1.0.2`
+
+Protected releases use a two-step flow:
+
+1. Prepare a release PR from a dev branch:
 
    ```bash
+   git switch -c dev/release-v1.0.2
    scripts/release v1.0.2 --push
    ```
 
-2. Merge the PR into the protected release branch.
-3. Open **Actions** in GitHub.
-4. Select **Release Go Module**.
-5. Click **Run workflow**.
-6. Enter the same stable version, such as `v1.0.2`.
-7. Run it from the protected release branch.
+2. Open a PR into `release/v1`.
+3. Merge the PR.
+4. Open **Actions** in GitHub.
+5. Select **Release Go Module**.
+6. Click **Run workflow**.
+7. Enter the same stable version, such as `v1.0.2`.
+8. Run it from `release/v1`.
 
-The workflow runs tests, verifies the merged release pins, creates the annotated
-tag, and pushes only the tag. The tag push triggers GoReleaser to publish
-GitHub release artifacts. GoReleaser opens a PR for the generated Homebrew
-formula because that file needs release artifact checksums.
+The workflow refuses to tag from any other branch. It runs tests, verifies the
+merged release pins, creates the annotated tag, and pushes only the tag. The tag
+push triggers GoReleaser to publish GitHub release artifacts. GoReleaser opens a
+PR for the generated Homebrew formula because that file needs release artifact
+checksums.
+
+Branch rules:
+
+- protect `main` and `release/v1`
+- do not push directly to protected branches
+- delete `dev/*` branches after merge
+- keep `gh-pages` for docs only
 
 ### Prerequisites
 CloudManager wraps the native CLI tools for the respective cloud providers. Ensure you have the following installed and authenticated if you intend to manage resources in those clouds:

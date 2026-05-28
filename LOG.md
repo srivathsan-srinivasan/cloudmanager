@@ -4,6 +4,17 @@
 
 ### Update
 
+- Reworked the release branch contract toward `dev/*` work branches and protected `release/v1` as the only stable v1 release line.
+- `scripts/release` now refuses to prepare releases outside `dev/*`, updates release pins, and tells the operator to open a PR into `release/v1`.
+- The manual release workflow now refuses to tag unless run from `release/v1`.
+- GoReleaser formula PRs now target `release/v1`.
+- Added `docs/RELEASE.md` with the branch model, patch release flow, branch protection rules, and one-time `release/v1` creation step.
+- Fixed first-run profile/discovery persistence by resetting Viper before each config load, preventing stale in-process config state from leaking across homes/config paths.
+- Added first-run regressions for manual profile add and discovery import creating `.cloudmanager.json` and selecting the current context.
+- Validation: `bash -n scripts/release`; `bash -n scripts/install`; `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".goreleaser.yaml"); puts "yaml ok"'`; `git diff --check`; `go run github.com/goreleaser/goreleaser/v2@v2.9.0 check`; `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
 - Adapted the v1.0.2 release path for protected release branches after GitHub rejected the workflow's direct push to `release/v1.0.0`.
 - The manual release workflow now validates already-merged version pins and pushes only the annotated tag; GoReleaser runs only on the tag workflow.
 - GoReleaser now opens a Homebrew formula PR from `formula/cloudmanager-{{ .Version }}` instead of pushing formula updates directly to the protected release branch.
