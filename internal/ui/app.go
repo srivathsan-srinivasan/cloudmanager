@@ -5812,19 +5812,6 @@ func fetchContextsCmd(discover bool) tea.Cmd {
 			}
 		}
 
-		// Restore mock fallback if no contexts found
-		if discover && len(allCtx) == 0 {
-			allCtx = []core.CloudContext{
-				{Provider: "AWS", AccountID: "123456789012", AccountName: "production", Region: "us-east-1"},
-				{Provider: "AWS", AccountID: "123456789012", AccountName: "production", Region: "us-west-2"},
-				{Provider: "AWS", AccountID: "987654321098", AccountName: "staging", Region: "eu-central-1"},
-				{Provider: "GCP", AccountID: "my-gcp-project-1", AccountName: "backend-services", Region: "us-central1"},
-				{Provider: "GCP", AccountID: "my-gcp-project-2", AccountName: "data-pipeline", Region: "europe-west1"},
-				{Provider: "Azure", AccountID: "sub-abc-123", AccountName: "core-infra", Region: "eastus"},
-				{Provider: "DigitalOcean", AccountID: "do-demo-account", AccountName: "sandbox", Region: "global"},
-			}
-		}
-
 		tree := BuildContextTree(allCtx)
 		return contextLoadMsg{tree: tree, contexts: allCtx, warnings: warnings}
 	}

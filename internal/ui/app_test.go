@@ -1460,6 +1460,27 @@ func TestStartupPrefetchWaitsForVMIndexCache(t *testing.T) {
 	}
 }
 
+func TestFetchContextsDoesNotInventFallbackContexts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	msg := fetchContextsCmd(true)().(contextLoadMsg)
+
+	if len(msg.contexts) != 0 {
+		t.Fatalf("expected no contexts when discovery finds none, got %+v", msg.contexts)
+	}
+	if len(msg.tree) != 0 {
+		t.Fatalf("expected empty context tree, got %+v", msg.tree)
+	}
+	for _, warning := range msg.warnings {
+		for _, forbidden := range []string{"123456789012", "my-gcp-project", "do-demo-account", "sub-abc-123"} {
+			if strings.Contains(warning, forbidden) {
+				t.Fatalf("warning contains fake fallback data %q: %q", forbidden, warning)
+			}
+		}
+	}
+}
+
 func TestStartupPrefetchSkipsWhenVMIndexCacheLoaded(t *testing.T) {
 	app := NewApp(config.AppConfig{
 		PrefetchOnStart:     true,

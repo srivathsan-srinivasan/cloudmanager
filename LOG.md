@@ -1,5 +1,13 @@
 # LOG
 
+## 2026-05-29
+
+### Update
+
+- Removed the runtime context-discovery fake fallback from the UI. If `:discover` finds no real provider contexts, CloudManager now returns an empty context list and warnings instead of inventing AWS/GCP/Azure/DigitalOcean accounts.
+- Added `TestFetchContextsDoesNotInventFallbackContexts` to lock the no-fake-context behavior under an empty home and PATH.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run TestFetchContextsDoesNotInventFallbackContexts -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`; `git diff --check -- internal/ui/app.go internal/ui/app_test.go`.
+
 ## 2026-05-27
 
 ### Update
