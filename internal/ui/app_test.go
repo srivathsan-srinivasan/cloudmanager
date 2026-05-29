@@ -1481,6 +1481,66 @@ func TestFetchContextsDoesNotInventFallbackContexts(t *testing.T) {
 	}
 }
 
+func TestContextReloadUsesFreshConfigAndClearsStaleActiveContext(t *testing.T) {
+	stale := config.AppConfig{
+		Backend:        "cli",
+		CurrentContext: "old-azure",
+		CloudContexts: []config.ManagedCloudContext{
+			{ContextName: "old-azure", Provider: "Azure", AccountID: "sub-old", Regions: []string{"global"}},
+		},
+	}
+	app := NewApp(stale, "1.0.0", "today")
+	app.activeCtx = core.CloudContext{Provider: "Azure", ContextName: "old-azure", AccountID: "sub-old", Region: "global"}
+
+	fresh := config.AppConfig{Backend: "cli"}
+	model, _ := app.Update(contextLoadMsg{cfg: fresh, tree: nil, contexts: nil})
+	updated := model.(App)
+
+	if updated.cfg.CurrentContext != "" || len(updated.cfg.CloudContexts) != 0 {
+		t.Fatalf("expected fresh empty config after reload, got %+v", updated.cfg)
+	}
+	if updated.activeCtx.Provider != "" {
+		t.Fatalf("expected stale active context to be cleared, got %+v", updated.activeCtx)
+	}
+	if !strings.Contains(updated.statusMsg, "No cloud contexts found") && !strings.Contains(updated.statusMsg, "No contexts") {
+		t.Fatalf("expected empty-context status, got %q", updated.statusMsg)
+	}
+}
+
+func TestDiscoveryImportUsesFreshConfigAfterExternalConfigRemoval(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	stale := config.AppConfig{
+		Backend:        "cli",
+		CurrentContext: "old-azure",
+		CloudContexts: []config.ManagedCloudContext{
+			{ContextName: "old-azure", Provider: "Azure", AccountID: "sub-old", Regions: []string{"global"}},
+		},
+	}
+	app := NewApp(stale, "1.0.0", "today")
+
+	fresh := config.AppConfig{Backend: "cli"}
+	gcpCtx := core.CloudContext{Provider: "GCP", AccountID: "firecompass-demo", AccountName: "firecompass-demo", Region: "global"}
+	model, _ := app.Update(contextDiscoveryLoadMsg{cfg: fresh, contexts: []core.CloudContext{gcpCtx}})
+	app = model.(App)
+
+	item := app.discoveryList.Items()[0].(discoveryContextItem)
+	item.selected = true
+	_ = app.discoveryList.SetItem(0, item)
+	updated, _ := app.importSelectedDiscoveredContexts()
+
+	if len(updated.cfg.CloudContexts) != 1 {
+		t.Fatalf("expected only imported GCP context, got %+v", updated.cfg.CloudContexts)
+	}
+	if updated.cfg.CloudContexts[0].Provider != "GCP" || updated.cfg.CloudContexts[0].AccountID != "firecompass-demo" {
+		t.Fatalf("expected imported GCP context, got %+v", updated.cfg.CloudContexts[0])
+	}
+	if updated.cfg.CurrentContext != "firecompass-demo" {
+		t.Fatalf("expected current context to become imported GCP context, got %q", updated.cfg.CurrentContext)
+	}
+}
+
 func TestStartupPrefetchSkipsWhenVMIndexCacheLoaded(t *testing.T) {
 	app := NewApp(config.AppConfig{
 		PrefetchOnStart:     true,

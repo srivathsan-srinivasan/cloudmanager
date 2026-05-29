@@ -34,6 +34,7 @@ const (
 // --- Bubble Tea messages ---
 
 type contextLoadMsg struct {
+	cfg      config.AppConfig
 	tree     []*TreeNode
 	contexts []core.CloudContext
 	warnings []string
@@ -109,11 +110,13 @@ type providerLoginCompleteMsg struct {
 }
 
 type azureSubscriptionLoadMsg struct {
+	cfg      config.AppConfig
 	contexts []core.CloudContext
 	warnings []string
 }
 
 type contextDiscoveryLoadMsg struct {
+	cfg      config.AppConfig
 	contexts []core.CloudContext
 	warnings []string
 }
@@ -574,7 +577,7 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 	settingsList.SetFilteringEnabled(false)
 
 	credentialList := list.New(buildCredentialItems(cfg), list.NewDefaultDelegate(), 0, 0)
-	credentialList.Title = "Profiles / Contexts (a:Add e:Edit u:Use l:Login z:Azure d:Remove r:Discover)"
+	credentialList.Title = "Profiles / Contexts (a:Add e:Edit u:Use l:Login d:Remove r:Discover)"
 	credentialList.SetShowStatusBar(false)
 	credentialList.SetFilteringEnabled(false)
 
@@ -974,6 +977,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case contextLoadMsg:
+		if contextLoadHasConfig(msg.cfg) {
+			a.cfg = msg.cfg
+		}
 		a.rootNodes = msg.tree
 		a.allContexts = msg.contexts
 		items := BuildFlatList(a.rootNodes)
@@ -985,6 +991,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(a.viewStack) > 0 {
 				cmds = append(cmds, a.viewStack[len(a.viewStack)-1].Init(a.activeCtx, a.mainContentWidth(), a.mainContentHeight(), a.showSidebar))
 			}
+		} else {
+			a.activeCtx = core.CloudContext{}
 		}
 		a.parserWarnings = msg.warnings
 		if len(items) == 0 {
@@ -1143,6 +1151,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, fetchDiscoveredContextsCmd())
 
 	case azureSubscriptionLoadMsg:
+		if contextLoadHasConfig(msg.cfg) {
+			a.cfg = msg.cfg
+		}
 		if len(msg.warnings) > 0 && len(msg.contexts) == 0 {
 			a.statusMsg = strings.Join(msg.warnings, " | ")
 			break
@@ -1160,6 +1171,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case contextDiscoveryLoadMsg:
+		if contextLoadHasConfig(msg.cfg) {
+			a.cfg = msg.cfg
+		}
 		a.showContextDiscovery = true
 		a.showCredentials = false
 		a.showSettings = false
@@ -1257,6 +1271,13 @@ func currentContextListSelection(items []list.Item, name string) (int, core.Clou
 		}
 	}
 	return 0, core.CloudContext{}, false
+}
+
+func contextLoadHasConfig(cfg config.AppConfig) bool {
+	return strings.TrimSpace(cfg.Backend) != "" ||
+		strings.TrimSpace(cfg.CurrentContext) != "" ||
+		len(cfg.CloudContexts) > 0 ||
+		len(cfg.ManualHosts) > 0
 }
 
 // statusUpdateMsg lets views update the app-level status bar.
@@ -3660,12 +3681,6 @@ func (a App) selectedProviderLoginItem() (providerLoginItem, bool) {
 func buildProviderLoginItems() []list.Item {
 	definitions := []providerLoginItem{
 		{
-			provider:    "Azure",
-			title:       "Azure: az login",
-			description: "Browser/device-code login. Discovers all visible subscriptions after completion.",
-			command:     []string{"az", "login", "--use-device-code"},
-		},
-		{
 			provider:    "GCP",
 			title:       "GCP: gcloud auth login --no-browser",
 			description: "Terminal-safe user login for gcloud commands.",
@@ -3676,6 +3691,12 @@ func buildProviderLoginItems() []list.Item {
 			title:       "GCP: application-default login",
 			description: "ADC login for SDK-style calls.",
 			command:     []string{"gcloud", "auth", "application-default", "login"},
+		},
+		{
+			provider:    "Azure",
+			title:       "Azure: az login",
+			description: "Browser/device-code login. Discovers all visible subscriptions after completion.",
+			command:     []string{"az", "login", "--use-device-code"},
 		},
 		{
 			provider:    "AWS",
@@ -5761,13 +5782,15 @@ func loadResourceIndexCacheCmd(cfg config.AppConfig) tea.Cmd {
 
 func fetchAzureSubscriptionsCmd() tea.Cmd {
 	return func() tea.Msg {
+		cfg := config.Load()
 		contexts, warnings := providers.DiscoverContexts("Azure")
-		return azureSubscriptionLoadMsg{contexts: contexts, warnings: warnings}
+		return azureSubscriptionLoadMsg{cfg: cfg, contexts: contexts, warnings: warnings}
 	}
 }
 
 func fetchDiscoveredContextsCmd() tea.Cmd {
 	return func() tea.Msg {
+		cfg := config.Load()
 		var contexts []core.CloudContext
 		var warnings []string
 		for _, registered := range providers.RegisteredProviders() {
@@ -5776,7 +5799,7 @@ func fetchDiscoveredContextsCmd() tea.Cmd {
 			contexts = append(contexts, ctxs...)
 			warnings = append(warnings, providerWarnings...)
 		}
-		return contextDiscoveryLoadMsg{contexts: contexts, warnings: warnings}
+		return contextDiscoveryLoadMsg{cfg: cfg, contexts: contexts, warnings: warnings}
 	}
 }
 
@@ -5813,7 +5836,7 @@ func fetchContextsCmd(discover bool) tea.Cmd {
 		}
 
 		tree := BuildContextTree(allCtx)
-		return contextLoadMsg{tree: tree, contexts: allCtx, warnings: warnings}
+		return contextLoadMsg{cfg: cfg, tree: tree, contexts: allCtx, warnings: warnings}
 	}
 }
 

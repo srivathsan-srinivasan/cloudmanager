@@ -4,6 +4,14 @@
 
 ### Update
 
+- Fixed first-run reload/discovery state after deleting `~/.cloudmanager.json`: context reload, generic discovery, and Azure subscription discovery now carry the freshly loaded config back into the UI instead of leaving stale in-memory `current_context` data behind.
+- Reloading contexts now clears the active context when the selected context no longer exists, so the footer/sidebar stops showing an old Azure context after config removal.
+- Reduced Azure bias in the first-run UI by removing `z:Azure` from the Profiles / Contexts title and moving GCP login choices before Azure in the provider login picker.
+- Verified the local GCP discovery command can see projects with the current CLI auth; ADC is still missing and `scripts/check-credentials --gcp` reports `gcloud auth application-default login` is still needed for SDK calls.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestFetchContextsDoesNotInventFallbackContexts|TestContextReloadUsesFreshConfigAndClearsStaleActiveContext|TestDiscoveryImportUsesFreshConfigAfterExternalConfigRemoval|TestProviderLoginItemsIncludeAzureDeviceCode|TestDiscoveryPickerDefaultsUnselectedAndImportsOnlySelected' -count=1`; `git diff --check -- LOG.md internal/ui/app.go internal/ui/app_test.go`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
 - Removed the runtime context-discovery fake fallback from the UI. If `:discover` finds no real provider contexts, CloudManager now returns an empty context list and warnings instead of inventing AWS/GCP/Azure/DigitalOcean accounts.
 - Added `TestFetchContextsDoesNotInventFallbackContexts` to lock the no-fake-context behavior under an empty home and PATH.
 - Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run TestFetchContextsDoesNotInventFallbackContexts -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`; `git diff --check -- internal/ui/app.go internal/ui/app_test.go`.
