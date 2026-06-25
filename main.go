@@ -36,6 +36,7 @@ func main() {
 	configureFlag := flag.Bool("configure", false, "Open configuration TUI to select backend and config options")
 	backendFlag := flag.String("backend", "", "Force backend type ('cli' or 'sdk'). Overrides config file.")
 	smokeTestFlag := flag.String("smoke-test", "", "Run non-destructive provider smoke tests (all|aws|gcp|azure|digitalocean) and exit.")
+	debugFlag := flag.Bool("debug", false, "Show developer debug overlay in the TUI")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
@@ -89,6 +90,7 @@ func main() {
 	ui.InitTheme(cfg.Theme)
 
 	app := ui.NewApp(cfg, Version, BuildTime)
+	app.SetDebugOverlay(*debugFlag)
 
 	// Register views to tabs
 	vmView := vms.New(&cfg)

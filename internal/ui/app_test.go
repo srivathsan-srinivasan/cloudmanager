@@ -164,6 +164,51 @@ func TestAppFooterShowsBackendMode(t *testing.T) {
 	}
 }
 
+func TestDebugOverlayRendersAppState(t *testing.T) {
+	app := NewApp(config.AppConfig{Backend: "cli"}, "1.0.0", "today")
+	app.width = 120
+	app.height = 30
+	app.showSplash = false
+	app.showSidebar = false
+	app.viewStack = []View{&mockView{title: "VMs", rendered: "content"}}
+	app.activeCtx = core.CloudContext{Provider: "AWS", AccountName: "prod", Region: "us-east-1"}
+	app.SetDebugOverlay(true)
+
+	model, _ := app.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	updated := model.(App)
+	rendered := updated.View()
+
+	for _, want := range []string{"Debug", "msg: tea.WindowSizeMsg", "focus: main", "view: VMs", "ctx: AWS prod us-east-1"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected debug overlay to include %q, got:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestDebugOverlayToggleTracksKeyMessage(t *testing.T) {
+	app := NewApp(config.AppConfig{Backend: "cli"}, "1.0.0", "today")
+	app.width = 100
+	app.height = 30
+	app.showSplash = false
+	app.showSidebar = false
+	app.viewStack = []View{&mockView{title: "VMs", rendered: "content"}}
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	updated := model.(App)
+	if !updated.debugOverlay {
+		t.Fatal("expected ctrl+d to enable debug overlay")
+	}
+	if !strings.Contains(updated.View(), "msg: tea.KeyMsg(ctrl+d)") {
+		t.Fatalf("expected key message in debug overlay, got:\n%s", updated.View())
+	}
+
+	model, _ = updated.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	updated = model.(App)
+	if updated.debugOverlay {
+		t.Fatal("expected second ctrl+d to disable debug overlay")
+	}
+}
+
 func TestLogsViewFitsWindow(t *testing.T) {
 	app := NewApp(config.AppConfig{Backend: "cli"}, "1.0.0", "today")
 	app.width = 90

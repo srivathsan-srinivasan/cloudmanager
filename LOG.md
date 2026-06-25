@@ -1,5 +1,14 @@
 # LOG
 
+## 2026-05-31
+
+### Update
+
+- Implemented the concrete production-readiness item from `docs/skills.md`: a developer debug overlay for the Bubble Tea TUI.
+- Added `cloudmanager --debug` and in-app `ctrl+d` toggling for the overlay.
+- The overlay renders the latest `tea.Msg`, focus target, active view, tab, modal, and selected context.
+- Validation: `git diff --check -- README.md LOG.md main.go internal/ui/app.go internal/ui/app_test.go docs/skills.md`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestDebugOverlay|TestAppViewFitsWindowWidth|TestWindowResizeOnlyUsesResizeHook' -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
 ## 2026-05-29
 
 ### Update

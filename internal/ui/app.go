@@ -545,6 +545,8 @@ type App struct {
 	width, height           int
 	Version                 string
 	BuildTime               string
+	debugOverlay            bool
+	lastMsgType             string
 	logView                 viewport.Model
 	helpView                viewport.Model
 	logPath                 string
@@ -685,6 +687,10 @@ func (a *App) RegisterView(tabIndex string, capability providers.Capability, v V
 	}
 }
 
+func (a *App) SetDebugOverlay(enabled bool) {
+	a.debugOverlay = enabled
+}
+
 func (a App) Init() tea.Cmd {
 	return tea.Batch(fetchContextsCmd(a.cfg.DiscoverOnStart), loadVMIndexCacheCmd(a.cfg), loadResourceIndexCacheCmd(a.cfg))
 }
@@ -725,6 +731,7 @@ func (a *App) ensureActiveTab() {
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
+	a.lastMsgType = debugMsgLabel(msg)
 
 	switch msg := msg.(type) {
 	case PushViewMsg:
@@ -825,6 +832,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
+		case "ctrl+d":
+			a.debugOverlay = !a.debugOverlay
+			return a, nil
 		case "g":
 			if !isInputActive && a.cfg.GlobalSearch {
 				a.openFindScopePicker()
@@ -1289,45 +1299,45 @@ func (a App) View() string {
 	}
 
 	if a.showSplash {
-		return fitToWindow(a.renderSplash(), a.width, a.height)
+		return a.renderDebugOverlay(fitToWindow(a.renderSplash(), a.width, a.height))
 	}
 
 	if a.showConfig {
 		mainView := a.renderShellPane(a.configList.View(), true)
 		footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 Space: Toggle \u2022 Enter: Save \u2022 Esc: Cancel | %s", a.statusMsg))
-		return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
+		return a.renderDebugOverlay(fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height))
 	}
 	if a.showSettings {
 		mainView := a.renderShellPane(a.settingsList.View(), true)
 		footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 Space/Enter: Toggle \u2022 Esc: Close | %s", a.statusMsg))
-		return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
+		return a.renderDebugOverlay(fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height))
 	}
 	if a.showFindPicker {
-		return a.renderFindScopeView()
+		return a.renderDebugOverlay(a.renderFindScopeView())
 	}
 	if a.showAzureSubscriptions {
-		return a.renderAzureSubscriptionView()
+		return a.renderDebugOverlay(a.renderAzureSubscriptionView())
 	}
 	if a.showContextDiscovery {
-		return a.renderContextDiscoveryView()
+		return a.renderDebugOverlay(a.renderContextDiscoveryView())
 	}
 	if a.showCredentials {
-		return a.renderCredentialsView()
+		return a.renderDebugOverlay(a.renderCredentialsView())
 	}
 	if a.showHostForm {
-		return a.renderHostFormView()
+		return a.renderDebugOverlay(a.renderHostFormView())
 	}
 	if a.showProviderLogin {
-		return a.renderProviderLoginView()
+		return a.renderDebugOverlay(a.renderProviderLoginView())
 	}
 	if a.showLogs {
-		return a.renderLogsView()
+		return a.renderDebugOverlay(a.renderLogsView())
 	}
 	if a.showHelp {
-		return a.renderHelpView()
+		return a.renderDebugOverlay(a.renderHelpView())
 	}
 	if a.showGlobalSearch {
-		return a.renderGlobalSearchView()
+		return a.renderDebugOverlay(a.renderGlobalSearchView())
 	}
 
 	shellInnerWidth := a.shellContentWidth()
@@ -1375,7 +1385,113 @@ func (a App) View() string {
 	mainShell := a.renderShellPane(panes, a.focus == focusMain)
 	footerText := fmt.Sprintf("\u2191\u2193 \u2022 Enter \u2022 ?:Help \u2022 H:Home \u2022 g:Find \u2022 ,:Set \u2022 Tab \u2022 Esc \u2022 L:Logs \u2022 B:Mode | Mode:%s | %s | %s | v%s", a.backendMode(), sysusage.FooterText(), a.statusMsg, a.Version)
 	footer := renderFooter(a.width, footerText)
-	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainShell, footer), a.width, a.height)
+	return a.renderDebugOverlay(fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainShell, footer), a.width, a.height))
+}
+
+func debugMsgLabel(msg tea.Msg) string {
+	if key, ok := msg.(tea.KeyMsg); ok {
+		return fmt.Sprintf("%T(%s)", msg, key.String())
+	}
+	return fmt.Sprintf("%T", msg)
+}
+
+func (a App) renderDebugOverlay(base string) string {
+	if !a.debugOverlay {
+		return base
+	}
+	overlayWidth := a.width - 4
+	if overlayWidth > 64 {
+		overlayWidth = 64
+	}
+	if overlayWidth < 24 {
+		overlayWidth = 24
+	}
+	overlay := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(Highlight).
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("235")).
+		Padding(0, 1).
+		Width(overlayWidth).
+		Render(strings.Join(a.debugOverlayLines(), "\n"))
+	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, overlay, base), a.width, a.height)
+}
+
+func (a App) debugOverlayLines() []string {
+	msg := a.lastMsgType
+	if msg == "" {
+		msg = "<none>"
+	}
+	return []string{
+		"Debug",
+		"msg: " + msg,
+		"focus: " + a.focusName(),
+		"view: " + a.currentViewTitle(),
+		"tab: " + orFallback(a.activeTab, "-") + " modal: " + a.activeModalName(),
+		"ctx: " + a.debugContextLabel(),
+	}
+}
+
+func (a App) focusName() string {
+	if a.focus == focusSidebar {
+		return "sidebar"
+	}
+	return "main"
+}
+
+func (a App) currentViewTitle() string {
+	if a.isHomeActive() {
+		return "Home"
+	}
+	if len(a.viewStack) == 0 {
+		return "-"
+	}
+	return a.viewStack[len(a.viewStack)-1].Title()
+}
+
+func (a App) activeModalName() string {
+	switch {
+	case a.showConfig:
+		return "config"
+	case a.showSettings:
+		return "settings"
+	case a.showCredentials:
+		return "credentials"
+	case a.showProviderLogin:
+		return "login"
+	case a.showAzureSubscriptions:
+		return "azure-subscriptions"
+	case a.showContextDiscovery:
+		return "discovery"
+	case a.showFindPicker:
+		return "find-picker"
+	case a.showHostForm:
+		return "host-form"
+	case a.showLogs:
+		return "logs"
+	case a.showHelp:
+		return "help"
+	case a.showGlobalSearch:
+		return "find"
+	case a.showCmdBar:
+		return "command"
+	default:
+		return "-"
+	}
+}
+
+func (a App) debugContextLabel() string {
+	if a.activeCtx.Provider == "" {
+		return "-"
+	}
+	parts := []string{a.activeCtx.Provider}
+	if display := strings.TrimSpace(a.activeCtx.DisplayName()); display != "" {
+		parts = append(parts, display)
+	}
+	if region := strings.TrimSpace(a.activeCtx.Region); region != "" {
+		parts = append(parts, region)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (a App) isHomeActive() bool {

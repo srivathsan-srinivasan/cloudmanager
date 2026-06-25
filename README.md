@@ -257,6 +257,14 @@ Run the binary in your terminal:
 cloudmanager
 ```
 
+Developer overlay:
+
+```bash
+cloudmanager --debug
+```
+
+In debug mode the TUI shows the latest Bubble Tea message, focus target, active view, modal, tab, and context. `ctrl+d` toggles the overlay while the app is running.
+
 ### Profiles / Contexts
 
 CloudManager stores human-friendly context names on top of provider-native accounts, projects, and subscriptions. For Azure this avoids `az account set` side effects; commands can resolve the selected context and pass `--subscription` explicitly.
