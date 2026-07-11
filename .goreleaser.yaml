@@ -75,8 +75,14 @@ brews:
     repository:
       owner: vyoogam
       name: cloudmanager
-      branch: release/v1.0.0
+      branch: "formula/cloudmanager-{{ .Version }}"
       token: "{{ .Env.GITHUB_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: vyoogam
+          name: cloudmanager
+          branch: release/v1
     directory: Formula
     homepage: https://github.com/vyoogam/cloudmanager
     description: Manage your cloud resources from the terminal.

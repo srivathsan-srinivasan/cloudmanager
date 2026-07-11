@@ -27,6 +27,18 @@ type mockView struct {
 	searchQuery      string
 }
 
+func equalInts(left, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *mockView) Init(ctx core.CloudContext, width, height int, showSidebar bool) tea.Cmd {
 	m.Resize(width, height, showSidebar)
 	return nil
@@ -149,6 +161,51 @@ func TestAppFooterShowsBackendMode(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "CPU:") || !strings.Contains(rendered, "Mem:") {
 		t.Fatalf("expected process usage in footer, got:\n%s", rendered)
+	}
+}
+
+func TestDebugOverlayRendersAppState(t *testing.T) {
+	app := NewApp(config.AppConfig{Backend: "cli"}, "1.0.0", "today")
+	app.width = 120
+	app.height = 30
+	app.showSplash = false
+	app.showSidebar = false
+	app.viewStack = []View{&mockView{title: "VMs", rendered: "content"}}
+	app.activeCtx = core.CloudContext{Provider: "AWS", AccountName: "prod", Region: "us-east-1"}
+	app.SetDebugOverlay(true)
+
+	model, _ := app.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	updated := model.(App)
+	rendered := updated.View()
+
+	for _, want := range []string{"Debug", "msg: tea.WindowSizeMsg", "focus: main", "view: VMs", "ctx: AWS prod us-east-1"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected debug overlay to include %q, got:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestDebugOverlayToggleTracksKeyMessage(t *testing.T) {
+	app := NewApp(config.AppConfig{Backend: "cli"}, "1.0.0", "today")
+	app.width = 100
+	app.height = 30
+	app.showSplash = false
+	app.showSidebar = false
+	app.viewStack = []View{&mockView{title: "VMs", rendered: "content"}}
+
+	model, _ := app.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	updated := model.(App)
+	if !updated.debugOverlay {
+		t.Fatal("expected ctrl+d to enable debug overlay")
+	}
+	if !strings.Contains(updated.View(), "msg: tea.KeyMsg(ctrl+d)") {
+		t.Fatalf("expected key message in debug overlay, got:\n%s", updated.View())
+	}
+
+	model, _ = updated.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	updated = model.(App)
+	if updated.debugOverlay {
+		t.Fatal("expected second ctrl+d to disable debug overlay")
 	}
 }
 
@@ -382,8 +439,36 @@ func TestFindSlashFocusesFilterInput(t *testing.T) {
 	if !updated.globalSearchInput.Focused() {
 		t.Fatal("expected / to focus find input")
 	}
-	if updated.globalSearchTable.Focused() {
-		t.Fatal("expected table to blur while editing find input")
+	if !updated.globalSearchTable.Focused() {
+		t.Fatal("expected table to stay focused so the selected result remains visible")
+	}
+}
+
+func TestFindFilterInputAllowsResultNavigation(t *testing.T) {
+	app := NewApp(config.AppConfig{GlobalSearch: true}, "1.0.0", "today")
+	app.width = 120
+	app.height = 30
+	app.showSplash = false
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
+	app.indexVMs(ctx, []core.VM{
+		{Name: "api-1", ID: "i-aaa", State: "running"},
+		{Name: "api-2", ID: "i-bbb", State: "running"},
+	})
+	app, _ = app.openFind(findScopeVMs, "api")
+	app.globalSearchInput.Focus()
+	app.globalSearchTable.Focus()
+
+	model, _ := app.handleGlobalSearchKeys(tea.KeyMsg{Type: tea.KeyDown})
+	updated := model.(App)
+
+	if !updated.globalSearchInput.Focused() {
+		t.Fatal("expected filter input to stay focused")
+	}
+	if got := updated.globalSearchTable.Cursor(); got != 1 {
+		t.Fatalf("expected Down to move selected find row while filtering, got cursor %d", got)
+	}
+	if got := updated.globalSearchInput.Value(); got != "api" {
+		t.Fatalf("expected navigation not to edit filter query, got %q", got)
 	}
 }
 
@@ -1448,6 +1533,87 @@ func TestStartupPrefetchWaitsForVMIndexCache(t *testing.T) {
 	}
 }
 
+func TestFetchContextsDoesNotInventFallbackContexts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	msg := fetchContextsCmd(true)().(contextLoadMsg)
+
+	if len(msg.contexts) != 0 {
+		t.Fatalf("expected no contexts when discovery finds none, got %+v", msg.contexts)
+	}
+	if len(msg.tree) != 0 {
+		t.Fatalf("expected empty context tree, got %+v", msg.tree)
+	}
+	for _, warning := range msg.warnings {
+		for _, forbidden := range []string{"123456789012", "my-gcp-project", "do-demo-account", "sub-abc-123"} {
+			if strings.Contains(warning, forbidden) {
+				t.Fatalf("warning contains fake fallback data %q: %q", forbidden, warning)
+			}
+		}
+	}
+}
+
+func TestContextReloadUsesFreshConfigAndClearsStaleActiveContext(t *testing.T) {
+	stale := config.AppConfig{
+		Backend:        "cli",
+		CurrentContext: "old-azure",
+		CloudContexts: []config.ManagedCloudContext{
+			{ContextName: "old-azure", Provider: "Azure", AccountID: "sub-old", Regions: []string{"global"}},
+		},
+	}
+	app := NewApp(stale, "1.0.0", "today")
+	app.activeCtx = core.CloudContext{Provider: "Azure", ContextName: "old-azure", AccountID: "sub-old", Region: "global"}
+
+	fresh := config.AppConfig{Backend: "cli"}
+	model, _ := app.Update(contextLoadMsg{cfg: fresh, tree: nil, contexts: nil})
+	updated := model.(App)
+
+	if updated.cfg.CurrentContext != "" || len(updated.cfg.CloudContexts) != 0 {
+		t.Fatalf("expected fresh empty config after reload, got %+v", updated.cfg)
+	}
+	if updated.activeCtx.Provider != "" {
+		t.Fatalf("expected stale active context to be cleared, got %+v", updated.activeCtx)
+	}
+	if !strings.Contains(updated.statusMsg, "No cloud contexts found") && !strings.Contains(updated.statusMsg, "No contexts") {
+		t.Fatalf("expected empty-context status, got %q", updated.statusMsg)
+	}
+}
+
+func TestDiscoveryImportUsesFreshConfigAfterExternalConfigRemoval(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	stale := config.AppConfig{
+		Backend:        "cli",
+		CurrentContext: "old-azure",
+		CloudContexts: []config.ManagedCloudContext{
+			{ContextName: "old-azure", Provider: "Azure", AccountID: "sub-old", Regions: []string{"global"}},
+		},
+	}
+	app := NewApp(stale, "1.0.0", "today")
+
+	fresh := config.AppConfig{Backend: "cli"}
+	gcpCtx := core.CloudContext{Provider: "GCP", AccountID: "firecompass-demo", AccountName: "firecompass-demo", Region: "global"}
+	model, _ := app.Update(contextDiscoveryLoadMsg{cfg: fresh, contexts: []core.CloudContext{gcpCtx}})
+	app = model.(App)
+
+	item := app.discoveryList.Items()[0].(discoveryContextItem)
+	item.selected = true
+	_ = app.discoveryList.SetItem(0, item)
+	updated, _ := app.importSelectedDiscoveredContexts()
+
+	if len(updated.cfg.CloudContexts) != 1 {
+		t.Fatalf("expected only imported GCP context, got %+v", updated.cfg.CloudContexts)
+	}
+	if updated.cfg.CloudContexts[0].Provider != "GCP" || updated.cfg.CloudContexts[0].AccountID != "firecompass-demo" {
+		t.Fatalf("expected imported GCP context, got %+v", updated.cfg.CloudContexts[0])
+	}
+	if updated.cfg.CurrentContext != "firecompass-demo" {
+		t.Fatalf("expected current context to become imported GCP context, got %q", updated.cfg.CurrentContext)
+	}
+}
+
 func TestStartupPrefetchSkipsWhenVMIndexCacheLoaded(t *testing.T) {
 	app := NewApp(config.AppConfig{
 		PrefetchOnStart:     true,
@@ -1668,7 +1834,7 @@ func TestCredentialEditBacksUpAndUpdatesManagedContext(t *testing.T) {
 	app.openCredentials()
 	app.startCredentialEdit(0)
 	app.credentialInputs[3].SetValue("prod")
-	app.credentialInputs[7].SetValue("prod-profile")
+	app.credentialInputs[5].SetValue("prod-profile")
 
 	updated, _ := app.saveCredentialEdit()
 
@@ -1692,32 +1858,112 @@ func TestAddProviderCommandOpensManagedContextForm(t *testing.T) {
 	if !updated.showCredentials || !updated.editCredential {
 		t.Fatalf("expected add-provider to open credential form, showCredentials=%t edit=%t", updated.showCredentials, updated.editCredential)
 	}
-	if len(updated.credentialInputs) != 9 {
-		t.Fatalf("expected auth-aware provider form, got %d inputs", len(updated.credentialInputs))
+	if len(updated.credentialInputs) != 7 {
+		t.Fatalf("expected simplified provider form, got %d inputs", len(updated.credentialInputs))
 	}
-	if got := updated.credentialInputs[5].Value(); got != config.AuthModeNativeCLI {
-		t.Fatalf("expected native-cli default auth mode, got %q", got)
+	if got := strings.Join(credentialFormLabels("GCP"), "|"); !strings.Contains(got, "Project ID") {
+		t.Fatalf("expected provider-aware labels, got %q", got)
 	}
 }
 
-func TestCredentialEditSavesAuthModeAndPersistence(t *testing.T) {
+func TestCredentialFormShowsOnlyProviderRelevantFields(t *testing.T) {
+	app := NewApp(config.AppConfig{}, "1.0.0", "today")
+	app.startCredentialEdit(-1)
+	if got := app.visibleCredentialFieldIndices(); !equalInts(got, []int{0, 1, 2, 3}) {
+		t.Fatalf("expected unknown provider to show basics, got %+v", got)
+	}
+
+	app.credentialInputs[1].SetValue("GCP")
+	if got := app.visibleCredentialFieldIndices(); !equalInts(got, []int{0, 1, 2, 3}) {
+		t.Fatalf("expected GCP to show project basics only, got %+v", got)
+	}
+
+	app.credentialInputs[1].SetValue("AWS")
+	if got := app.visibleCredentialFieldIndices(); !equalInts(got, []int{0, 1, 2, 3, 5, 6}) {
+		t.Fatalf("expected AWS to show profile and regions, got %+v", got)
+	}
+
+	app.credentialInputs[1].SetValue("Azure")
+	if got := app.visibleCredentialFieldIndices(); !equalInts(got, []int{0, 1, 2, 3, 4}) {
+		t.Fatalf("expected Azure to show tenant, got %+v", got)
+	}
+}
+
+func TestCredentialDescriptionsOmitEmptyBoilerplate(t *testing.T) {
+	gcp := credentialItem{ctx: config.SanitizeManagedCloudContext(config.ManagedCloudContext{
+		ContextName: "augment1",
+		Provider:    "GCP",
+		AccountID:   "augment1",
+		AccountName: "augment1",
+		Regions:     []string{"global"},
+	})}
+	if got := gcp.Description(); got != "native CLI" {
+		t.Fatalf("expected compact GCP description, got %q", got)
+	}
+
+	aws := credentialItem{ctx: config.SanitizeManagedCloudContext(config.ManagedCloudContext{
+		ContextName:       "prod",
+		Provider:          "AWS",
+		AccountID:         "1111",
+		AccountName:       "Production",
+		CredentialProfile: "prod-admin",
+		Regions:           []string{"us-east-1", "global", "us-west-2"},
+	})}
+	got := aws.Description()
+	for _, want := range []string{"target=1111 (Production)", "auth=prod-admin", "regions=us-east-1,us-west-2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in AWS description %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"tenant=-", "auth=-", "regions=global", "mode=native-cli", "persist=native-cli"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("did not expect %q in AWS description %q", unwanted, got)
+		}
+	}
+}
+
+func TestDiscoveryDescriptionsOmitEmptyBoilerplate(t *testing.T) {
+	item := discoveryContextItem{ctx: core.CloudContext{
+		Provider:    "GCP",
+		ContextName: "augment1",
+		AccountID:   "augment1",
+		AccountName: "augment1",
+		Region:      "global",
+	}}
+	got := item.Description()
+	if got != "account=augment1" {
+		t.Fatalf("expected compact discovery description, got %q", got)
+	}
+	if strings.Contains(got, "tenant=-") || strings.Contains(got, "auth=-") || strings.Contains(got, "region=global") {
+		t.Fatalf("description still has empty boilerplate: %q", got)
+	}
+}
+
+func TestCredentialEditPreservesHiddenAuthModeAndPersistence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	cfg := config.AppConfig{Backend: "cli"}
+	cfg := config.AppConfig{
+		Backend: "cli",
+		CloudContexts: []config.ManagedCloudContext{{
+			ContextName:           "prod-aws",
+			Provider:              "AWS",
+			AccountID:             "1111",
+			AccountName:           "prod",
+			AuthMode:              config.AuthModeAWSume,
+			CredentialPersistence: config.CredentialPersistenceMemory,
+			CredentialProfile:     "prod-admin",
+			Regions:               []string{"us-east-1"},
+		}},
+	}
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 
 	app := NewApp(cfg, "1.0.0", "today")
-	app.startCredentialEdit(-1)
-	app.credentialInputs[0].SetValue("prod-aws")
-	app.credentialInputs[1].SetValue("AWS")
-	app.credentialInputs[2].SetValue("1111")
-	app.credentialInputs[3].SetValue("prod")
-	app.credentialInputs[5].SetValue(config.AuthModeAWSume)
-	app.credentialInputs[6].SetValue(config.CredentialPersistenceMemory)
-	app.credentialInputs[7].SetValue("prod-admin")
-	app.credentialInputs[8].SetValue("us-east-1")
+	app.startCredentialEdit(0)
+	app.credentialInputs[3].SetValue("prod-renamed")
+	app.credentialInputs[5].SetValue("prod-admin-2")
+	app.credentialInputs[6].SetValue("us-east-1,us-west-2")
 
 	updated, _ := app.saveCredentialEdit()
 
@@ -1726,7 +1972,38 @@ func TestCredentialEditSavesAuthModeAndPersistence(t *testing.T) {
 	}
 	got := updated.cfg.CloudContexts[0]
 	if got.AuthMode != config.AuthModeAWSume || got.CredentialPersistence != config.CredentialPersistenceMemory {
-		t.Fatalf("expected awsume/memory auth metadata, got %+v", got)
+		t.Fatalf("expected hidden awsume/memory auth metadata to be preserved, got %+v", got)
+	}
+	if got.CredentialProfile != "prod-admin-2" || strings.Join(got.Regions, ",") != "us-east-1,us-west-2" {
+		t.Fatalf("expected visible fields to update, got %+v", got)
+	}
+}
+
+func TestFirstRunCredentialEditCreatesConfigAndCurrentContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := config.Load()
+
+	app := NewApp(cfg, "1.0.0", "today")
+	app.startCredentialEdit(-1)
+	app.credentialInputs[0].SetValue("prod-aws")
+	app.credentialInputs[1].SetValue("AWS")
+	app.credentialInputs[2].SetValue("1111")
+	app.credentialInputs[3].SetValue("prod")
+	app.credentialInputs[5].SetValue("prod-admin")
+	app.credentialInputs[6].SetValue("us-east-1")
+
+	updated, _ := app.saveCredentialEdit()
+	loaded := config.Load()
+
+	if len(updated.cfg.CloudContexts) != 1 || len(loaded.CloudContexts) != 1 {
+		t.Fatalf("expected first-run profile to persist, updated=%+v loaded=%+v", updated.cfg.CloudContexts, loaded.CloudContexts)
+	}
+	if updated.cfg.CurrentContext != "prod-aws" || loaded.CurrentContext != "prod-aws" {
+		t.Fatalf("expected first-run profile to become current, updated=%q loaded=%q", updated.cfg.CurrentContext, loaded.CurrentContext)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cloudmanager.json")); err != nil {
+		t.Fatalf("expected first-run config file to be created: %v", err)
 	}
 }
 
@@ -1935,6 +2212,37 @@ func TestDiscoveryPickerDefaultsUnselectedAndImportsOnlySelected(t *testing.T) {
 	}
 	if updated.cfg.CloudContexts[1].AccountID != "project-new" {
 		t.Fatalf("expected project-new import, got %+v", updated.cfg.CloudContexts[1])
+	}
+}
+
+func TestFirstRunDiscoveryImportCreatesConfigAndCurrentContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := config.Load()
+	app := NewApp(cfg, "1.0.0", "today")
+	app.showContextDiscovery = true
+	app.discoveryList.SetItems([]list.Item{
+		discoveryContextItem{
+			selected: true,
+			ctx: core.CloudContext{
+				Provider:          "AWS",
+				ContextName:       "prod-admin",
+				AccountID:         "1111",
+				AccountName:       "prod",
+				Region:            "us-east-1",
+				CredentialProfile: "prod-admin",
+			},
+		},
+	})
+
+	updated, _ := app.importSelectedDiscoveredContexts()
+	loaded := config.Load()
+
+	if len(updated.cfg.CloudContexts) != 1 || len(loaded.CloudContexts) != 1 {
+		t.Fatalf("expected first-run discovery import to persist, updated=%+v loaded=%+v", updated.cfg.CloudContexts, loaded.CloudContexts)
+	}
+	if updated.cfg.CurrentContext != "prod-admin" || loaded.CurrentContext != "prod-admin" {
+		t.Fatalf("expected imported context to become current, updated=%q loaded=%q", updated.cfg.CurrentContext, loaded.CurrentContext)
 	}
 }
 

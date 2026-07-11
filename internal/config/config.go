@@ -225,6 +225,7 @@ func BackupConfig() (string, error) {
 
 // Load reads the config from disk, applying defaults for missing values.
 func Load() AppConfig {
+	viper.Reset()
 	home, _ := os.UserHomeDir()
 	viper.AddConfigPath(home)
 	viper.SetConfigName(".cloudmanager")
