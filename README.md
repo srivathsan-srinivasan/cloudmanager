@@ -135,7 +135,7 @@ terminal workflow, active context, audit path, and provider-aware guardrails.
 Fast install:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.2/scripts/install | sh
+curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.3/scripts/install | sh
 ```
 
 The installer prefers a prebuilt GitHub Release artifact. If no artifact exists
@@ -144,13 +144,13 @@ for the requested OS/architecture yet, it falls back to `go install`.
 To force a source build and let Homebrew install Go when Go is missing:
 
 ```bash
-curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.2/scripts/install | sh -s -- --source --install-go
+curl -sSfL https://raw.githubusercontent.com/vyoogam/cloudmanager/v1.0.3/scripts/install | sh -s -- --source --install-go
 ```
 
 Go install fallback:
 
 ```bash
-go install github.com/vyoogam/cloudmanager@v1.0.2
+go install github.com/vyoogam/cloudmanager1.0.3
 ```
 
 `go install` builds from source using the user's Go toolchain. It does not use
