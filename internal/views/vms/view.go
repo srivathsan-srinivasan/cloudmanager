@@ -56,6 +56,8 @@ type vmCostEnrichedMsg struct {
 }
 type commandCompleteMsg struct {
 	output string
+	action string
+	vm     core.VM
 	err    error
 }
 type describeCompleteMsg struct {
@@ -97,6 +99,20 @@ type costCacheEntry struct {
 type metricsCacheEntry struct {
 	metrics   *core.VMMetrics
 	timestamp time.Time
+}
+
+type vmActionProgress struct {
+	active bool
+	done   bool
+	failed bool
+
+	action string
+	vmName string
+	vmID   string
+	target string
+	stage  string
+	state  string
+	detail string
 }
 
 // --- list item adapters ---
@@ -198,6 +214,7 @@ type VMsView struct {
 	statusMsg      string
 	copyableText   string
 	detailURL      string
+	actionProgress vmActionProgress
 
 	pendingAction     actionItem
 	pendingVM         core.VM
@@ -351,6 +368,7 @@ func (v *VMsView) Init(ctx core.CloudContext, width, height int, showSidebar boo
 	v.visibleVMs = nil
 	v.copyableText = ""
 	v.detailURL = ""
+	v.actionProgress = vmActionProgress{}
 	v.columnOffset = 0
 	v.requestKey = ctx.CacheKey()
 	v.breadcrumbs = fmt.Sprintf("%s \u203A %s \u203A %s", ctx.Provider, ctx.DisplayName(), ctx.Region)
@@ -465,8 +483,10 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 			}
 			v.sortCurrentVMs()
 			v.syncVisibleRows()
-			v.statusMsg = fmt.Sprintf("Loaded %d instances.", len(taggedVMs))
-			if !v.showKubernetesNodes {
+			if !v.completeVMActionProgress(taggedVMs) {
+				v.statusMsg = fmt.Sprintf("Loaded %d instances.", len(taggedVMs))
+			}
+			if !v.actionProgress.active && !v.showKubernetesNodes {
 				if hidden := countKubernetesNodes(v.vmData, v.searchInput.Value(), v.filterTerms); hidden > 0 {
 					v.statusMsg = fmt.Sprintf("Loaded %d instances. Hiding %d Kubernetes worker nodes.", len(taggedVMs), hidden)
 				}
@@ -513,11 +533,13 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 	case commandCompleteMsg:
 		v.loading = false
 		if msg.err != nil {
+			v.failVMActionProgress(msg.err)
 			v.statusMsg = fmt.Sprintf("Error: %v", msg.err)
 			v.showCopyableDetail(fmt.Sprintf("ACTION FAILED\n\nError: %v\n\nOutput:\n%s", msg.err, msg.output))
 			cmds = append(cmds, statusCmd("Action failed. Press c to copy, Esc to close."))
 		} else {
-			v.statusMsg = msg.output
+			v.markVMActionAccepted(msg.output)
+			v.statusMsg = fmt.Sprintf("%s accepted for %s. Refreshing state...", msg.action, msg.vm.Name)
 			v.loading = true
 			return v, v.fetchVMsCmd(true)
 		}
@@ -544,6 +566,24 @@ func (v *VMsView) Update(msg tea.Msg) (ui.View, tea.Cmd) {
 		v.setAccessItems(msg.methods)
 		v.accessMethods.SetSize(64, ui.ActionListHeight(len(v.accessMethods.Items()), v.height))
 		v.loading = false
+		if method, ok := v.autoRunnableAccessMethod(msg.methods); ok {
+			cmd, err := access.ExecCommand(context.Background(), method)
+			if err != nil {
+				v.activePane = paneAccess
+				v.statusMsg = fmt.Sprintf("Access method failed: %v", err)
+				return v, statusCmd(v.statusMsg)
+			}
+			v.activePane = paneTable
+			v.statusMsg = fmt.Sprintf("Starting %s...", method.Label)
+			return v, tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return sshCompleteMsg{err: err}
+			})
+		}
+		if v.onlyPrivateKeyPicker(msg.methods) {
+			v.activePane = paneAccess
+			v.openPrivateKeyPicker()
+			return v, statusCmd(v.statusMsg)
+		}
 		v.activePane = paneAccess
 		v.statusMsg = "Choose access method (Enter run, c copy, Esc close)."
 		cmds = append(cmds, statusCmd(v.statusMsg))
@@ -654,26 +694,26 @@ func (v *VMsView) Render() string {
 
 	switch v.activePane {
 	case paneColumnConfig:
-		return ui.ClampToWindow(v.columnConfigList.View(), v.width, v.height)
+		return v.renderWithActionProgress(v.columnConfigList.View())
 	case paneSortConfig:
-		return ui.ClampToWindow(v.sortList.View(), v.width, v.height)
+		return v.renderWithActionProgress(v.sortList.View())
 	case paneDescribe:
-		return ui.ClampToWindow(v.descView.View(), v.width, v.height)
+		return v.renderWithActionProgress(v.descView.View())
 	case paneActions:
 		overlay := ui.OverlayStyle.Render(v.actions.View())
 		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
-		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+		return v.renderWithActionProgress(lipgloss.JoinVertical(lipgloss.Left, header, "", body))
 	case paneAccess:
-		overlayContent := v.accessMethods.View()
 		if v.accessMode == "keys" {
 			panelWidth := privateKeyAccessPanelWidth(v.width)
 			overlay := ui.OverlayStyle.Copy().Width(panelWidth).Render(v.renderPrivateKeyAccess(panelWidth - 6))
 			body := lipgloss.Place(v.width, maxInt(6, v.height-4), lipgloss.Center, lipgloss.Top, overlay, lipgloss.WithWhitespaceChars(" "))
-			return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+			return v.renderWithActionProgress(lipgloss.JoinVertical(lipgloss.Left, header, "", body))
 		}
-		overlay := ui.OverlayStyle.Render(overlayContent)
-		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-70).Render(tableContent), overlay)
-		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+		panelWidth := accessPickerPanelWidth(v.width)
+		overlay := ui.OverlayStyle.Copy().Width(panelWidth).Render(v.renderAccessPicker(panelWidth - 6))
+		body := lipgloss.Place(v.width, maxInt(8, v.height-4), lipgloss.Center, lipgloss.Top, overlay, lipgloss.WithWhitespaceChars(" "))
+		return v.renderWithActionProgress(lipgloss.JoinVertical(lipgloss.Left, header, "", body))
 	case paneConfirm:
 		confirmMsg := fmt.Sprintf("Are you sure you want to %s instance %s?", v.pendingAction.title, v.pendingVM.Name)
 		confirmStyle := ui.OverlayStyle.Copy().BorderForeground(ui.Alert).Padding(1, 2).Width(50)
@@ -684,7 +724,7 @@ func (v *VMsView) Render() string {
 		)
 		overlay := confirmStyle.Render(confirmView)
 		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
-		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+		return v.renderWithActionProgress(lipgloss.JoinVertical(lipgloss.Left, header, "", body))
 	case paneTag:
 		form := lipgloss.JoinVertical(lipgloss.Left,
 			lipgloss.NewStyle().Foreground(ui.Highlight).Bold(true).Render("CloudManager Tags"),
@@ -695,10 +735,153 @@ func (v *VMsView) Render() string {
 		)
 		overlay := ui.OverlayStyle.Render(form)
 		body := lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().MaxWidth(v.width-55).Render(tableContent), overlay)
-		return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", body), v.width, v.height)
+		return v.renderWithActionProgress(lipgloss.JoinVertical(lipgloss.Left, header, "", body))
 	}
 
-	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, header, "", tableContent), v.width, v.height)
+	return v.renderWithActionProgress(lipgloss.JoinVertical(lipgloss.Left, header, "", tableContent))
+}
+
+func (v *VMsView) renderWithActionProgress(content string) string {
+	progress := v.renderActionProgress()
+	if progress == "" {
+		return ui.ClampToWindow(content, v.width, v.height)
+	}
+	aligned := lipgloss.PlaceHorizontal(v.width, lipgloss.Right, progress)
+	return ui.ClampToWindow(lipgloss.JoinVertical(lipgloss.Left, content, aligned), v.width, v.height)
+}
+
+func (v *VMsView) renderActionProgress() string {
+	if !v.actionProgress.active {
+		return ""
+	}
+	p := v.actionProgress
+	label := fmt.Sprintf("%s %s", p.action, p.vmName)
+	stage := p.stage
+	if p.state != "" {
+		stage = fmt.Sprintf("%s: %s", stage, p.state)
+	}
+	if p.detail != "" {
+		stage = fmt.Sprintf("%s - %s", stage, p.detail)
+	}
+	line := fmt.Sprintf("%s %s %s", label, vmActionProgressBar(p), stage)
+	maxWidth := v.width
+	if maxWidth > 72 {
+		maxWidth = 72
+	}
+	if maxWidth < 24 {
+		maxWidth = 24
+	}
+	return lipgloss.NewStyle().Foreground(ui.Subtle).Render(ui.TruncateText(line, maxWidth))
+}
+
+func vmActionProgressBar(p vmActionProgress) string {
+	switch {
+	case p.failed:
+		return "[!...]"
+	case p.done:
+		return "[####]"
+	case p.stage == "refreshing":
+		return "[###-]"
+	case p.stage == "accepted":
+		return "[##--]"
+	default:
+		return "[#---]"
+	}
+}
+
+func (v *VMsView) renderAccessPicker(width int) string {
+	if width < 42 {
+		width = 42
+	}
+	title := "SSH Access"
+	if strings.TrimSpace(v.pendingVM.Name) != "" {
+		title = "SSH Access: " + v.pendingVM.Name
+	}
+	contextLine := strings.TrimSpace(strings.Join([]string{v.activeCtx.Provider, v.activeCtx.DisplayName(), v.activeCtx.Region}, " / "))
+	if contextLine == "//" || contextLine == "/ /" {
+		contextLine = ""
+	}
+	lines := []string{
+		lipgloss.NewStyle().Foreground(ui.Highlight).Bold(true).Render(ui.TruncateText(title, width)),
+	}
+	if contextLine != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ui.Subtle).Render(ui.TruncateText(contextLine, width)))
+	}
+	lines = append(lines, "")
+
+	items := v.accessMethods.Items()
+	if len(items) == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ui.Subtle).Render("No access methods available."))
+	} else {
+		selected := v.accessMethods.Index()
+		for i, item := range items {
+			method, ok := item.(accessItem)
+			if !ok {
+				continue
+			}
+			lines = append(lines, renderAccessMethodRow(method.method, i == selected, width)...)
+		}
+	}
+	lines = append(lines, "", lipgloss.NewStyle().Foreground(ui.Subtle).Render(ui.TruncateText("Enter connect | c copy | Esc back", width)))
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func renderAccessMethodRow(method core.AccessMethod, selected bool, width int) []string {
+	marker := " "
+	if selected {
+		marker = ">"
+	}
+	badge := "READY"
+	if method.Kind == "private_key_picker" {
+		badge = "SETUP"
+	}
+	if !method.Available {
+		badge = "BLOCKED"
+	}
+	label := fmt.Sprintf("%s %-7s %s", marker, badge, method.Label)
+	if kind := accessKindLabel(method.Kind); kind != "" {
+		label = fmt.Sprintf("%s [%s]", label, kind)
+	}
+	label = ui.TruncateText(label, width)
+	if selected {
+		label = lipgloss.NewStyle().Foreground(ui.Highlight).Bold(true).Render(label)
+	}
+	detail := accessMethodDetail(method)
+	if detail == "" {
+		return []string{label}
+	}
+	detail = "  " + ui.TruncateText(detail, maxInt(16, width-2))
+	return []string{label, lipgloss.NewStyle().Foreground(ui.Subtle).Render(detail)}
+}
+
+func accessMethodDetail(method core.AccessMethod) string {
+	if !method.Available && strings.TrimSpace(method.Reason) != "" {
+		return method.Reason
+	}
+	if strings.TrimSpace(method.CopyText) != "" {
+		return method.CopyText
+	}
+	if method.Kind == "private_key_picker" {
+		return "Choose key, username, and target IP."
+	}
+	return ""
+}
+
+func accessKindLabel(kind string) string {
+	switch kind {
+	case "native":
+		return "cloud"
+	case "ssh_config":
+		return "ssh-config"
+	case "learned_ssh":
+		return "learned"
+	case "private_key_picker":
+		return "key"
+	case "ssh":
+		return "direct"
+	default:
+		return strings.TrimSpace(kind)
+	}
 }
 
 func (v *VMsView) renderPrivateKeyAccess(width int) string {
@@ -715,19 +898,25 @@ func (v *VMsView) renderPrivateKeyAccess(width int) string {
 	}
 	command := "Select a key to build command."
 	if method, ok := v.currentPrivateKeyMethod(); ok {
-		command = method.CopyText
+		command = privateKeyCommandPreview(method)
 	}
 	v.accessUserInput.Width = width - 8
 	v.keyFileList.SetSize(width, ui.ActionListHeight(len(v.keyFileList.Items()), v.height-12))
+	target := "-"
+	if ip := selectedIPForKind(v.pendingVM, ipLabel); ip != "" {
+		target = ip
+	}
 	lines := []string{
-		lipgloss.NewStyle().Foreground(ui.Highlight).Bold(true).Render("Private key SSH"),
-		v.accessUserInput.View(),
-		fmt.Sprintf("key> %s", ui.TruncateText(keyLabel, width-5)),
-		fmt.Sprintf("ip> %s", ui.TruncateText(ipLabel, width-4)),
+		lipgloss.NewStyle().Foreground(ui.Highlight).Bold(true).Render(ui.TruncateText("Private key SSH: "+v.pendingVM.Name, width)),
 		"",
+		fmt.Sprintf("user   %s", ui.TruncateText(strings.TrimPrefix(v.accessUserInput.View(), "user> "), width-7)),
+		fmt.Sprintf("key    %s", ui.TruncateText(keyLabel, width-7)),
+		fmt.Sprintf("target %s (%s)", ui.TruncateText(target, width-16), ipLabel),
+		"",
+		"command",
 		lipgloss.NewStyle().Foreground(ui.Subtle).Render(ui.TruncateText(command, width)),
 		"",
-		lipgloss.NewStyle().Foreground(ui.Subtle).Render(ui.TruncateText("k key • u user • p IP • b bootstrap • Enter run • c copy • Esc back", width)),
+		lipgloss.NewStyle().Foreground(ui.Subtle).Render(ui.TruncateText("Enter connect | c copy | k key | u user | p IP | b bootstrap | Esc back", width)),
 	}
 	if v.keyDropdownOpen {
 		lines = append(lines, "", v.keyFileList.View())
@@ -744,6 +933,39 @@ func privateKeyAccessPanelWidth(windowWidth int) int {
 		width = 42
 	}
 	return width
+}
+
+func accessPickerPanelWidth(windowWidth int) int {
+	width := windowWidth - 8
+	if width > 88 {
+		width = 88
+	}
+	if width < 54 {
+		width = 54
+	}
+	return width
+}
+
+func privateKeyCommandPreview(method core.AccessMethod) string {
+	if len(method.Command) == 0 {
+		return method.CopyText
+	}
+	key := ""
+	target := ""
+	for i := 0; i < len(method.Command); i++ {
+		if method.Command[i] == "-i" && i+1 < len(method.Command) {
+			key = filepath.Base(method.Command[i+1])
+			i++
+			continue
+		}
+		if i == len(method.Command)-1 {
+			target = method.Command[i]
+		}
+	}
+	if key != "" && target != "" {
+		return fmt.Sprintf("ssh -i %s %s", key, target)
+	}
+	return method.CopyText
 }
 
 func maxInt(a, b int) int {
@@ -967,6 +1189,7 @@ func (v *VMsView) handleActionKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 			}
 			// Other actions (Start, Stop, Restart, Describe)
 			v.activePane = paneTable
+			v.startVMActionProgress(action.title, vm)
 			v.statusMsg = fmt.Sprintf("Executing %s on %s...", action.title, vm.Name)
 			return v, executeActionCmd(action.title, vm, v.activeCtx, v.cfg)
 		}
@@ -1115,6 +1338,7 @@ func (v *VMsView) handleConfirmKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		return v, nil
 	case "enter":
 		v.activePane = paneTable
+		v.startVMActionProgress(v.pendingAction.title, v.pendingVM)
 		v.statusMsg = fmt.Sprintf("Executing %s on %s...", v.pendingAction.title, v.pendingVM.Name)
 		return v, executeActionCmd(v.pendingAction.title, v.pendingVM, v.activeCtx, v.cfg)
 	}
@@ -1239,6 +1463,119 @@ func (v *VMsView) openConsole(consoleURL string) (ui.View, tea.Cmd) {
 func statusCmd(msg string) tea.Cmd {
 	return func() tea.Msg {
 		return ui.StatusUpdateMsg{Msg: msg}
+	}
+}
+
+func (v *VMsView) startVMActionProgress(action string, vm core.VM) {
+	v.actionProgress = vmActionProgress{
+		active: true,
+		action: action,
+		vmName: vm.Name,
+		vmID:   vm.ID,
+		target: vmActionTargetState(action),
+		stage:  "sending",
+		state:  vm.State,
+	}
+}
+
+func (v *VMsView) markVMActionAccepted(output string) {
+	if !v.actionProgress.active {
+		return
+	}
+	v.actionProgress.stage = "refreshing"
+	v.actionProgress.detail = strings.TrimSpace(output)
+	v.actionProgress.failed = false
+	v.actionProgress.done = false
+}
+
+func (v *VMsView) failVMActionProgress(err error) {
+	if !v.actionProgress.active {
+		return
+	}
+	v.actionProgress.stage = "failed"
+	v.actionProgress.failed = true
+	v.actionProgress.done = true
+	v.actionProgress.detail = err.Error()
+}
+
+func (v *VMsView) completeVMActionProgress(vms []core.VM) bool {
+	if !v.actionProgress.active || v.actionProgress.stage != "refreshing" {
+		return false
+	}
+	vm, found := findActionVM(vms, v.actionProgress.vmID, v.actionProgress.vmName)
+	target := v.actionProgress.target
+	if target == "deleted" && !found {
+		v.actionProgress.stage = "confirmed"
+		v.actionProgress.state = "deleted"
+		v.actionProgress.done = true
+		v.actionProgress.detail = "not present after refresh"
+		v.statusMsg = fmt.Sprintf("%s confirmed for %s.", v.actionProgress.action, v.actionProgress.vmName)
+		return true
+	}
+	if !found {
+		v.actionProgress.stage = "waiting"
+		v.actionProgress.state = "unknown"
+		v.actionProgress.detail = "not found after refresh"
+		v.statusMsg = fmt.Sprintf("%s accepted for %s; refreshed state is unknown.", v.actionProgress.action, v.actionProgress.vmName)
+		return true
+	}
+	v.actionProgress.state = vm.State
+	if vmStateMatchesActionTarget(vm.State, target) {
+		v.actionProgress.stage = "confirmed"
+		v.actionProgress.done = true
+		v.actionProgress.detail = ""
+		v.statusMsg = fmt.Sprintf("%s confirmed for %s: %s.", v.actionProgress.action, v.actionProgress.vmName, vm.State)
+		return true
+	}
+	v.actionProgress.stage = "waiting"
+	v.actionProgress.detail = "provider still converging"
+	v.statusMsg = fmt.Sprintf("%s accepted for %s; refreshed state is %s.", v.actionProgress.action, v.actionProgress.vmName, vm.State)
+	return true
+}
+
+func findActionVM(vms []core.VM, id, name string) (core.VM, bool) {
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	for _, vm := range vms {
+		if id != "" && strings.TrimSpace(vm.ID) == id {
+			return vm, true
+		}
+	}
+	for _, vm := range vms {
+		if name != "" && strings.TrimSpace(vm.Name) == name {
+			return vm, true
+		}
+	}
+	return core.VM{}, false
+}
+
+func vmActionTargetState(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "start", "restart":
+		return "running"
+	case "stop":
+		return "stopped"
+	case "terminate", "delete":
+		return "deleted"
+	default:
+		return ""
+	}
+}
+
+func vmStateMatchesActionTarget(state, target string) bool {
+	state = strings.ToLower(strings.TrimSpace(state))
+	target = strings.ToLower(strings.TrimSpace(target))
+	switch target {
+	case "":
+		return false
+	case "running":
+		return state == "running" || state == "run" || state == "active"
+	case "stopped":
+		return state == "stopped" || state == "deallocated" || state == "terminated" || state == "stopping"
+	case "deleted":
+		return state == "deleted" || state == "terminated"
+	default:
+		return state == target
 	}
 }
 
@@ -1368,7 +1705,7 @@ func (v *VMsView) openPrivateKeyPicker() {
 	v.selectedSSHIPKind = defaultSSHIPKind(v.pendingVM)
 	v.selectedSSHKey = ""
 	v.refreshKeyFileItems()
-	v.statusMsg = "Private key SSH. Press k to select key, u for username, p for IP."
+	v.statusMsg = "Private key SSH ready. Enter connect, k key, u user, p IP, c copy."
 }
 
 func (v *VMsView) refreshKeyFileItems() {
@@ -1380,6 +1717,9 @@ func (v *VMsView) refreshKeyFileItems() {
 	v.keyFileList.SetItems(items)
 	if len(items) > 0 {
 		v.keyFileList.Select(0)
+		if strings.TrimSpace(v.selectedSSHKey) == "" {
+			v.selectedSSHKey = keys[0]
+		}
 	}
 	v.keyFileList.SetSize(56, ui.ActionListHeight(len(items), v.height))
 }
@@ -1509,6 +1849,36 @@ func (v *VMsView) restoreAccessParent() {
 	v.setAccessItems(v.accessParent)
 	v.accessMethods.SetSize(64, ui.ActionListHeight(len(v.accessMethods.Items()), v.height))
 	v.statusMsg = "Choose access method (Enter run, c copy, Esc close)."
+}
+
+func (v *VMsView) autoRunnableAccessMethod(methods []core.AccessMethod) (core.AccessMethod, bool) {
+	available := runnableAccessMethods(methods)
+	if len(available) != 1 {
+		return core.AccessMethod{}, false
+	}
+	method := available[0]
+	if method.Kind == "private_key_picker" || method.Kind == "remediation" || len(method.Command) == 0 {
+		return core.AccessMethod{}, false
+	}
+	return method, true
+}
+
+func (v *VMsView) onlyPrivateKeyPicker(methods []core.AccessMethod) bool {
+	available := runnableAccessMethods(methods)
+	return len(available) == 1 && available[0].Kind == "private_key_picker"
+}
+
+func runnableAccessMethods(methods []core.AccessMethod) []core.AccessMethod {
+	out := make([]core.AccessMethod, 0, len(methods))
+	for _, method := range methods {
+		if !method.Available || method.Kind == "remediation" {
+			continue
+		}
+		if len(method.Command) > 0 || method.Kind == "private_key_picker" {
+			out = append(out, method)
+		}
+	}
+	return out
 }
 
 func filterVMs(vms []core.VM, query string, filters []string, showKubernetesNodes bool) []core.VM {
@@ -1894,7 +2264,7 @@ func executeActionCmd(action string, vm core.VM, cloudCtx core.CloudContext, cfg
 		if action == "Describe" {
 			return describeCompleteMsg{output: output, consoleURL: core.VMConsoleURL(cloudCtx, vm), err: err}
 		}
-		return commandCompleteMsg{output: output, err: err}
+		return commandCompleteMsg{output: output, action: action, vm: vm, err: err}
 	}
 }
 

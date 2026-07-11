@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="${CLOUDMANAGER_REPO:-vyoogam/cloudmanager}"
-version="${CLOUDMANAGER_VERSION:-v1.0.2}"
+version="${CLOUDMANAGER_VERSION:-v1.0.3}"
 mode="${CLOUDMANAGER_INSTALL_MODE:-auto}"
 bin_dir="${CLOUDMANAGER_INSTALL_DIR:-}"
 install_go=0
@@ -15,7 +15,7 @@ Installs CloudManager from a GitHub Release artifact when available, then falls
 back to a source build with go install.
 
 Options:
-  --version v1.0.2       Version to install. Default: v1.0.2
+  --version v1.0.3       Version to install. Default: v1.0.3
   --bin-dir DIR          Install directory. Default: Homebrew bin, /usr/local/bin, or ~/.local/bin
   --binary               Require a prebuilt release artifact
   --source               Build from source with go install

@@ -140,6 +140,93 @@ func TestRenderColorizesUnselectedVMStatuses(t *testing.T) {
 	}
 }
 
+func TestVMActionProgressRendersWhileActionRuns(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(100, 30, false)
+	view.activeCtx = core.CloudContext{Provider: "AWS", AccountID: "123", Region: "us-east-1"}
+	view.vmData = []core.VM{{Name: "alpha", ID: "i-123", State: "stopped"}}
+	view.refreshTable()
+	view.syncVisibleRows()
+	view.activePane = paneActions
+	view.actions.Select(0)
+
+	updated, cmd := view.handleActionKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(*VMsView)
+	if cmd == nil {
+		t.Fatal("expected action command")
+	}
+	if !next.actionProgress.active || next.actionProgress.stage != "sending" {
+		t.Fatalf("expected sending action progress, got %+v", next.actionProgress)
+	}
+	rendered := next.Render()
+	if !strings.Contains(rendered, "Start alpha") || !strings.Contains(rendered, "[#---]") {
+		t.Fatalf("expected rendered start progress, got:\n%s", rendered)
+	}
+}
+
+func TestVMActionProgressConfirmsAfterRefresh(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(100, 30, false)
+	view.activeCtx = core.CloudContext{Provider: "AWS", AccountID: "123", Region: "us-east-1"}
+	view.requestKey = view.activeCtx.CacheKey()
+	vm := core.VM{Name: "alpha", ID: "i-123", State: "stopped"}
+	view.startVMActionProgress("Start", vm)
+
+	updated, cmd := view.Update(commandCompleteMsg{action: "Start", vm: vm, output: "accepted"})
+	next := updated.(*VMsView)
+	if cmd == nil {
+		t.Fatal("expected refresh command after action completion")
+	}
+	if next.actionProgress.stage != "refreshing" {
+		t.Fatalf("expected refreshing action progress, got %+v", next.actionProgress)
+	}
+	if rendered := next.Render(); !strings.Contains(rendered, "[###-]") || !strings.Contains(rendered, "refreshing") {
+		t.Fatalf("expected refreshing progress, got:\n%s", rendered)
+	}
+
+	updated, _ = next.Update(vmFetchMsg{
+		requestKey: next.requestKey,
+		vms:        []core.VM{{Name: "alpha", ID: "i-123", State: "running"}},
+	})
+	next = updated.(*VMsView)
+	if !next.actionProgress.done || next.actionProgress.stage != "confirmed" {
+		t.Fatalf("expected confirmed action progress, got %+v", next.actionProgress)
+	}
+	if !strings.Contains(next.statusMsg, "Start confirmed for alpha: running") {
+		t.Fatalf("expected confirmed status, got %q", next.statusMsg)
+	}
+	rendered := next.Render()
+	if !strings.Contains(rendered, "Start alpha") || !strings.Contains(rendered, "[####]") || !strings.Contains(rendered, "confirmed: running") {
+		t.Fatalf("expected confirmed progress, got:\n%s", rendered)
+	}
+}
+
+func TestRestartActionProgressTargetsRunningState(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(100, 30, false)
+	view.activeCtx = core.CloudContext{Provider: "GCP", AccountID: "project-a", Region: "us-central1"}
+	view.vmData = []core.VM{{Name: "web", ID: "vm-1", State: "running"}}
+	view.refreshTable()
+	view.syncVisibleRows()
+	view.activePane = paneActions
+	view.actions.Select(2)
+
+	updated, cmd := view.handleActionKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(*VMsView)
+	if cmd == nil {
+		t.Fatal("expected restart command")
+	}
+	if next.actionProgress.action != "Restart" || next.actionProgress.target != "running" {
+		t.Fatalf("expected restart progress targeting running, got %+v", next.actionProgress)
+	}
+	if rendered := next.Render(); !strings.Contains(rendered, "Restart web") {
+		t.Fatalf("expected rendered restart progress, got:\n%s", rendered)
+	}
+}
+
 func TestTagSelectedVMSavesCloudManagerTagOverlay(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -258,12 +345,12 @@ func TestProviderNativeAccessLabelAWS(t *testing.T) {
 	}
 }
 
-func TestAccessResolvedOpensPickerAndSelectsCommand(t *testing.T) {
+func TestAccessResolvedAutoStartsSingleRunnableCommand(t *testing.T) {
 	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
 	view := New(&cfg)
 	view.Resize(100, 30, false)
 
-	updated, _ := view.Update(accessResolvedMsg{
+	updated, cmd := view.Update(accessResolvedMsg{
 		vm: core.VM{Name: "alpha", ID: "i-123"},
 		methods: []core.AccessMethod{
 			{
@@ -278,18 +365,63 @@ func TestAccessResolvedOpensPickerAndSelectsCommand(t *testing.T) {
 	})
 	next := updated.(*VMsView)
 
+	if cmd == nil {
+		t.Fatal("expected SSH command to start automatically")
+	}
+	if next.activePane != paneTable {
+		t.Fatalf("expected VM table after auto-start, got pane %d", next.activePane)
+	}
+	if !strings.Contains(next.statusMsg, "Starting Direct SSH") {
+		t.Fatalf("expected auto-start status, got %q", next.statusMsg)
+	}
+}
+
+func TestAccessResolvedKeepsPickerWhenMultipleRunnableMethodsExist(t *testing.T) {
+	cfg := config.AppConfig{VMColumns: config.DefaultVMColumns}
+	view := New(&cfg)
+	view.Resize(100, 30, false)
+	view.activeCtx = core.CloudContext{Provider: "AWS", AccountName: "main", Region: "us-east-1"}
+	view.vmData = []core.VM{{Name: "alpha", ID: "i-123", Type: "t3.large", State: "running"}}
+	view.refreshTable()
+	view.syncVisibleRows()
+
+	updated, cmd := view.Update(accessResolvedMsg{
+		vm: core.VM{Name: "alpha", ID: "i-123"},
+		methods: []core.AccessMethod{
+			{
+				ID:        "provider-native",
+				Kind:      "native",
+				Label:     "AWS SSM Session Manager",
+				Command:   []string{"aws", "ssm", "start-session", "--target", "i-123"},
+				CopyText:  "aws ssm start-session --target i-123",
+				Available: true,
+			},
+			{
+				ID:        "ssh-config-alpha",
+				Kind:      "ssh_config",
+				Label:     "SSH config: alpha",
+				Command:   []string{"ssh", "alpha"},
+				CopyText:  "ssh alpha",
+				Available: true,
+			},
+		},
+	})
+	next := updated.(*VMsView)
+
+	if cmd == nil {
+		t.Fatal("expected status command for picker")
+	}
 	if next.activePane != paneAccess {
 		t.Fatalf("expected access picker pane, got %d", next.activePane)
 	}
-	method, ok := next.selectedAccessMethod()
-	if !ok {
-		t.Fatal("expected selected access method")
+	rendered := next.Render()
+	for _, want := range []string{"SSH Access: alpha", "AWS SSM Session Manager", "SSH config: alpha", "aws ssm start-session --target i-123", "READY"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected rendered access picker to contain %q, got:\n%s", want, rendered)
+		}
 	}
-	if method.CopyText != "ssh 203.0.113.10" {
-		t.Fatalf("expected direct ssh command selected, got %+v", method)
-	}
-	if !strings.Contains(next.Render(), "Direct SSH") {
-		t.Fatalf("expected rendered access picker, got:\n%s", next.Render())
+	if strings.Contains(rendered, "Instance ID") || strings.Contains(rendered, "t3.large") {
+		t.Fatalf("expected access picker without VM table bleed, got:\n%s", rendered)
 	}
 }
 
@@ -324,8 +456,9 @@ func TestPrivateKeyAccessUsesKeyDropdownAndUsername(t *testing.T) {
 	if view.accessMode != "keys" {
 		t.Fatalf("expected key picker mode, got %q", view.accessMode)
 	}
-	if _, ok := view.currentPrivateKeyMethod(); ok {
-		t.Fatal("expected no runnable key command before selecting a key")
+	method, ok := view.currentPrivateKeyMethod()
+	if !ok || !strings.Contains(method.CopyText, "ubuntu@203.0.113.10") {
+		t.Fatalf("expected preselected key command, got %+v", method)
 	}
 	_, _ = view.handleAccessKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	if !view.keyDropdownOpen {
@@ -338,7 +471,7 @@ func TestPrivateKeyAccessUsesKeyDropdownAndUsername(t *testing.T) {
 	if filepath.Base(view.selectedSSHKey) != "prod.pem" {
 		t.Fatalf("expected prod.pem selected, got %q", view.selectedSSHKey)
 	}
-	method, ok := view.currentPrivateKeyMethod()
+	method, ok = view.currentPrivateKeyMethod()
 	if !ok || !strings.Contains(method.CopyText, "ubuntu@203.0.113.10") {
 		t.Fatalf("expected default ubuntu public IP command, got %+v", method)
 	}
@@ -382,7 +515,12 @@ func TestPrivateKeyAccessRenderDoesNotBleedVMTable(t *testing.T) {
 	if strings.Contains(rendered, "Instance ID") || strings.Contains(rendered, "t3.large") {
 		t.Fatalf("expected private-key form to render without VM table bleed, got:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "Private key SSH") || !strings.Contains(rendered, "key> Select key") {
+	for _, want := range []string{"Private key SSH: alpha", "key    prod.pem", "target 203.0.113.10 (public)", "command"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected private-key form to contain %q, got:\n%s", want, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "ssh -i") || !strings.Contains(rendered, "ubuntu@203.0.113.10") {
 		t.Fatalf("expected private-key form content, got:\n%s", rendered)
 	}
 }

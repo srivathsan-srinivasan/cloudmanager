@@ -34,6 +34,7 @@ const (
 // --- Bubble Tea messages ---
 
 type contextLoadMsg struct {
+	cfg      config.AppConfig
 	tree     []*TreeNode
 	contexts []core.CloudContext
 	warnings []string
@@ -109,11 +110,13 @@ type providerLoginCompleteMsg struct {
 }
 
 type azureSubscriptionLoadMsg struct {
+	cfg      config.AppConfig
 	contexts []core.CloudContext
 	warnings []string
 }
 
 type contextDiscoveryLoadMsg struct {
+	cfg      config.AppConfig
 	contexts []core.CloudContext
 	warnings []string
 }
@@ -340,17 +343,33 @@ func (i credentialItem) Title() string {
 	return fmt.Sprintf("%s %s  %s", current, strings.TrimSpace(i.ctx.Provider), name)
 }
 func (i credentialItem) Description() string {
-	auth := strings.TrimSpace(i.ctx.CredentialProfile)
-	if auth == "" {
-		auth = "-"
+	var parts []string
+	name := strings.TrimSpace(i.ctx.ContextName)
+	target := managedContextLabel(i.ctx)
+	if target != "" && target != "unnamed" && !strings.EqualFold(target, name) {
+		parts = append(parts, "target="+target)
 	}
 	mode := config.SanitizeAuthMode(i.ctx.AuthMode)
 	persistence := config.SanitizeCredentialPersistence(i.ctx.CredentialPersistence, mode)
-	regions := strings.Join(i.ctx.Regions, ",")
-	if regions == "" {
-		regions = "-"
+	if mode != config.AuthModeNativeCLI {
+		parts = append(parts, "mode="+mode)
 	}
-	return fmt.Sprintf("target=%s mode=%s persist=%s auth=%s tenant=%s regions=%s", managedContextLabel(i.ctx), mode, persistence, auth, orFallback(i.ctx.Tenant, "-"), regions)
+	if persistence != config.CredentialPersistenceNativeCLI {
+		parts = append(parts, "persist="+persistence)
+	}
+	if auth := strings.TrimSpace(i.ctx.CredentialProfile); auth != "" {
+		parts = append(parts, "auth="+auth)
+	}
+	if tenant := strings.TrimSpace(i.ctx.Tenant); tenant != "" {
+		parts = append(parts, "tenant="+tenant)
+	}
+	if regions := meaningfulRegions(i.ctx.Regions); regions != "" {
+		parts = append(parts, "regions="+regions)
+	}
+	if len(parts) == 0 {
+		return "native CLI"
+	}
+	return strings.Join(parts, " ")
 }
 func (i credentialItem) FilterValue() string { return i.Title() + " " + i.Description() }
 
@@ -396,7 +415,26 @@ func (i discoveryContextItem) Title() string {
 	return fmt.Sprintf("%s %s  %s%s", marker, i.ctx.Provider, i.ctx.DisplayName(), existing)
 }
 func (i discoveryContextItem) Description() string {
-	return fmt.Sprintf("context=%s account=%s tenant=%s region=%s auth=%s", orFallback(i.ctx.ContextName, "-"), orFallback(i.ctx.AccountID, "-"), orFallback(i.ctx.Tenant, "-"), orFallback(i.ctx.Region, "-"), orFallback(i.ctx.AuthRef(), "-"))
+	var parts []string
+	if contextName := strings.TrimSpace(i.ctx.ContextName); contextName != "" && !strings.EqualFold(contextName, i.ctx.DisplayName()) {
+		parts = append(parts, "context="+contextName)
+	}
+	if account := strings.TrimSpace(i.ctx.AccountID); account != "" {
+		parts = append(parts, "account="+account)
+	}
+	if tenant := strings.TrimSpace(i.ctx.Tenant); tenant != "" {
+		parts = append(parts, "tenant="+tenant)
+	}
+	if region := strings.TrimSpace(i.ctx.Region); region != "" && !strings.EqualFold(region, "global") {
+		parts = append(parts, "region="+region)
+	}
+	if auth := strings.TrimSpace(i.ctx.CredentialProfile); auth != "" {
+		parts = append(parts, "auth="+auth)
+	}
+	if len(parts) == 0 {
+		return "native CLI"
+	}
+	return strings.Join(parts, " ")
 }
 func (i discoveryContextItem) FilterValue() string {
 	return strings.Join([]string{i.ctx.Provider, i.ctx.ContextName, i.ctx.AccountName, i.ctx.AccountID, i.ctx.Tenant, i.ctx.Region, i.ctx.AuthRef()}, " ")
@@ -507,6 +545,8 @@ type App struct {
 	width, height           int
 	Version                 string
 	BuildTime               string
+	debugOverlay            bool
+	lastMsgType             string
 	logView                 viewport.Model
 	helpView                viewport.Model
 	logPath                 string
@@ -539,7 +579,7 @@ func NewApp(cfg config.AppConfig, version, buildTime string) App {
 	settingsList.SetFilteringEnabled(false)
 
 	credentialList := list.New(buildCredentialItems(cfg), list.NewDefaultDelegate(), 0, 0)
-	credentialList.Title = "Profiles / Contexts (a:Add e:Edit u:Use l:Login z:Azure d:Remove r:Discover)"
+	credentialList.Title = "Profiles / Contexts (a:Add e:Edit u:Use l:Login d:Remove r:Discover)"
 	credentialList.SetShowStatusBar(false)
 	credentialList.SetFilteringEnabled(false)
 
@@ -647,6 +687,10 @@ func (a *App) RegisterView(tabIndex string, capability providers.Capability, v V
 	}
 }
 
+func (a *App) SetDebugOverlay(enabled bool) {
+	a.debugOverlay = enabled
+}
+
 func (a App) Init() tea.Cmd {
 	return tea.Batch(fetchContextsCmd(a.cfg.DiscoverOnStart), loadVMIndexCacheCmd(a.cfg), loadResourceIndexCacheCmd(a.cfg))
 }
@@ -687,6 +731,7 @@ func (a *App) ensureActiveTab() {
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
+	a.lastMsgType = debugMsgLabel(msg)
 
 	switch msg := msg.(type) {
 	case PushViewMsg:
@@ -787,6 +832,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
+		case "ctrl+d":
+			a.debugOverlay = !a.debugOverlay
+			return a, nil
 		case "g":
 			if !isInputActive && a.cfg.GlobalSearch {
 				a.openFindScopePicker()
@@ -939,6 +987,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case contextLoadMsg:
+		if contextLoadHasConfig(msg.cfg) {
+			a.cfg = msg.cfg
+		}
 		a.rootNodes = msg.tree
 		a.allContexts = msg.contexts
 		items := BuildFlatList(a.rootNodes)
@@ -950,6 +1001,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(a.viewStack) > 0 {
 				cmds = append(cmds, a.viewStack[len(a.viewStack)-1].Init(a.activeCtx, a.mainContentWidth(), a.mainContentHeight(), a.showSidebar))
 			}
+		} else {
+			a.activeCtx = core.CloudContext{}
 		}
 		a.parserWarnings = msg.warnings
 		if len(items) == 0 {
@@ -1108,6 +1161,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, fetchDiscoveredContextsCmd())
 
 	case azureSubscriptionLoadMsg:
+		if contextLoadHasConfig(msg.cfg) {
+			a.cfg = msg.cfg
+		}
 		if len(msg.warnings) > 0 && len(msg.contexts) == 0 {
 			a.statusMsg = strings.Join(msg.warnings, " | ")
 			break
@@ -1125,6 +1181,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case contextDiscoveryLoadMsg:
+		if contextLoadHasConfig(msg.cfg) {
+			a.cfg = msg.cfg
+		}
 		a.showContextDiscovery = true
 		a.showCredentials = false
 		a.showSettings = false
@@ -1224,6 +1283,13 @@ func currentContextListSelection(items []list.Item, name string) (int, core.Clou
 	return 0, core.CloudContext{}, false
 }
 
+func contextLoadHasConfig(cfg config.AppConfig) bool {
+	return strings.TrimSpace(cfg.Backend) != "" ||
+		strings.TrimSpace(cfg.CurrentContext) != "" ||
+		len(cfg.CloudContexts) > 0 ||
+		len(cfg.ManualHosts) > 0
+}
+
 // statusUpdateMsg lets views update the app-level status bar.
 type statusUpdateMsg struct{ msg string }
 
@@ -1233,45 +1299,45 @@ func (a App) View() string {
 	}
 
 	if a.showSplash {
-		return fitToWindow(a.renderSplash(), a.width, a.height)
+		return a.renderDebugOverlay(fitToWindow(a.renderSplash(), a.width, a.height))
 	}
 
 	if a.showConfig {
 		mainView := a.renderShellPane(a.configList.View(), true)
 		footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 Space: Toggle \u2022 Enter: Save \u2022 Esc: Cancel | %s", a.statusMsg))
-		return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
+		return a.renderDebugOverlay(fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height))
 	}
 	if a.showSettings {
 		mainView := a.renderShellPane(a.settingsList.View(), true)
 		footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 Space/Enter: Toggle \u2022 Esc: Close | %s", a.statusMsg))
-		return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
+		return a.renderDebugOverlay(fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height))
 	}
 	if a.showFindPicker {
-		return a.renderFindScopeView()
+		return a.renderDebugOverlay(a.renderFindScopeView())
 	}
 	if a.showAzureSubscriptions {
-		return a.renderAzureSubscriptionView()
+		return a.renderDebugOverlay(a.renderAzureSubscriptionView())
 	}
 	if a.showContextDiscovery {
-		return a.renderContextDiscoveryView()
+		return a.renderDebugOverlay(a.renderContextDiscoveryView())
 	}
 	if a.showCredentials {
-		return a.renderCredentialsView()
+		return a.renderDebugOverlay(a.renderCredentialsView())
 	}
 	if a.showHostForm {
-		return a.renderHostFormView()
+		return a.renderDebugOverlay(a.renderHostFormView())
 	}
 	if a.showProviderLogin {
-		return a.renderProviderLoginView()
+		return a.renderDebugOverlay(a.renderProviderLoginView())
 	}
 	if a.showLogs {
-		return a.renderLogsView()
+		return a.renderDebugOverlay(a.renderLogsView())
 	}
 	if a.showHelp {
-		return a.renderHelpView()
+		return a.renderDebugOverlay(a.renderHelpView())
 	}
 	if a.showGlobalSearch {
-		return a.renderGlobalSearchView()
+		return a.renderDebugOverlay(a.renderGlobalSearchView())
 	}
 
 	shellInnerWidth := a.shellContentWidth()
@@ -1319,7 +1385,113 @@ func (a App) View() string {
 	mainShell := a.renderShellPane(panes, a.focus == focusMain)
 	footerText := fmt.Sprintf("\u2191\u2193 \u2022 Enter \u2022 ?:Help \u2022 H:Home \u2022 g:Find \u2022 ,:Set \u2022 Tab \u2022 Esc \u2022 L:Logs \u2022 B:Mode | Mode:%s | %s | %s | v%s", a.backendMode(), sysusage.FooterText(), a.statusMsg, a.Version)
 	footer := renderFooter(a.width, footerText)
-	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainShell, footer), a.width, a.height)
+	return a.renderDebugOverlay(fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainShell, footer), a.width, a.height))
+}
+
+func debugMsgLabel(msg tea.Msg) string {
+	if key, ok := msg.(tea.KeyMsg); ok {
+		return fmt.Sprintf("%T(%s)", msg, key.String())
+	}
+	return fmt.Sprintf("%T", msg)
+}
+
+func (a App) renderDebugOverlay(base string) string {
+	if !a.debugOverlay {
+		return base
+	}
+	overlayWidth := a.width - 4
+	if overlayWidth > 64 {
+		overlayWidth = 64
+	}
+	if overlayWidth < 24 {
+		overlayWidth = 24
+	}
+	overlay := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(Highlight).
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("235")).
+		Padding(0, 1).
+		Width(overlayWidth).
+		Render(strings.Join(a.debugOverlayLines(), "\n"))
+	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, overlay, base), a.width, a.height)
+}
+
+func (a App) debugOverlayLines() []string {
+	msg := a.lastMsgType
+	if msg == "" {
+		msg = "<none>"
+	}
+	return []string{
+		"Debug",
+		"msg: " + msg,
+		"focus: " + a.focusName(),
+		"view: " + a.currentViewTitle(),
+		"tab: " + orFallback(a.activeTab, "-") + " modal: " + a.activeModalName(),
+		"ctx: " + a.debugContextLabel(),
+	}
+}
+
+func (a App) focusName() string {
+	if a.focus == focusSidebar {
+		return "sidebar"
+	}
+	return "main"
+}
+
+func (a App) currentViewTitle() string {
+	if a.isHomeActive() {
+		return "Home"
+	}
+	if len(a.viewStack) == 0 {
+		return "-"
+	}
+	return a.viewStack[len(a.viewStack)-1].Title()
+}
+
+func (a App) activeModalName() string {
+	switch {
+	case a.showConfig:
+		return "config"
+	case a.showSettings:
+		return "settings"
+	case a.showCredentials:
+		return "credentials"
+	case a.showProviderLogin:
+		return "login"
+	case a.showAzureSubscriptions:
+		return "azure-subscriptions"
+	case a.showContextDiscovery:
+		return "discovery"
+	case a.showFindPicker:
+		return "find-picker"
+	case a.showHostForm:
+		return "host-form"
+	case a.showLogs:
+		return "logs"
+	case a.showHelp:
+		return "help"
+	case a.showGlobalSearch:
+		return "find"
+	case a.showCmdBar:
+		return "command"
+	default:
+		return "-"
+	}
+}
+
+func (a App) debugContextLabel() string {
+	if a.activeCtx.Provider == "" {
+		return "-"
+	}
+	parts := []string{a.activeCtx.Provider}
+	if display := strings.TrimSpace(a.activeCtx.DisplayName()); display != "" {
+		parts = append(parts, display)
+	}
+	if region := strings.TrimSpace(a.activeCtx.Region); region != "" {
+		parts = append(parts, region)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (a App) isHomeActive() bool {
@@ -2104,7 +2276,7 @@ func (a App) renderCredentialsView() string {
 		body = a.renderCredentialForm()
 	}
 	mainView := a.renderShellPane(body, true)
-	keys := "a:Add e:Edit u:Use l:Login z:Azure d:Remove r:Discover b:Backup Esc:Back"
+	keys := "r:Discover a:Add e:Edit u:Use l:Login d:Remove p:Provider login b:Backup Esc:Back"
 	if a.confirmCredentialDelete {
 		keys = "y:Confirm remove n/Esc:Cancel"
 	}
@@ -2154,17 +2326,61 @@ func (a App) renderHostFormView() string {
 }
 
 func (a App) renderCredentialForm() string {
-	labels := []string{"Context Name", "Provider", "Account ID", "Account Name", "Tenant", "Auth Mode", "Persistence", "Credential Ref", "Regions"}
-	lines := []string{TitleStyle.Render("Managed Context")}
-	for i, input := range a.credentialInputs {
+	labels := credentialFormLabels(a.credentialFormProvider())
+	lines := []string{TitleStyle.Render(credentialFormTitle(a.credentialEditIndex))}
+	for _, i := range a.visibleCredentialFieldIndices() {
+		if i < 0 || i >= len(a.credentialInputs) {
+			continue
+		}
+		input := a.credentialInputs[i]
 		label := labels[i]
 		if i == a.credentialInputFocus {
 			label = lipgloss.NewStyle().Foreground(Special).Bold(true).Render(label)
 		}
 		lines = append(lines, fmt.Sprintf("%s\n%s", label, input.View()))
 	}
-	lines = append(lines, StatusLineStyle.Render("Tab/Shift+Tab: Field • Enter: Save • Esc: Cancel"))
+	lines = append(lines,
+		lipgloss.NewStyle().Foreground(Subtle).Render(credentialFormHint(a.credentialFormProvider())),
+		StatusLineStyle.Render("Tab/Shift+Tab: Field • Enter: Save • Esc: Cancel"),
+	)
 	return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(lines, "\n\n"))
+}
+
+func credentialFormTitle(index int) string {
+	if index >= 0 {
+		return "Edit Profile"
+	}
+	return "Add Profile"
+}
+
+func credentialFormLabels(provider string) []string {
+	switch providers.NormalizeProviderName(provider) {
+	case "AWS":
+		return []string{"Name", "Provider", "AWS Account ID", "Account Name", "Tenant", "AWS Profile", "Regions"}
+	case "Azure":
+		return []string{"Name", "Provider", "Subscription ID", "Subscription Name", "Tenant", "Credential Ref", "Regions"}
+	case "GCP":
+		return []string{"Name", "Provider", "Project ID", "Project Name", "Tenant", "Credential Ref", "Regions"}
+	case "DigitalOcean":
+		return []string{"Name", "Provider", "Account ID", "Account Name", "Tenant", "Credential Ref", "Regions"}
+	default:
+		return []string{"Name", "Provider", "Account / Project / Subscription ID", "Display Name", "Tenant", "Credential Ref", "Regions"}
+	}
+}
+
+func credentialFormHint(provider string) string {
+	switch providers.NormalizeProviderName(provider) {
+	case "GCP":
+		return "GCP SDK uses ADC; CLI mode uses the active gcloud account."
+	case "AWS":
+		return "AWS profile is optional; leave blank to use the default AWS chain."
+	case "Azure":
+		return "Azure subscriptions are easiest via Discover or Import Azure subscriptions."
+	case "DigitalOcean":
+		return "DigitalOcean uses doctl auth for native CLI credentials."
+	default:
+		return "Provider examples: AWS, GCP, Azure, DigitalOcean."
+	}
 }
 
 func (a App) renderGlobalSearchView() string {
@@ -2183,7 +2399,7 @@ func (a App) renderGlobalSearchView() string {
 		meta = fmt.Sprintf("%s | indexing %d/%d contexts", meta, a.vmPrefetchDone, a.vmPrefetchTotal)
 	}
 	mainView := a.renderShellPane(body, true)
-	footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 ↑ at top: Columns \u2022 /:Filter \u2022 Enter: Sort/Open \u2022 K:K8s nodes \u2022 Esc: Close | %s | %s", meta, a.statusMsg))
+	footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 /:Filter \u2022 type to narrow \u2022 Enter: Open \u2022 S:Sort \u2022 K:K8s nodes \u2022 Esc: Close | %s | %s", meta, a.statusMsg))
 	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
 }
 
@@ -3581,12 +3797,6 @@ func (a App) selectedProviderLoginItem() (providerLoginItem, bool) {
 func buildProviderLoginItems() []list.Item {
 	definitions := []providerLoginItem{
 		{
-			provider:    "Azure",
-			title:       "Azure: az login",
-			description: "Browser/device-code login. Discovers all visible subscriptions after completion.",
-			command:     []string{"az", "login", "--use-device-code"},
-		},
-		{
 			provider:    "GCP",
 			title:       "GCP: gcloud auth login --no-browser",
 			description: "Terminal-safe user login for gcloud commands.",
@@ -3597,6 +3807,12 @@ func buildProviderLoginItems() []list.Item {
 			title:       "GCP: application-default login",
 			description: "ADC login for SDK-style calls.",
 			command:     []string{"gcloud", "auth", "application-default", "login"},
+		},
+		{
+			provider:    "Azure",
+			title:       "Azure: az login",
+			description: "Browser/device-code login. Discovers all visible subscriptions after completion.",
+			command:     []string{"az", "login", "--use-device-code"},
 		},
 		{
 			provider:    "AWS",
@@ -3644,10 +3860,8 @@ func (a *App) startCredentialEdit(index int) {
 	a.credentialEditIndex = index
 	a.credentialInputFocus = 0
 	ctx := config.ManagedCloudContext{
-		Provider:              "AWS",
 		AuthMode:              config.AuthModeNativeCLI,
 		CredentialPersistence: config.CredentialPersistenceNativeCLI,
-		Regions:               []string{"us-east-1"},
 	}
 	if index >= 0 && index < len(a.cfg.CloudContexts) {
 		ctx = config.SanitizeManagedCloudContext(a.cfg.CloudContexts[index])
@@ -3658,20 +3872,16 @@ func (a *App) startCredentialEdit(index int) {
 		ctx.AccountID,
 		ctx.AccountName,
 		ctx.Tenant,
-		config.SanitizeAuthMode(ctx.AuthMode),
-		config.SanitizeCredentialPersistence(ctx.CredentialPersistence, ctx.AuthMode),
 		ctx.CredentialProfile,
 		strings.Join(ctx.Regions, ","),
 	}
 	placeholders := []string{
-		"eng",
+		"prod, augment1, dreamr2",
 		"AWS/GCP/Azure/DigitalOcean",
-		"account/project/subscription id",
+		"project/subscription/account id",
 		"display name",
-		"tenant id or domain",
-		"native-cli | jit-session | awsume | vault | manual",
-		"memory | keychain | native-cli | vault | none",
-		"profile/auth reference",
+		"Azure tenant id or domain",
+		"AWS profile or provider auth ref",
 		"us-east-1,us-west-2",
 	}
 	a.credentialInputs = make([]textinput.Model, len(values))
@@ -3685,7 +3895,12 @@ func (a *App) startCredentialEdit(index int) {
 		}
 		a.credentialInputs[i] = input
 	}
-	a.statusMsg = "Editing managed context. Auth modes: native-cli, jit-session, awsume, vault, manual."
+	a.normalizeCredentialFocus()
+	if index >= 0 {
+		a.statusMsg = "Editing profile. Only provider-relevant fields are shown."
+	} else {
+		a.statusMsg = "Adding profile. Tip: :discover is usually faster for cloud contexts."
+	}
 }
 
 func (a App) handleCredentialFormKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -3705,6 +3920,7 @@ func (a App) handleCredentialFormKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	a.credentialInputs[a.credentialInputFocus], cmd = a.credentialInputs[a.credentialInputFocus].Update(msg)
+	a.normalizeCredentialFocus()
 	return a, cmd
 }
 
@@ -3712,22 +3928,77 @@ func (a *App) moveCredentialFocus(delta int) {
 	if len(a.credentialInputs) == 0 {
 		return
 	}
+	visible := a.visibleCredentialFieldIndices()
+	if len(visible) == 0 {
+		return
+	}
+	current := 0
+	for i, idx := range visible {
+		if idx == a.credentialInputFocus {
+			current = i
+			break
+		}
+	}
 	a.credentialInputs[a.credentialInputFocus].Blur()
-	a.credentialInputFocus = (a.credentialInputFocus + delta + len(a.credentialInputs)) % len(a.credentialInputs)
+	a.credentialInputFocus = visible[(current+delta+len(visible))%len(visible)]
 	a.credentialInputs[a.credentialInputFocus].Focus()
 }
 
+func (a *App) normalizeCredentialFocus() {
+	if len(a.credentialInputs) == 0 {
+		return
+	}
+	visible := a.visibleCredentialFieldIndices()
+	for _, idx := range visible {
+		if idx == a.credentialInputFocus {
+			return
+		}
+	}
+	a.credentialInputs[a.credentialInputFocus].Blur()
+	a.credentialInputFocus = visible[0]
+	a.credentialInputs[a.credentialInputFocus].Focus()
+}
+
+func (a App) visibleCredentialFieldIndices() []int {
+	base := []int{0, 1, 2, 3}
+	switch providers.NormalizeProviderName(a.credentialFormProvider()) {
+	case "AWS":
+		return append(base, 5, 6)
+	case "Azure":
+		return append(base, 4)
+	default:
+		return base
+	}
+}
+
+func (a App) credentialFormProvider() string {
+	if len(a.credentialInputs) > 1 {
+		return strings.TrimSpace(a.credentialInputs[1].Value())
+	}
+	if a.credentialEditIndex >= 0 && a.credentialEditIndex < len(a.cfg.CloudContexts) {
+		return a.cfg.CloudContexts[a.credentialEditIndex].Provider
+	}
+	return ""
+}
+
 func (a App) saveCredentialEdit() (App, tea.Cmd) {
+	authMode := config.AuthModeNativeCLI
+	persistence := config.CredentialPersistenceNativeCLI
+	if a.credentialEditIndex >= 0 && a.credentialEditIndex < len(a.cfg.CloudContexts) {
+		existing := config.SanitizeManagedCloudContext(a.cfg.CloudContexts[a.credentialEditIndex])
+		authMode = existing.AuthMode
+		persistence = existing.CredentialPersistence
+	}
 	managed := config.ManagedCloudContext{
 		ContextName:           strings.TrimSpace(a.credentialInputs[0].Value()),
 		Provider:              strings.TrimSpace(a.credentialInputs[1].Value()),
 		AccountID:             strings.TrimSpace(a.credentialInputs[2].Value()),
 		AccountName:           strings.TrimSpace(a.credentialInputs[3].Value()),
 		Tenant:                strings.TrimSpace(a.credentialInputs[4].Value()),
-		AuthMode:              strings.TrimSpace(a.credentialInputs[5].Value()),
-		CredentialPersistence: strings.TrimSpace(a.credentialInputs[6].Value()),
-		CredentialProfile:     strings.TrimSpace(a.credentialInputs[7].Value()),
-		Regions:               splitCSV(a.credentialInputs[8].Value()),
+		AuthMode:              authMode,
+		CredentialPersistence: persistence,
+		CredentialProfile:     strings.TrimSpace(a.credentialInputs[5].Value()),
+		Regions:               splitCSV(a.credentialInputs[6].Value()),
 	}
 	managed = config.SanitizeManagedCloudContext(managed)
 	if managed.Provider == "" || (managed.AccountID == "" && managed.AccountName == "") {
@@ -4165,6 +4436,18 @@ func managedContextLabel(ctx config.ManagedCloudContext) string {
 	return "unnamed"
 }
 
+func meaningfulRegions(regions []string) string {
+	var kept []string
+	for _, region := range regions {
+		region = strings.TrimSpace(region)
+		if region == "" || strings.EqualFold(region, "global") {
+			continue
+		}
+		kept = append(kept, region)
+	}
+	return strings.Join(kept, ",")
+}
+
 func (a App) handleGlobalSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if a.findSortHeader.Active {
 		switch msg.String() {
@@ -4218,7 +4501,7 @@ func (a App) handleGlobalSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.openSelectedFindResult()
 	case "/":
 		a.globalSearchInput.Focus()
-		a.globalSearchTable.Blur()
+		a.globalSearchTable.Focus()
 		return a, textinput.Blink
 	case "S":
 		a.findSortHeader.Activate(a.globalSearchTable.Columns())
@@ -4240,12 +4523,36 @@ func (a App) handleGlobalSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	if a.globalSearchInput.Focused() {
+		if globalSearchNavigationKey(msg) {
+			a.ensureFindTableCursor()
+			a.globalSearchTable, cmd = a.globalSearchTable.Update(msg)
+			return a, cmd
+		}
 		a.globalSearchInput, cmd = a.globalSearchInput.Update(msg)
 		a.refreshGlobalSearchResults()
 	} else {
 		a.globalSearchTable, cmd = a.globalSearchTable.Update(msg)
 	}
 	return a, cmd
+}
+
+func (a *App) ensureFindTableCursor() {
+	if len(a.findRows) == 0 {
+		a.globalSearchTable.SetCursor(0)
+		return
+	}
+	if cursor := a.globalSearchTable.Cursor(); cursor < 0 || cursor >= len(a.findRows) {
+		a.globalSearchTable.SetCursor(0)
+	}
+}
+
+func globalSearchNavigationKey(msg tea.KeyMsg) bool {
+	switch msg.String() {
+	case "up", "down", "pgup", "pgdown", "ctrl+u", "ctrl+d", "ctrl+p", "ctrl+n":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a App) openSelectedGlobalVM() (App, tea.Cmd) {
@@ -5615,13 +5922,15 @@ func loadResourceIndexCacheCmd(cfg config.AppConfig) tea.Cmd {
 
 func fetchAzureSubscriptionsCmd() tea.Cmd {
 	return func() tea.Msg {
+		cfg := config.Load()
 		contexts, warnings := providers.DiscoverContexts("Azure")
-		return azureSubscriptionLoadMsg{contexts: contexts, warnings: warnings}
+		return azureSubscriptionLoadMsg{cfg: cfg, contexts: contexts, warnings: warnings}
 	}
 }
 
 func fetchDiscoveredContextsCmd() tea.Cmd {
 	return func() tea.Msg {
+		cfg := config.Load()
 		var contexts []core.CloudContext
 		var warnings []string
 		for _, registered := range providers.RegisteredProviders() {
@@ -5630,7 +5939,7 @@ func fetchDiscoveredContextsCmd() tea.Cmd {
 			contexts = append(contexts, ctxs...)
 			warnings = append(warnings, providerWarnings...)
 		}
-		return contextDiscoveryLoadMsg{contexts: contexts, warnings: warnings}
+		return contextDiscoveryLoadMsg{cfg: cfg, contexts: contexts, warnings: warnings}
 	}
 }
 
@@ -5666,21 +5975,8 @@ func fetchContextsCmd(discover bool) tea.Cmd {
 			}
 		}
 
-		// Restore mock fallback if no contexts found
-		if discover && len(allCtx) == 0 {
-			allCtx = []core.CloudContext{
-				{Provider: "AWS", AccountID: "123456789012", AccountName: "production", Region: "us-east-1"},
-				{Provider: "AWS", AccountID: "123456789012", AccountName: "production", Region: "us-west-2"},
-				{Provider: "AWS", AccountID: "987654321098", AccountName: "staging", Region: "eu-central-1"},
-				{Provider: "GCP", AccountID: "my-gcp-project-1", AccountName: "backend-services", Region: "us-central1"},
-				{Provider: "GCP", AccountID: "my-gcp-project-2", AccountName: "data-pipeline", Region: "europe-west1"},
-				{Provider: "Azure", AccountID: "sub-abc-123", AccountName: "core-infra", Region: "eastus"},
-				{Provider: "DigitalOcean", AccountID: "do-demo-account", AccountName: "sandbox", Region: "global"},
-			}
-		}
-
 		tree := BuildContextTree(allCtx)
-		return contextLoadMsg{tree: tree, contexts: allCtx, warnings: warnings}
+		return contextLoadMsg{cfg: cfg, tree: tree, contexts: allCtx, warnings: warnings}
 	}
 }
 

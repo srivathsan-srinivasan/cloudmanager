@@ -1,6 +1,69 @@
 # LOG
 
+## 2026-07-03
+
+### Update
+
+- Added a VM action progress indicator to the VMs view so Start/Stop/Restart/Terminate show command submission, provider acceptance, refresh, and refreshed-state confirmation at the bottom right of the view.
+- Start and Restart now validate the refreshed VM state against `running`; Stop validates stopped/deallocated-style states; Terminate validates deletion or terminal state.
+- Added VM view regressions for action progress rendering, refresh confirmation, and Restart targeting `running`.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/views/vms -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/vms -count=1`; `git diff --check`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
+- Made VM SSH access less tedious: when CloudManager resolves exactly one runnable access method, pressing `s` now starts it directly instead of opening a redundant picker.
+- Multiple runnable SSH methods still open the picker, so users can choose between native access, SSH config, learned SSH, and direct SSH.
+- Replaced the cramped SSH picker list with a centered connection panel that shows method readiness, method type, selected command/reason, and no VM-table bleed-through.
+- Private-key SSH now preselects the first discovered key plus default public/private IP choice, shows user/key/target/command as separate fields, and uses compact command previews so long key paths do not hide `user@host`.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/views/vms -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/vms -count=1`; `git diff --check`.
+
+### Update
+
+- Fixed Find navigation while the filter input is focused: arrow/page navigation keys now move the selected resource row instead of being swallowed by the text input.
+- The Find result table remains focused while typing a filter, so the selected resource stays visible and Enter opens the selected row.
+- Added a regression proving Down moves between Find results while the filter query remains unchanged.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestFind|TestGlobalVMSearch|TestSelectableDashboard.*Find' -count=1`.
+
+## 2026-05-31
+
+### Update
+
+- Implemented the concrete production-readiness item from `docs/skills.md`: a developer debug overlay for the Bubble Tea TUI.
+- Added `cloudmanager --debug` and in-app `ctrl+d` toggling for the overlay.
+- The overlay renders the latest `tea.Msg`, focus target, active view, tab, modal, and selected context.
+- Validation: `git diff --check -- README.md LOG.md main.go internal/ui/app.go internal/ui/app_test.go docs/skills.md`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestDebugOverlay|TestAppViewFitsWindowWidth|TestWindowResizeOnlyUsesResizeHook' -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+## 2026-05-29
+
+### Update
+
+- Fixed first-run reload/discovery state after deleting `~/.cloudmanager.json`: context reload, generic discovery, and Azure subscription discovery now carry the freshly loaded config back into the UI instead of leaving stale in-memory `current_context` data behind.
+- Reloading contexts now clears the active context when the selected context no longer exists, so the footer/sidebar stops showing an old Azure context after config removal.
+- Reduced Azure bias in the first-run UI by removing `z:Azure` from the Profiles / Contexts title and moving GCP login choices before Azure in the provider login picker.
+- Verified the local GCP discovery command can see projects with the current CLI auth; ADC is still missing and `scripts/check-credentials --gcp` reports `gcloud auth application-default login` is still needed for SDK calls.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestFetchContextsDoesNotInventFallbackContexts|TestContextReloadUsesFreshConfigAndClearsStaleActiveContext|TestDiscoveryImportUsesFreshConfigAfterExternalConfigRemoval|TestProviderLoginItemsIncludeAzureDeviceCode|TestDiscoveryPickerDefaultsUnselectedAndImportsOnlySelected' -count=1`; `git diff --check -- LOG.md internal/ui/app.go internal/ui/app_test.go`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
+- Removed the runtime context-discovery fake fallback from the UI. If `:discover` finds no real provider contexts, CloudManager now returns an empty context list and warnings instead of inventing AWS/GCP/Azure/DigitalOcean accounts.
+- Added `TestFetchContextsDoesNotInventFallbackContexts` to lock the no-fake-context behavior under an empty home and PATH.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run TestFetchContextsDoesNotInventFallbackContexts -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`; `git diff --check -- internal/ui/app.go internal/ui/app_test.go`.
+
 ## 2026-05-27
+
+### Update
+
+- Reworked the release branch contract toward `dev/*` work branches and protected `release/v1` as the only stable v1 release line.
+- `scripts/release` now refuses to prepare releases outside `dev/*`, updates release pins, and tells the operator to open a PR into `release/v1`.
+- The manual release workflow now refuses to tag unless run from `release/v1`.
+- GoReleaser formula PRs now target `release/v1`.
+- Added `docs/RELEASE.md` with the branch model, patch release flow, branch protection rules, and one-time `release/v1` creation step.
+- Fixed first-run profile/discovery persistence by resetting Viper before each config load, preventing stale in-process config state from leaking across homes/config paths.
+- Added first-run regressions for manual profile add and discovery import creating `.cloudmanager.json` and selecting the current context.
+- Cleaned profile/discovery list descriptions so first-run GCP profiles no longer show empty boilerplate like `auth=-`, `tenant=-`, or `regions=global`; plain GCP native CLI contexts now render as `native CLI`.
+- Polished profile onboarding/editing: the footer no longer advertises Azure-specific import as a primary action, the add/edit form is provider-aware, new profiles no longer default to AWS/us-east-1, GCP shows only project basics, AWS shows profile/regions, Azure shows tenant, and hidden auth mode/persistence are preserved when editing.
+- Added `scripts/check-credentials` for lightweight provider credential checks, including GCP CLI token, ADC token, active project access, and optional CloudManager smoke tests.
+- Validation: `bash -n scripts/release`; `bash -n scripts/install`; `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); YAML.load_file(".goreleaser.yaml"); puts "yaml ok"'`; `git diff --check`; `go run github.com/goreleaser/goreleaser/v2@v2.9.0 check`; `GOCACHE=/tmp/go-build-cache go test ./internal/config ./internal/ui -count=1`; `GOCACHE=/tmp/go-build-cache go test ./...`.
 
 ### Update
 

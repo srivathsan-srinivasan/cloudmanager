@@ -82,7 +82,7 @@ brews:
         base:
           owner: vyoogam
           name: cloudmanager
-          branch: release/v1.0.0
+          branch: release/v1
     directory: Formula
     homepage: https://github.com/vyoogam/cloudmanager
     description: Manage your cloud resources from the terminal.
