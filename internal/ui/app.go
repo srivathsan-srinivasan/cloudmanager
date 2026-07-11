@@ -2399,7 +2399,7 @@ func (a App) renderGlobalSearchView() string {
 		meta = fmt.Sprintf("%s | indexing %d/%d contexts", meta, a.vmPrefetchDone, a.vmPrefetchTotal)
 	}
 	mainView := a.renderShellPane(body, true)
-	footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 ↑ at top: Columns \u2022 /:Filter \u2022 Enter: Sort/Open \u2022 K:K8s nodes \u2022 Esc: Close | %s | %s", meta, a.statusMsg))
+	footer := renderFooter(a.width, fmt.Sprintf("\u2191\u2193: Navigate \u2022 /:Filter \u2022 type to narrow \u2022 Enter: Open \u2022 S:Sort \u2022 K:K8s nodes \u2022 Esc: Close | %s | %s", meta, a.statusMsg))
 	return fitToWindow(lipgloss.JoinVertical(lipgloss.Left, mainView, footer), a.width, a.height)
 }
 
@@ -4501,7 +4501,7 @@ func (a App) handleGlobalSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.openSelectedFindResult()
 	case "/":
 		a.globalSearchInput.Focus()
-		a.globalSearchTable.Blur()
+		a.globalSearchTable.Focus()
 		return a, textinput.Blink
 	case "S":
 		a.findSortHeader.Activate(a.globalSearchTable.Columns())
@@ -4523,12 +4523,36 @@ func (a App) handleGlobalSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	if a.globalSearchInput.Focused() {
+		if globalSearchNavigationKey(msg) {
+			a.ensureFindTableCursor()
+			a.globalSearchTable, cmd = a.globalSearchTable.Update(msg)
+			return a, cmd
+		}
 		a.globalSearchInput, cmd = a.globalSearchInput.Update(msg)
 		a.refreshGlobalSearchResults()
 	} else {
 		a.globalSearchTable, cmd = a.globalSearchTable.Update(msg)
 	}
 	return a, cmd
+}
+
+func (a *App) ensureFindTableCursor() {
+	if len(a.findRows) == 0 {
+		a.globalSearchTable.SetCursor(0)
+		return
+	}
+	if cursor := a.globalSearchTable.Cursor(); cursor < 0 || cursor >= len(a.findRows) {
+		a.globalSearchTable.SetCursor(0)
+	}
+}
+
+func globalSearchNavigationKey(msg tea.KeyMsg) bool {
+	switch msg.String() {
+	case "up", "down", "pgup", "pgdown", "ctrl+u", "ctrl+d", "ctrl+p", "ctrl+n":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a App) openSelectedGlobalVM() (App, tea.Cmd) {

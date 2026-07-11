@@ -1,5 +1,29 @@
 # LOG
 
+## 2026-07-03
+
+### Update
+
+- Added a VM action progress indicator to the VMs view so Start/Stop/Restart/Terminate show command submission, provider acceptance, refresh, and refreshed-state confirmation at the bottom right of the view.
+- Start and Restart now validate the refreshed VM state against `running`; Stop validates stopped/deallocated-style states; Terminate validates deletion or terminal state.
+- Added VM view regressions for action progress rendering, refresh confirmation, and Restart targeting `running`.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/views/vms -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/vms -count=1`; `git diff --check`; `GOCACHE=/tmp/go-build-cache go test ./...`.
+
+### Update
+
+- Made VM SSH access less tedious: when CloudManager resolves exactly one runnable access method, pressing `s` now starts it directly instead of opening a redundant picker.
+- Multiple runnable SSH methods still open the picker, so users can choose between native access, SSH config, learned SSH, and direct SSH.
+- Replaced the cramped SSH picker list with a centered connection panel that shows method readiness, method type, selected command/reason, and no VM-table bleed-through.
+- Private-key SSH now preselects the first discovered key plus default public/private IP choice, shows user/key/target/command as separate fields, and uses compact command previews so long key paths do not hide `user@host`.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/views/vms -count=1`; `GOCACHE=/tmp/go-build-cache go test ./internal/ui ./internal/views/vms -count=1`; `git diff --check`.
+
+### Update
+
+- Fixed Find navigation while the filter input is focused: arrow/page navigation keys now move the selected resource row instead of being swallowed by the text input.
+- The Find result table remains focused while typing a filter, so the selected resource stays visible and Enter opens the selected row.
+- Added a regression proving Down moves between Find results while the filter query remains unchanged.
+- Validation: `GOCACHE=/tmp/go-build-cache go test ./internal/ui -run 'TestFind|TestGlobalVMSearch|TestSelectableDashboard.*Find' -count=1`.
+
 ## 2026-05-31
 
 ### Update

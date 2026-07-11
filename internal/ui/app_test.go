@@ -439,8 +439,36 @@ func TestFindSlashFocusesFilterInput(t *testing.T) {
 	if !updated.globalSearchInput.Focused() {
 		t.Fatal("expected / to focus find input")
 	}
-	if updated.globalSearchTable.Focused() {
-		t.Fatal("expected table to blur while editing find input")
+	if !updated.globalSearchTable.Focused() {
+		t.Fatal("expected table to stay focused so the selected result remains visible")
+	}
+}
+
+func TestFindFilterInputAllowsResultNavigation(t *testing.T) {
+	app := NewApp(config.AppConfig{GlobalSearch: true}, "1.0.0", "today")
+	app.width = 120
+	app.height = 30
+	app.showSplash = false
+	ctx := core.CloudContext{Provider: "AWS", AccountID: "1234", AccountName: "prod", Region: "us-east-1"}
+	app.indexVMs(ctx, []core.VM{
+		{Name: "api-1", ID: "i-aaa", State: "running"},
+		{Name: "api-2", ID: "i-bbb", State: "running"},
+	})
+	app, _ = app.openFind(findScopeVMs, "api")
+	app.globalSearchInput.Focus()
+	app.globalSearchTable.Focus()
+
+	model, _ := app.handleGlobalSearchKeys(tea.KeyMsg{Type: tea.KeyDown})
+	updated := model.(App)
+
+	if !updated.globalSearchInput.Focused() {
+		t.Fatal("expected filter input to stay focused")
+	}
+	if got := updated.globalSearchTable.Cursor(); got != 1 {
+		t.Fatalf("expected Down to move selected find row while filtering, got cursor %d", got)
+	}
+	if got := updated.globalSearchInput.Value(); got != "api" {
+		t.Fatalf("expected navigation not to edit filter query, got %q", got)
 	}
 }
 
