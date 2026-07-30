@@ -440,3 +440,62 @@ func addUniqueAzureValue(values *[]string, value string) {
 	}
 	*values = append(*values, value)
 }
+
+// --- Port Forwarding & SCP ---
+
+// GetPortForwardCmdCLI returns an Azure CLI command for port forwarding using `az ssh vm` with -L flags.
+func GetPortForwardCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("no port forward specs provided")
+	}
+	args := []string{"ssh", "vm", "--name", vm.Name, "--resource-group", vm.ResourceGroup, "--subscription", cloudCtx.AccountID}
+	for _, s := range specs {
+		localHost := s.LocalHost
+		if localHost == "" {
+			localHost = "localhost"
+		}
+		remoteHost := s.RemoteHost
+		if remoteHost == "" {
+			remoteHost = "localhost"
+		}
+		args = append(args, "-L", fmt.Sprintf("%s:%d:%s:%d", localHost, s.LocalPort, remoteHost, s.RemotePort))
+	}
+	return exec.CommandContext(ctx, "az", args...), nil
+}
+
+// GetPortForwardCmdSDK delegates to CLI for port forwarding.
+func GetPortForwardCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	return GetPortForwardCmdCLI(ctx, vm, cloudCtx, specs)
+}
+
+// GetSCPCmdCLI returns an Azure CLI command for SCP file transfer.
+// Uses `az ssh vm` with scp subsystem or falls back to manual scp command construction.
+func GetSCPCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	// az ssh vm supports file transfer via the `--` separator to pass ssh/scp flags
+	// For scp, we construct the command to run via the SSH connection
+	var scpArgs []string
+	if transfer.Direction == "pull" {
+		// remote -> local
+		scpArgs = []string{"scp"}
+		if transfer.Recursive {
+			scpArgs = append(scpArgs, "-r")
+		}
+		scpArgs = append(scpArgs, fmt.Sprintf("%s:%s", vm.Name, transfer.Source), transfer.Destination)
+	} else {
+		// local -> remote
+		scpArgs = []string{"scp"}
+		if transfer.Recursive {
+			scpArgs = append(scpArgs, "-r")
+		}
+		scpArgs = append(scpArgs, transfer.Source, fmt.Sprintf("%s:%s", vm.Name, transfer.Destination))
+	}
+	
+	args := []string{"ssh", "vm", "--name", vm.Name, "--resource-group", vm.ResourceGroup, "--subscription", cloudCtx.AccountID, "--"}
+	args = append(args, scpArgs...)
+	return exec.CommandContext(ctx, "az", args...), nil
+}
+
+// GetSCPCmdSDK delegates to CLI for SCP.
+func GetSCPCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	return GetSCPCmdCLI(ctx, vm, cloudCtx, transfer)
+}

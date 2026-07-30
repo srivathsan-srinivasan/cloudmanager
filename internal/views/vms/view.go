@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	paneTable = iota
+	paneTable          = iota
 	paneActions
 	paneAccess
 	paneDescribe
@@ -38,6 +38,8 @@ const (
 	paneSortConfig
 	paneConfirm
 	paneTag
+	panePortForward
+	paneSCP
 )
 
 // --- Bubble Tea messages ---
@@ -70,6 +72,8 @@ type accessResolvedMsg struct {
 	methods []core.AccessMethod
 }
 type sshCompleteMsg struct{ err error }
+type portForwardCompleteMsg struct{ err error }
+type scpCompleteMsg struct{ err error }
 type clipboardCompleteMsg struct {
 	text string
 	err  error
@@ -226,6 +230,20 @@ type VMsView struct {
 	selectedSSHKey    string
 	selectedSSHIPKind string
 
+	// Port Forward state
+	portForwardSpecs []core.PortForwardSpec
+	portForwardInput textinput.Model
+	portForwardList  list.Model
+	editingPFLocal   bool
+	editingPFRemote  bool
+
+	// SCP state
+	scpTransfer        core.SCPTransfer
+	scpSourceInput     textinput.Model
+	scpDestInput       textinput.Model
+	scpDirection       string // "push" or "pull"
+	scpRecursive       bool
+
 	width, height int
 	showSidebar   bool
 	requestKey    string
@@ -336,7 +354,7 @@ func NewFiltered(cfg *config.AppConfig, filterTerms []string, filterLabel string
 func (v *VMsView) Title() string { return "VMs" }
 
 func (v *VMsView) ShortHelp() string {
-	return "\u2191\u2193: Nav \u2022 ↑ at top: Columns \u2022 \u2190\u2192: Pan \u2022 Enter: Sort/Menu \u2022 K:K8s nodes \u2022 t: Tag \u2022 s: SSH \u2022 d: Describe \u2022 /: Search"
+	return "\u2191\u2193: Nav \u2022 \u2191 at top: Columns \u2022 \u2190\u2192: Pan \u2022 Enter: Sort/Menu \u2022 K:K8s nodes \u2022 t: Tag \u2022 s: SSH \u2022 p: Port Forward \u2022 F: SCP \u2022 d: Describe \u2022 /: Search"
 }
 
 func (v *VMsView) SetSearchQuery(query string) {
@@ -1013,14 +1031,53 @@ func (v *VMsView) handleTableKeys(msg tea.KeyMsg) (ui.View, tea.Cmd) {
 		v.loading = true
 		return v, executeCostCommandCmd(vm, v.activeCtx, *v.cfg)
 	case "s":
-		if !ok {
-			return v, nil
-		}
-		v.pendingVM = vm
-		v.activePane = paneTable
-		v.loading = true
-		v.statusMsg = fmt.Sprintf("Resolving access methods for %s...", vm.Name)
-		return v, v.resolveAccessCmd(vm)
+				if !ok {
+					return v, nil
+				}
+				v.pendingVM = vm
+				v.activePane = paneTable
+				v.loading = true
+				v.statusMsg = fmt.Sprintf("Resolving access methods for %s...", vm.Name)
+				return v, v.resolveAccessCmd(vm)
+		case "p": // Port Forward
+			if !ok {
+				return v, nil
+			}
+			v.pendingVM = vm
+			v.activePane = paneTable
+			v.portForwardSpecs = nil
+			v.portForwardInput = textinput.New()
+			v.portForwardInput.Placeholder = "local:remote (e.g., 8080:80)"
+			v.portForwardInput.Prompt = "port> "
+			v.portForwardInput.CharLimit = 64
+			v.portForwardInput.Width = 32
+			v.portForwardList = list.New(nil, list.NewDefaultDelegate(), 0, 0)
+			v.portForwardList.Title = "Port Forwards (a: add, r: remove, Enter: start, Esc: back)"
+			v.portForwardList.SetShowStatusBar(false)
+			v.portForwardList.SetFilteringEnabled(false)
+			v.activePane = panePortForward
+			v.statusMsg = fmt.Sprintf("Port Forward: %s (a=add port, Enter=start)", vm.Name)
+			return v, textinput.Blink
+		case "F": // SCP
+			if !ok {
+				return v, nil
+			}
+			v.pendingVM = vm
+			v.activePane = paneTable
+			v.scpTransfer = core.SCPTransfer{Direction: "pull", Recursive: false}
+			v.scpSourceInput = textinput.New()
+			v.scpSourceInput.Placeholder = "remote path (e.g., /var/log/nginx/)"
+			v.scpSourceInput.Prompt = "src> "
+			v.scpSourceInput.CharLimit = 256
+			v.scpSourceInput.Width = 48
+			v.scpDestInput = textinput.New()
+			v.scpDestInput.Placeholder = "local path (e.g., ~/downloads/logs/)"
+			v.scpDestInput.Prompt = "dst> "
+			v.scpDestInput.CharLimit = 256
+			v.scpDestInput.Width = 48
+			v.activePane = paneSCP
+			v.statusMsg = fmt.Sprintf("SCP Transfer: %s (d=direction, s=source, t=target, r=recursive, Enter=start)", vm.Name)
+			return v, textinput.Blink
 	case "t":
 		if !ok {
 			return v, nil

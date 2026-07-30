@@ -15,6 +15,8 @@ type Provider interface {
 	FetchVMs(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error)
 	ExecuteAction(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error)
 	GetSSHCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error)
+	GetPortForwardCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error)
+	GetSCPCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error)
 }
 
 type DiskProvider interface {

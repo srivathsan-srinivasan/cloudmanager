@@ -66,9 +66,11 @@ type RegisteredProvider struct {
 }
 
 type computeFuncs struct {
-	fetch   func(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error)
-	execute func(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error)
-	ssh     func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error)
+	fetch       func(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error)
+	execute     func(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error)
+	ssh         func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error)
+	portForward func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error)
+	scp         func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error)
 }
 
 func (c computeFuncs) FetchVMs(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error) {
@@ -81,6 +83,14 @@ func (c computeFuncs) ExecuteAction(ctx context.Context, action string, vm core.
 
 func (c computeFuncs) GetSSHCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error) {
 	return c.ssh(ctx, vm, cloudCtx)
+}
+
+func (c computeFuncs) GetPortForwardCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	return c.portForward(ctx, vm, cloudCtx, specs)
+}
+
+func (c computeFuncs) GetSCPCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	return c.scp(ctx, vm, cloudCtx, transfer)
 }
 
 type diskFuncs struct {
@@ -388,6 +398,8 @@ func registerBuiltins() {
 				},
 				execute: aws.ExecuteActionCLI,
 				ssh:     aws.GetSSHCmdCLI,
+				portForward: aws.GetPortForwardCmdCLI,
+				scp:         aws.GetSCPCmdCLI,
 			},
 			Disks: diskFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error) {
@@ -458,6 +470,8 @@ func registerBuiltins() {
 				},
 				execute: aws.ExecuteActionSDK,
 				ssh:     aws.GetSSHCmdSDK,
+				portForward: aws.GetPortForwardCmdSDK,
+				scp:         aws.GetSCPCmdSDK,
 			},
 			Disks: diskFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error) {
@@ -552,6 +566,8 @@ func registerBuiltins() {
 				},
 				execute: gcp.ExecuteActionCLI,
 				ssh:     gcp.GetSSHCmdCLI,
+				portForward: gcp.GetPortForwardCmdCLI,
+				scp:         gcp.GetSCPCmdCLI,
 			},
 			Disks: diskFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error) {
@@ -623,6 +639,8 @@ func registerBuiltins() {
 				},
 				execute: gcp.ExecuteActionSDK,
 				ssh:     gcp.GetSSHCmdSDK,
+				portForward: gcp.GetPortForwardCmdSDK,
+				scp:         gcp.GetSCPCmdSDK,
 			},
 			Disks: diskFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error) {
@@ -718,6 +736,8 @@ func registerBuiltins() {
 				},
 				execute: azure.ExecuteActionCLI,
 				ssh:     azure.GetSSHCmdCLI,
+				portForward: azure.GetPortForwardCmdCLI,
+				scp:         azure.GetSCPCmdCLI,
 			},
 			Disks: diskFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error) {
@@ -790,6 +810,8 @@ func registerBuiltins() {
 				},
 				execute: azure.ExecuteActionSDK,
 				ssh:     azure.GetSSHCmdSDK,
+				portForward: azure.GetPortForwardCmdSDK,
+				scp:         azure.GetSCPCmdSDK,
 			},
 			Disks: diskFuncs{
 				fetch: func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error) {
@@ -861,6 +883,8 @@ func registerBuiltins() {
 		fetch:   digitalocean.FetchVMsCLI,
 		execute: digitalocean.ExecuteActionCLI,
 		ssh:     digitalocean.GetSSHCmdCLI,
+		portForward: digitalocean.GetPortForwardCmdCLI,
+		scp:         digitalocean.GetSCPCmdCLI,
 	}
 
 	RegisterProvider(RegisteredProvider{

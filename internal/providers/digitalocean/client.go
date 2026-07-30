@@ -126,3 +126,72 @@ func dropletSize(fields []string) string {
 	}
 	return fmt.Sprintf("%svCPU/%sMB", vcpus, memory)
 }
+
+// --- Port Forwarding & SCP ---
+
+// GetPortForwardCmdCLI returns a standard SSH command with -L flags for port forwarding.
+// DigitalOcean uses standard SSH (no special tunneling).
+func GetPortForwardCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("no port forward specs provided")
+	}
+	target := strings.TrimSpace(vm.PublicIP)
+	if target == "" || target == "-" {
+		target = strings.TrimSpace(vm.PrivateIP)
+	}
+	if target == "" || target == "-" {
+		return nil, fmt.Errorf("no reachable IP found for %s", vm.Name)
+	}
+	args := []string{"ssh"}
+	for _, s := range specs {
+		localHost := s.LocalHost
+		if localHost == "" {
+			localHost = "localhost"
+		}
+		remoteHost := s.RemoteHost
+		if remoteHost == "" {
+			remoteHost = "localhost"
+		}
+		args = append(args, "-L", fmt.Sprintf("%s:%d:%s:%d", localHost, s.LocalPort, remoteHost, s.RemotePort))
+	}
+	args = append(args, target)
+	return exec.CommandContext(ctx, args[0], args[1:]...), nil
+}
+
+// GetPortForwardCmdSDK delegates to CLI for port forwarding.
+func GetPortForwardCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	return GetPortForwardCmdCLI(ctx, vm, cloudCtx, specs)
+}
+
+// GetSCPCmdCLI returns a standard SCP command for file transfer.
+func GetSCPCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	target := strings.TrimSpace(vm.PublicIP)
+	if target == "" || target == "-" {
+		target = strings.TrimSpace(vm.PrivateIP)
+	}
+	if target == "" || target == "-" {
+		return nil, fmt.Errorf("no reachable IP found for %s", vm.Name)
+	}
+	var args []string
+	if transfer.Direction == "pull" {
+		// remote -> local
+		args = []string{"scp"}
+		if transfer.Recursive {
+			args = append(args, "-r")
+		}
+		args = append(args, fmt.Sprintf("%s:%s", target, transfer.Source), transfer.Destination)
+	} else {
+		// local -> remote
+		args = []string{"scp"}
+		if transfer.Recursive {
+			args = append(args, "-r")
+		}
+		args = append(args, transfer.Source, fmt.Sprintf("%s:%s", target, transfer.Destination))
+	}
+	return exec.CommandContext(ctx, args[0], args[1:]...), nil
+}
+
+// GetSCPCmdSDK delegates to CLI for SCP.
+func GetSCPCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	return GetSCPCmdCLI(ctx, vm, cloudCtx, transfer)
+}
