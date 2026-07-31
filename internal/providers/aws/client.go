@@ -784,20 +784,16 @@ func useSSMPortForward(vm core.VM) bool {
 }
 
 // buildSSMPortForwardParams builds the JSON parameters for AWS-StartPortForwardingSession document.
-// Supports multiple ports in a single session.
+// AWS-StartPortForwardingSession only supports a single port mapping per session.
 func buildSSMPortForwardParams(specs []core.PortForwardSpec) string {
 	if len(specs) == 0 {
 		return "{}"
 	}
-	portNumbers := make([]string, len(specs))
-	localPortNumbers := make([]string, len(specs))
-	for i, s := range specs {
-		portNumbers[i] = fmt.Sprintf("%d", s.RemotePort)
-		localPortNumbers[i] = fmt.Sprintf("%d", s.LocalPort)
-	}
-	params := map[string][]string{
-		"portNumber":       portNumbers,
-		"localPortNumber":  localPortNumbers,
+	// Use only the first spec; AWS SSM supports only one port per session
+	s := specs[0]
+	params := map[string]string{
+		"portNumber":      fmt.Sprintf("%d", s.RemotePort),
+		"localPortNumber": fmt.Sprintf("%d", s.LocalPort),
 	}
 	jsonBytes, _ := json.Marshal(params)
 	return string(jsonBytes)

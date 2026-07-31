@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"time"
 
@@ -57,14 +58,14 @@ func (m *MockProvider) GetPortForwardCmd(ctx context.Context, vm core.VM, cloudC
 	if m.GetPortForwardCmdFn != nil {
 		return m.GetPortForwardCmdFn(ctx, vm, cloudCtx, specs)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("GetPortForwardCmd not implemented")
 }
 
 func (m *MockProvider) GetSCPCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
 	if m.GetSCPCmdFn != nil {
 		return m.GetSCPCmdFn(ctx, vm, cloudCtx, transfer)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("GetSCPCmd not implemented")
 }
 
 func (m *MockProvider) FetchDisks(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error) {

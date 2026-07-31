@@ -448,7 +448,7 @@ func GetPortForwardCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudCo
 	if len(specs) == 0 {
 		return nil, fmt.Errorf("no port forward specs provided")
 	}
-	args := []string{"ssh", "vm", "--name", vm.Name, "--resource-group", vm.ResourceGroup, "--subscription", cloudCtx.AccountID}
+	args := []string{"ssh", "vm", "--name", vm.Name, "--resource-group", vm.ResourceGroup, "--subscription", cloudCtx.AccountID, "--"}
 	for _, s := range specs {
 		localHost := s.LocalHost
 		if localHost == "" {
@@ -469,30 +469,41 @@ func GetPortForwardCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudCo
 }
 
 // GetSCPCmdCLI returns an Azure CLI command for SCP file transfer.
-// Uses `az ssh vm` with scp subsystem or falls back to manual scp command construction.
+// Uses `az ssh config` to generate a temporary SSH config, then runs local `scp` with it.
 func GetSCPCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
-	// az ssh vm supports file transfer via the `--` separator to pass ssh/scp flags
-	// For scp, we construct the command to run via the SSH connection
+	// az ssh vm is for interactive SSH, not scp.
+	// Instead, use `az ssh config` to generate SSH config, then run local scp with -F.
+	// For simplicity in this command-returning context, we return a shell wrapper that:
+	// 1. Generates config via `az ssh config`
+	// 2. Runs scp with -F pointing to that config
+	// We'll construct a compound command using sh -c to chain these steps.
+
+	// Build the scp command arguments
 	var scpArgs []string
+	scpArgs = append(scpArgs, "scp")
+	if transfer.Recursive {
+		scpArgs = append(scpArgs, "-r")
+	}
+	// We'll use a temporary config file path
+	configFile := fmt.Sprintf("/tmp/azure-ssh-config-%s.conf", vm.Name)
+	scpArgs = append(scpArgs, "-F", configFile)
+
 	if transfer.Direction == "pull" {
 		// remote -> local
-		scpArgs = []string{"scp"}
-		if transfer.Recursive {
-			scpArgs = append(scpArgs, "-r")
-		}
 		scpArgs = append(scpArgs, fmt.Sprintf("%s:%s", vm.Name, transfer.Source), transfer.Destination)
 	} else {
 		// local -> remote
-		scpArgs = []string{"scp"}
-		if transfer.Recursive {
-			scpArgs = append(scpArgs, "-r")
-		}
 		scpArgs = append(scpArgs, transfer.Source, fmt.Sprintf("%s:%s", vm.Name, transfer.Destination))
 	}
-	
-	args := []string{"ssh", "vm", "--name", vm.Name, "--resource-group", vm.ResourceGroup, "--subscription", cloudCtx.AccountID, "--"}
-	args = append(args, scpArgs...)
-	return exec.CommandContext(ctx, "az", args...), nil
+
+	// Build the compound shell command:
+	// az ssh config generates the config file, then scp uses it
+	azConfigCmd := fmt.Sprintf("az ssh config --name %s --resource-group %s --subscription %s --file %s --overwrite",
+		vm.Name, vm.ResourceGroup, cloudCtx.AccountID, configFile)
+	scpCmd := strings.Join(scpArgs, " ")
+	compound := fmt.Sprintf("%s && %s", azConfigCmd, scpCmd)
+
+	return exec.CommandContext(ctx, "sh", "-c", compound), nil
 }
 
 // GetSCPCmdSDK delegates to CLI for SCP.

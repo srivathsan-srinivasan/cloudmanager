@@ -236,6 +236,8 @@ func GetPortForwardCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudCo
 	if useIAPTunnel(vm) {
 		args = append(args, "--tunnel-through-iap")
 	}
+	// Append the argument separator before port-forward mappings
+	args = append(args, "--")
 	for _, s := range specs {
 		localHost := s.LocalHost
 		if localHost == "" {
@@ -264,9 +266,6 @@ func formatGCPSourceDest(vm core.VM, transfer core.SCPTransfer) (string, string)
 		// remote -> local
 		src := instanceSpec + transfer.Source
 		dst := transfer.Destination
-		if transfer.Recursive {
-			// gcloud scp --recurse handles directories
-		}
 		return src, dst
 	}
 	// push: local -> remote

@@ -19,6 +19,7 @@ type Request struct {
 	VM           core.VM
 	ManualHost   *core.ManualHost
 	NativeMethod *core.AccessMethod
+	Config       config.AppConfig
 }
 
 func Resolve(ctx context.Context, req Request) []core.AccessMethod {
@@ -431,8 +432,8 @@ func PortForwardMethods(req Request, specs []core.PortForwardSpec) []core.Access
 
 	// 1. Provider native (GCP IAP, AWS SSM, Azure, DigitalOcean)
 	if req.Context.Provider != "" {
-		provider := providers.GetProvider(config.AppConfig{})
-		if cmd, err := provider.GetPortForwardCmd(context.Background(), req.VM, req.Context, specs); err == nil {
+		provider := providers.GetProvider(req.Config)
+		if cmd, err := provider.GetPortForwardCmd(context.Background(), req.VM, req.Context, specs); err == nil && cmd != nil {
 			methods = append(methods, core.AccessMethod{
 				ID:        fmt.Sprintf("%s-port-forward", strings.ToLower(req.Context.Provider)),
 				Kind:      "port_forward",
@@ -548,8 +549,8 @@ func SCPMethods(req Request, transfer core.SCPTransfer) []core.AccessMethod {
 
 	// 1. Provider native (GCP, AWS, Azure, DigitalOcean)
 	if req.Context.Provider != "" {
-		provider := providers.GetProvider(config.AppConfig{})
-		if cmd, err := provider.GetSCPCmd(context.Background(), req.VM, req.Context, transfer); err == nil {
+		provider := providers.GetProvider(req.Config)
+		if cmd, err := provider.GetSCPCmd(context.Background(), req.VM, req.Context, transfer); err == nil && cmd != nil {
 			methods = append(methods, core.AccessMethod{
 				ID:        fmt.Sprintf("%s-scp", strings.ToLower(req.Context.Provider)),
 				Kind:      "scp",
@@ -617,9 +618,29 @@ func sshConfigSCPMethods(req Request, transfer core.SCPTransfer) []core.AccessMe
 	return out
 }
 
+// resolveSSHUsername attempts to extract the SSH username from SSH config entries
+// matching the VM, or returns empty string to use no username prefix.
+func resolveSSHUsername(req Request) string {
+	entries, err := ParseSSHConfig(defaultSSHConfigPath())
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entryMatchesVM(entry, req.VM) {
+			continue
+		}
+		if user := strings.TrimSpace(entry.User); user != "" {
+			return user
+		}
+	}
+	return ""
+}
+
 // directSCPMethods creates direct SCP methods.
 func directSCPMethods(req Request, transfer core.SCPTransfer) []core.AccessMethod {
-	targets := sshTargets(req.VM, "ubuntu") // default user
+	// Try to resolve username from SSH config or leave empty for direct IP
+	username := resolveSSHUsername(req)
+	targets := sshTargets(req.VM, username)
 	if len(targets) == 0 {
 		return nil
 	}
