@@ -167,3 +167,19 @@ func (p *SDKProvider) ExecuteFirewallAction(ctx context.Context, action string, 
 	}
 	return bindings.Firewalls.ExecuteFirewallAction(ctx, action, rule, cloudCtx)
 }
+
+func (p *SDKProvider) GetPortForwardCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	bindings, ok := bindingsFor(cloudCtx.Provider, "sdk")
+	if !ok || bindings.Compute == nil {
+		return nil, fmt.Errorf("port forwarding not supported for %s via SDK", cloudCtx.Provider)
+	}
+	return bindings.Compute.GetPortForwardCmd(ctx, vm, cloudCtx, specs)
+}
+
+func (p *SDKProvider) GetSCPCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	bindings, ok := bindingsFor(cloudCtx.Provider, "sdk")
+	if !ok || bindings.Compute == nil {
+		return nil, fmt.Errorf("SCP not supported for %s via SDK", cloudCtx.Provider)
+	}
+	return bindings.Compute.GetSCPCmd(ctx, vm, cloudCtx, transfer)
+}

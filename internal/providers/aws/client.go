@@ -773,3 +773,88 @@ func compactDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%dm", minutes)
 }
+
+// --- Port Forwarding & SCP ---
+
+// useSSMPortForward returns true if SSM port forwarding should be used.
+// SSM is used when the VM has no public IP.
+func useSSMPortForward(vm core.VM) bool {
+	pubIP := strings.TrimSpace(vm.PublicIP)
+	return pubIP == "" || pubIP == "-"
+}
+
+// buildSSMPortForwardParams builds the JSON parameters for AWS-StartPortForwardingSession document.
+// AWS-StartPortForwardingSession only supports a single port mapping per session.
+func buildSSMPortForwardParams(specs []core.PortForwardSpec) string {
+	if len(specs) == 0 {
+		return "{}"
+	}
+	// Use only the first spec; AWS SSM supports only one port per session
+	s := specs[0]
+	params := map[string]string{
+		"portNumber":      fmt.Sprintf("%d", s.RemotePort),
+		"localPortNumber": fmt.Sprintf("%d", s.LocalPort),
+	}
+	jsonBytes, _ := json.Marshal(params)
+	return string(jsonBytes)
+}
+
+// GetPortForwardCmdCLI returns an AWS CLI command for port forwarding.
+// For public IP instances: uses ec2-instance-connect ssh with -L flags.
+// For private instances: uses SSM start-session with AWS-StartPortForwardingSession document.
+func GetPortForwardCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("no port forward specs provided")
+	}
+	// For public IP instances, use ec2-instance-connect with standard SSH -L
+	if !useSSMPortForward(vm) {
+		args := []string{"ec2-instance-connect", "ssh", "--instance-id", vm.ID}
+		for _, s := range specs {
+			remoteHost := s.RemoteHost
+			if remoteHost == "" {
+				remoteHost = "localhost"
+			}
+			args = append(args, "-L", fmt.Sprintf("%d:%s:%d", s.LocalPort, remoteHost, s.RemotePort))
+		}
+		return awsCLICommand(ctx, cloudCtx, args...), nil
+	}
+	// For private instances, use SSM port forwarding
+	params := buildSSMPortForwardParams(specs)
+	args := []string{"ssm", "start-session", "--target", vm.ID, "--document-name", "AWS-StartPortForwardingSession", "--parameters", params}
+	return awsCLICommand(ctx, cloudCtx, args...), nil
+}
+
+// GetPortForwardCmdSDK delegates to CLI for port forwarding.
+func GetPortForwardCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	return GetPortForwardCmdCLI(ctx, vm, cloudCtx, specs)
+}
+
+// GetSCPCmdCLI returns an AWS CLI command for SCP file transfer.
+// For public IP instances: uses ec2-instance-connect scp.
+// For private instances: uses SSM port forwarding + local scp (user runs scp separately through tunnel).
+func GetSCPCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	// For public IP instances, use ec2-instance-connect scp
+	if !useSSMPortForward(vm) {
+		var args []string
+		if transfer.Direction == "pull" {
+			// remote -> local: scp user@host:source dest
+			args = []string{"ec2-instance-connect", "scp", "--instance-id", vm.ID, fmt.Sprintf("%s:%s", vm.PublicIP, transfer.Source), transfer.Destination}
+		} else {
+			// local -> remote: scp source user@host:dest
+			args = []string{"ec2-instance-connect", "scp", "--instance-id", vm.ID, transfer.Source, fmt.Sprintf("%s:%s", vm.PublicIP, transfer.Destination)}
+		}
+		if transfer.Recursive {
+			args = append(args, "-r")
+		}
+		return awsCLICommand(ctx, cloudCtx, args...), nil
+	}
+	// For private instances, we can't directly SCP through SSM.
+	// Return an error with guidance, or we could start a port forward tunnel and run scp locally.
+	// For now, return an informative error.
+	return nil, fmt.Errorf("SCP not directly supported for private instances via SSM. Use port forwarding (SSM) then local scp, or use S3 as intermediate")
+}
+
+// GetSCPCmdSDK delegates to CLI for SCP.
+func GetSCPCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	return GetSCPCmdCLI(ctx, vm, cloudCtx, transfer)
+}

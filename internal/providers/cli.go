@@ -167,3 +167,19 @@ func (p *CLIProvider) FetchSubnets(ctx context.Context, cloudCtx core.CloudConte
 	}
 	return bindings.Networks.FetchSubnets(ctx, cloudCtx)
 }
+
+func (p *CLIProvider) GetPortForwardCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	bindings, ok := bindingsFor(cloudCtx.Provider, "cli")
+	if !ok || bindings.Compute == nil {
+		return nil, fmt.Errorf("port forwarding not supported for %s via CLI", cloudCtx.Provider)
+	}
+	return bindings.Compute.GetPortForwardCmd(ctx, vm, cloudCtx, specs)
+}
+
+func (p *CLIProvider) GetSCPCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	bindings, ok := bindingsFor(cloudCtx.Provider, "cli")
+	if !ok || bindings.Compute == nil {
+		return nil, fmt.Errorf("SCP not supported for %s via CLI", cloudCtx.Provider)
+	}
+	return bindings.Compute.GetSCPCmd(ctx, vm, cloudCtx, transfer)
+}

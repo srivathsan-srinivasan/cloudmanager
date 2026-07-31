@@ -9,7 +9,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/vyoogam/cloudmanager/internal/config"
 	"github.com/vyoogam/cloudmanager/internal/core"
+	"github.com/vyoogam/cloudmanager/internal/providers"
 )
 
 type Request struct {
@@ -17,6 +19,7 @@ type Request struct {
 	VM           core.VM
 	ManualHost   *core.ManualHost
 	NativeMethod *core.AccessMethod
+	Config       config.AppConfig
 }
 
 func Resolve(ctx context.Context, req Request) []core.AccessMethod {
@@ -331,7 +334,7 @@ func shellQuote(arg string) string {
 	if arg == "" {
 		return "''"
 	}
-	if !strings.ContainsAny(arg, " \t\n'\"\\$&;|<>`(){}[]*?!") {
+	if !strings.ContainsAny(arg, " 	\n'\"\\$&;|<>`(){}[]*?!") {
 		return arg
 	}
 	return "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
@@ -415,4 +418,285 @@ func expandPath(path string) string {
 		}
 	}
 	return path
+}
+
+// --- Port Forwarding & SCP Resolver Methods ---
+
+// PortForwardMethods returns access methods for port forwarding based on the VM and provider.
+// Supports multiple ports in a single tunnel.
+func PortForwardMethods(req Request, specs []core.PortForwardSpec) []core.AccessMethod {
+	if len(specs) == 0 {
+		return nil
+	}
+	var methods []core.AccessMethod
+
+	// 1. Provider native (GCP IAP, AWS SSM, Azure, DigitalOcean)
+	if req.Context.Provider != "" {
+		provider := providers.GetProvider(req.Config)
+		if cmd, err := provider.GetPortForwardCmd(context.Background(), req.VM, req.Context, specs); err == nil && cmd != nil {
+			methods = append(methods, core.AccessMethod{
+				ID:        fmt.Sprintf("%s-port-forward", strings.ToLower(req.Context.Provider)),
+				Kind:      "port_forward",
+				Label:     fmt.Sprintf("%s Port Forward (%d ports)", req.Context.Provider, len(specs)),
+				Priority:  10,
+				Command:   cmd.Args,
+				CopyText:  FormatCommand(cmd.Args),
+				Available: true,
+			})
+		}
+	}
+
+	// 2. SSH config entries with -L
+	sshConfigMethods := sshConfigPortForwardMethods(req, specs)
+	methods = append(methods, sshConfigMethods...)
+
+	// 3. Direct SSH with -L
+	directMethods := directPortForwardMethods(req, specs)
+	methods = append(methods, directMethods...)
+
+	return methods
+}
+
+// sshConfigPortForwardMethods creates port forward methods from SSH config entries.
+func sshConfigPortForwardMethods(req Request, specs []core.PortForwardSpec) []core.AccessMethod {
+	entries, err := ParseSSHConfig(defaultSSHConfigPath())
+	if err != nil {
+		return nil
+	}
+	var out []core.AccessMethod
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		if !entryMatchesVM(entry, req.VM) {
+			continue
+		}
+		alias := entry.PrimaryAlias()
+		if alias == "" || seen[alias] {
+			continue
+		}
+		seen[alias] = true
+		args := []string{"ssh"}
+		for _, s := range specs {
+			localHost := s.LocalHost
+			if localHost == "" {
+				localHost = "localhost"
+			}
+			remoteHost := s.RemoteHost
+			if remoteHost == "" {
+				remoteHost = "localhost"
+			}
+			args = append(args, "-L", fmt.Sprintf("%s:%d:%s:%d", localHost, s.LocalPort, remoteHost, s.RemotePort))
+		}
+		args = append(args, alias)
+		out = append(out, core.AccessMethod{
+			ID:        "ssh-config-port-forward-" + alias,
+			Kind:      "port_forward",
+			Label:     fmt.Sprintf("SSH config port forward: %s (%d ports)", alias, len(specs)),
+			Priority:  20,
+			Command:   args,
+			CopyText:  FormatCommand(args),
+			Available: true,
+		})
+	}
+	return out
+}
+
+// directPortForwardMethods creates direct SSH port forward methods.
+func directPortForwardMethods(req Request, specs []core.PortForwardSpec) []core.AccessMethod {
+	target := firstUsableIP(req.VM.PublicIP, req.VM.PrivateIP)
+	if target == "" {
+		return nil
+	}
+	var methods []core.AccessMethod
+	keyCount := len(discoverSSHKeyFiles())
+	if keyCount > 0 {
+		methods = append(methods, core.AccessMethod{
+			ID:        "private-key-port-forward",
+			Kind:      "port_forward",
+			Label:     fmt.Sprintf("Private key port forward (%d keys, %d ports)", keyCount, len(specs)),
+			Priority:  35,
+			CopyText:  "Choose key, username, and target IP.",
+			Available: true,
+		})
+	}
+	args := []string{"ssh"}
+	for _, s := range specs {
+		localHost := s.LocalHost
+		if localHost == "" {
+			localHost = "localhost"
+		}
+		remoteHost := s.RemoteHost
+		if remoteHost == "" {
+			remoteHost = "localhost"
+		}
+		args = append(args, "-L", fmt.Sprintf("%s:%d:%s:%d", localHost, s.LocalPort, remoteHost, s.RemotePort))
+	}
+	args = append(args, target)
+	methods = append(methods, core.AccessMethod{
+		ID:        "direct-port-forward",
+		Kind:      "port_forward",
+		Label:     fmt.Sprintf("Direct SSH port forward (%d ports)", len(specs)),
+		Priority:  60,
+		Command:   args,
+		CopyText:  FormatCommand(args),
+		Available: true,
+	})
+	return methods
+}
+
+// SCPMethods returns access methods for SCP file transfer.
+func SCPMethods(req Request, transfer core.SCPTransfer) []core.AccessMethod {
+	var methods []core.AccessMethod
+
+	// 1. Provider native (GCP, AWS, Azure, DigitalOcean)
+	if req.Context.Provider != "" {
+		provider := providers.GetProvider(req.Config)
+		if cmd, err := provider.GetSCPCmd(context.Background(), req.VM, req.Context, transfer); err == nil && cmd != nil {
+			methods = append(methods, core.AccessMethod{
+				ID:        fmt.Sprintf("%s-scp", strings.ToLower(req.Context.Provider)),
+				Kind:      "scp",
+				Label:     fmt.Sprintf("%s SCP (%s)", req.Context.Provider, transfer.Direction),
+				Priority:  10,
+				Command:   cmd.Args,
+				CopyText:  FormatCommand(cmd.Args),
+				Available: true,
+			})
+		}
+	}
+
+	// 2. SSH config entries with scp
+	sshConfigMethods := sshConfigSCPMethods(req, transfer)
+	methods = append(methods, sshConfigMethods...)
+
+	// 3. Direct scp
+	directMethods := directSCPMethods(req, transfer)
+	methods = append(methods, directMethods...)
+
+	return methods
+}
+
+// sshConfigSCPMethods creates SCP methods from SSH config entries.
+func sshConfigSCPMethods(req Request, transfer core.SCPTransfer) []core.AccessMethod {
+	entries, err := ParseSSHConfig(defaultSSHConfigPath())
+	if err != nil {
+		return nil
+	}
+	var out []core.AccessMethod
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		if !entryMatchesVM(entry, req.VM) {
+			continue
+		}
+		alias := entry.PrimaryAlias()
+		if alias == "" || seen[alias] {
+			continue
+		}
+		seen[alias] = true
+		var args []string
+		if transfer.Direction == "pull" {
+			args = []string{"scp"}
+			if transfer.Recursive {
+				args = append(args, "-r")
+			}
+			args = append(args, fmt.Sprintf("%s:%s", alias, transfer.Source), transfer.Destination)
+		} else {
+			args = []string{"scp"}
+			if transfer.Recursive {
+				args = append(args, "-r")
+			}
+			args = append(args, transfer.Source, fmt.Sprintf("%s:%s", alias, transfer.Destination))
+		}
+		out = append(out, core.AccessMethod{
+			ID:        "ssh-config-scp-" + alias,
+			Kind:      "scp",
+			Label:     fmt.Sprintf("SSH config SCP: %s (%s)", alias, transfer.Direction),
+			Priority:  20,
+			Command:   args,
+			CopyText:  FormatCommand(args),
+			Available: true,
+		})
+	}
+	return out
+}
+
+// resolveSSHUsername attempts to extract the SSH username from SSH config entries
+// matching the VM, or returns empty string to use no username prefix.
+func resolveSSHUsername(req Request) string {
+	entries, err := ParseSSHConfig(defaultSSHConfigPath())
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entryMatchesVM(entry, req.VM) {
+			continue
+		}
+		if user := strings.TrimSpace(entry.User); user != "" {
+			return user
+		}
+	}
+	return ""
+}
+
+// directSCPMethods creates direct SCP methods.
+func directSCPMethods(req Request, transfer core.SCPTransfer) []core.AccessMethod {
+	// Try to resolve username from SSH config or leave empty for direct IP
+	username := resolveSSHUsername(req)
+	targets := sshTargets(req.VM, username)
+	if len(targets) == 0 {
+		return nil
+	}
+	var methods []core.AccessMethod
+	for _, keyPath := range discoverSSHKeyFiles() {
+		for _, target := range targets {
+			var args []string
+			if transfer.Direction == "pull" {
+				args = []string{"scp", "-i", keyPath}
+				if transfer.Recursive {
+					args = append(args, "-r")
+				}
+				args = append(args, fmt.Sprintf("%s:%s", target.target, transfer.Source), transfer.Destination)
+			} else {
+				args = []string{"scp", "-i", keyPath}
+				if transfer.Recursive {
+					args = append(args, "-r")
+				}
+				args = append(args, transfer.Source, fmt.Sprintf("%s:%s", target.target, transfer.Destination))
+			}
+			methods = append(methods, core.AccessMethod{
+				ID:        "direct-scp-" + filepath.Base(keyPath) + "-" + target.kind,
+				Kind:      "scp",
+				Label:     fmt.Sprintf("SCP via %s (%s IP)", filepath.Base(keyPath), target.kind),
+				Priority:  35,
+				Command:   args,
+				CopyText:  FormatCommand(args),
+				Available: true,
+			})
+		}
+	}
+	// Also add password/key-less scp
+	for _, target := range targets {
+		var args []string
+		if transfer.Direction == "pull" {
+			args = []string{"scp"}
+			if transfer.Recursive {
+				args = append(args, "-r")
+			}
+			args = append(args, fmt.Sprintf("%s:%s", target.target, transfer.Source), transfer.Destination)
+		} else {
+			args = []string{"scp"}
+			if transfer.Recursive {
+				args = append(args, "-r")
+			}
+			args = append(args, transfer.Source, fmt.Sprintf("%s:%s", target.target, transfer.Destination))
+		}
+		methods = append(methods, core.AccessMethod{
+			ID:        "direct-scp-" + target.kind,
+			Kind:      "scp",
+			Label:     fmt.Sprintf("Direct SCP (%s IP)", target.kind),
+			Priority:  60,
+			Command:   args,
+			CopyText:  FormatCommand(args),
+			Available: true,
+		})
+	}
+	return methods
 }

@@ -216,6 +216,88 @@ func GetSSHCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (
 	return exec.CommandContext(ctx, "gcloud", "compute", "ssh", vm.Name, "--project", cloudCtx.AccountID, "--zone", normalizeGCPZone(vm.Zone)), nil
 }
 
+// --- Port Forwarding & SCP ---
+
+// useIAPTunnel returns true if IAP tunneling should be used for this VM.
+// IAP is used when the VM has no public IP, or when explicitly preferred.
+func useIAPTunnel(vm core.VM) bool {
+	pubIP := strings.TrimSpace(vm.PublicIP)
+	return pubIP == "" || pubIP == "-"
+}
+
+// GetPortForwardCmdCLI returns a gcloud compute ssh command with -L flags for port forwarding.
+// Uses --tunnel-through-iap when the VM has no public IP.
+func GetPortForwardCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	zone := normalizeGCPZone(vm.Zone)
+	if zone == "" {
+		return nil, fmt.Errorf("unable to determine zone for VM %s", vm.Name)
+	}
+	args := []string{"compute", "ssh", vm.Name, "--project", cloudCtx.AccountID, "--zone", zone}
+	if useIAPTunnel(vm) {
+		args = append(args, "--tunnel-through-iap")
+	}
+	// Append the argument separator before port-forward mappings
+	args = append(args, "--")
+	for _, s := range specs {
+		localHost := s.LocalHost
+		if localHost == "" {
+			localHost = "localhost"
+		}
+		remoteHost := s.RemoteHost
+		if remoteHost == "" {
+			remoteHost = "localhost"
+		}
+		args = append(args, "-L", fmt.Sprintf("%s:%d:%s:%d", localHost, s.LocalPort, remoteHost, s.RemotePort))
+	}
+	return exec.CommandContext(ctx, "gcloud", args...), nil
+}
+
+// GetPortForwardCmdSDK delegates to CLI backend for port forwarding.
+func GetPortForwardCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	return GetPortForwardCmdCLI(ctx, vm, cloudCtx, specs)
+}
+
+// formatGCPSourceDest formats source/destination paths for gcloud compute scp.
+// For pull (remote->local): source is "instance:path", dest is local path
+// For push (local->remote): source is local path, dest is "instance:path"
+func formatGCPSourceDest(vm core.VM, transfer core.SCPTransfer) (string, string) {
+	instanceSpec := fmt.Sprintf("%s:", vm.Name)
+	if transfer.Direction == "pull" {
+		// remote -> local
+		src := instanceSpec + transfer.Source
+		dst := transfer.Destination
+		return src, dst
+	}
+	// push: local -> remote
+	src := transfer.Source
+	dst := instanceSpec + transfer.Destination
+	return src, dst
+}
+
+// GetSCPCmdCLI returns a gcloud compute scp command for file transfer.
+// Uses --tunnel-through-iap when the VM has no public IP.
+func GetSCPCmdCLI(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	zone := normalizeGCPZone(vm.Zone)
+	if zone == "" {
+		return nil, fmt.Errorf("unable to determine zone for VM %s", vm.Name)
+	}
+	args := []string{"compute", "scp", "--project", cloudCtx.AccountID, "--zone", zone}
+	if useIAPTunnel(vm) {
+		args = append(args, "--tunnel-through-iap")
+	}
+	if transfer.Recursive {
+		args = append(args, "--recurse")
+	}
+	src, dst := formatGCPSourceDest(vm, transfer)
+	args = append(args, src, dst)
+	return exec.CommandContext(ctx, "gcloud", args...), nil
+}
+
+// GetSCPCmdSDK delegates to CLI backend for SCP.
+func GetSCPCmdSDK(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	return GetSCPCmdCLI(ctx, vm, cloudCtx, transfer)
+}
+
 // --- Helpers ---
 
 func gcpInstanceToVM(inst gcpInstance) core.VM {

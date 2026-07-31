@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"time"
 
@@ -14,6 +15,8 @@ type MockProvider struct {
 	FetchVMsFn              func(ctx context.Context, cloudCtx core.CloudContext) ([]core.VM, error)
 	ExecuteActionFn         func(ctx context.Context, action string, vm core.VM, cloudCtx core.CloudContext) (string, error)
 	GetSSHCmdFn             func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext) (*exec.Cmd, error)
+	GetPortForwardCmdFn     func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error)
+	GetSCPCmdFn             func(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error)
 	FetchDisksFn            func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error)
 	ExecuteDiskActionFn     func(ctx context.Context, action string, disk core.Disk, cloudCtx core.CloudContext) (string, error)
 	FetchSnapshotsFn        func(ctx context.Context, cloudCtx core.CloudContext) ([]core.Snapshot, error)
@@ -49,6 +52,20 @@ func (m *MockProvider) GetSSHCmd(ctx context.Context, vm core.VM, cloudCtx core.
 		return m.GetSSHCmdFn(ctx, vm, cloudCtx)
 	}
 	return nil, nil
+}
+
+func (m *MockProvider) GetPortForwardCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, specs []core.PortForwardSpec) (*exec.Cmd, error) {
+	if m.GetPortForwardCmdFn != nil {
+		return m.GetPortForwardCmdFn(ctx, vm, cloudCtx, specs)
+	}
+	return nil, fmt.Errorf("GetPortForwardCmd not implemented")
+}
+
+func (m *MockProvider) GetSCPCmd(ctx context.Context, vm core.VM, cloudCtx core.CloudContext, transfer core.SCPTransfer) (*exec.Cmd, error) {
+	if m.GetSCPCmdFn != nil {
+		return m.GetSCPCmdFn(ctx, vm, cloudCtx, transfer)
+	}
+	return nil, fmt.Errorf("GetSCPCmd not implemented")
 }
 
 func (m *MockProvider) FetchDisks(ctx context.Context, cloudCtx core.CloudContext) ([]core.Disk, error) {
